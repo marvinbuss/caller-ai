@@ -70,6 +70,14 @@ The final combined profile also passes all 407 management cases, including the r
 ordering tests, plus 384 runtime and 149 tooling cases. Remote verification is still required
 before foundation acceptance; earlier failing runs are retained in the evidence record.
 
+Hosted Windows additionally exposes a temporary-directory path-identity issue: its DOS 8.3
+alias is treated differently by Vite output and React Router manifest lookup. The editor
+harness now resolves its owned temporary root before deriving fixture, web and certificate
+paths, keeping one canonical identity across Python and Node. A red-first regression checks
+absolute canonical child paths. This does not change temp isolation, SSR, dependencies or
+budgets. The user-approved compiler diagnostic identified this mismatch; temporary upload
+steps were removed and its remote artifact was deleted early after local retrieval.
+
 ## Public and Local Feeds
 
 Publishable Python locks use public PyPI artifact metadata and the frontend lock uses

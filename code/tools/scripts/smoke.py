@@ -242,7 +242,7 @@ def running_configuration_editor(
     )
     processes: list[psutil.Popen] = []
     with tempfile.TemporaryDirectory(prefix="caller-editor-") as temporary:
-        directory = Path(temporary)
+        directory = Path(temporary).resolve()
         fixture = directory / "fixture.json"
         fixture.write_text(
             json.dumps(

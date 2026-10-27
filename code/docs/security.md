@@ -128,6 +128,11 @@ does not authorize conversation-content collection or general debug logging. The
 upload steps must be removed after the failure is diagnosed; retention expiry is not evidence
 that arbitrary data may be uploaded. Production/logging privacy requirements remain unchanged.
 
+After the approved log identified the Windows short-path mismatch, both temporary upload
+steps were removed from the workflow and remote artifact 12749685420 was deleted early.
+The compiler copy remains ignored locally; no default compiler-log upload remains enabled.
+The canonical-path repair and no-upload regression do not relax any production boundary.
+
 ## Call and Configuration Trust Boundaries
 
 Callers, model output, remote tool/MCP discovery, submitted configuration and dependency

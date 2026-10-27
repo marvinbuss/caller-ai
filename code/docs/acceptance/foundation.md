@@ -141,6 +141,19 @@ marker/private-origin/secret checks and exact-path failure-only upload condition
 by regressions. Runtime data and fixture/key/env/screenshot files are excluded. This is a
 bounded diagnostic exception, not T031 acceptance or a relaxation of required test gates.
 
+The approved diagnostic from bbbce15/run 40536998610 passed both scanners and revealed the
+hosted-only failure: a DOS 8.3 temporary-root alias produced Vite's output-outside-project
+warning and React Router's missing client-entry chunk during server manifest generation.
+The harness now canonicalizes the owned temporary directory with `Path.resolve()` before
+deriving any child paths. The path-identity regression fails before the change and passes
+afterward; existing runtime/render/dependency/deadline controls are untouched. Actual new
+native CI is required to qualify the repair, not another guessed diagnostic category.
+
+Both temporary workflow upload steps were removed after diagnosis. The single approved
+remote artifact 12749685420 was deleted early; the retrieved compiler copy remains only
+under ignored local diagnostics. The guarded collector's privacy-rejection tests remain,
+and the default workflow now explicitly tests that compiler artifacts are not uploaded.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock

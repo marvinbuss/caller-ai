@@ -208,6 +208,40 @@ def test_editor_build_failure_reports_only_safe_category(monkeypatch, tmp_path):
     assert '"node_error":"none"' in str(rejected.value)
 
 
+def test_editor_uses_canonical_absolute_temporary_paths(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+
+    monkeypatch.chdir(tmp_path)
+    temporary = tmp_path / "relative-editor"
+    temporary.mkdir()
+    child = SimpleNamespace(wait=lambda **options: 1)
+    environments = []
+
+    @contextmanager
+    def relative_directory(**options):
+        yield "relative-editor"
+
+    def spawn(*arguments, **options):
+        environments.append(options["env"])
+        return child
+
+    monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
+    monkeypatch.setattr(SMOKE.tempfile, "TemporaryDirectory", relative_directory)
+    monkeypatch.setattr(SMOKE.psutil, "Popen", spawn)
+    monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345])
+    monkeypatch.setattr(SMOKE, "stop", lambda processes: None)
+    monkeypatch.setattr(SMOKE, "restore_frontend_lock", lambda: None)
+    with pytest.raises(RuntimeError, match="editor_frontend_build_failed"):
+        with SMOKE.running_configuration_editor(
+            graph={}, identities=("manager-one",), mode="local"
+        ):
+            pytest.fail("failed_build_was_accepted")
+    assert environments[0]["REFLEX_WEB_WORKDIR"] == str(temporary.resolve() / "web")
+    assert environments[0]["CALLER_EDITOR_TEST_FIXTURE"] == str(
+        temporary.resolve() / "fixture.json"
+    )
+
+
 def test_image_cleanup_targets_owned_ids_only(images, monkeypatch: pytest.MonkeyPatch) -> None:
     commands = []
     monkeypatch.setattr(images, "docker", lambda *arguments: commands.append(arguments) or "")

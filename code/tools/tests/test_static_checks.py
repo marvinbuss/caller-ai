@@ -423,28 +423,13 @@ def test_workflow_has_unprivileged_native_jobs() -> None:
     assert "id-token" not in source
 
 
-def test_windows_compiler_artifact_is_failure_only_single_file_and_one_day() -> None:
+def test_default_ci_no_longer_uploads_temporary_compiler_diagnostic() -> None:
     root = SCRIPTS.parents[2]
     workflow = yaml.load((root / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
     steps = workflow["jobs"]["native"]["steps"]
-    collector = next(step for step in steps if step.get("id") == "compiler_diagnostic")
-    uploader = next(
-        step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
-    )
-    assert collector["if"] == "failure() && runner.os == 'Windows'"
-    assert (
-        collector["run"]
-        == "uv run --project code/tools --locked python code/tools/scripts/ci.py diagnostics"
-    )
-    assert (
-        uploader["if"]
-        == "failure() && runner.os == 'Windows' && steps.compiler_diagnostic.outcome == 'success'"
-    )
-    assert uploader["uses"] == "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
-    assert uploader["with"]["retention-days"] == "1"
-    assert uploader["with"]["path"] == "code/tools/test-results/diagnostics/editor-build.log"
-    assert uploader["with"]["include-hidden-files"] == "false"
-    assert workflow["permissions"] == {"contents": "read"}
+    assert not any(step.get("uses", "").startswith("actions/upload-artifact@") for step in steps)
+    assert not any(step.get("id") == "compiler_diagnostic" for step in steps)
+    assert not any(step.get("run", "").endswith("ci.py diagnostics") for step in steps)
 
 
 @pytest.mark.parametrize("scanner_fails", [False, True])
