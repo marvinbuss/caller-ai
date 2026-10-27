@@ -271,7 +271,10 @@ The renderer validates and records its four-part version and fails if the binary
 unavailable. The runner image, not the application lock, supplies that CI-only browser version.
 Windows GitHub CI also uses its explicitly approved fixed installed Chrome path. Before
 rendering, existing Playwright launches it with `chromium_sandbox=True` to verify its actual
-four-part version; absent or invalid results fail closed. Local environments retain prepared
+four-part version; absent or invalid results fail closed. The user approved a 30-second
+Windows-only launch/version-probe limit after run 40595697117 exceeded the earlier 10 seconds.
+Linux's version probe remains 10 seconds and each actual diagram render remains 300 seconds;
+application build/request/test limits are unchanged. Local environments retain prepared
 Playwright Chromium. No sandbox-disabling arguments, ACL/host AppArmor/sysctl changes,
 elevation, browser installation or deprecated setuid installation are used.
 

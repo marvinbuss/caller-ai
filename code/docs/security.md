@@ -110,6 +110,10 @@ but prepared-browser Mermaid still failed. Windows uses the fixed installed Chro
 the existing Playwright dependency to verify a real launch with `chromium_sandbox=True` and
 record its version. Missing/invalid versions fail closed. Local rendering retains prepared
 Chromium. No host sandbox policy, ACL, sysctl, sudo or setuid permissions are changed.
+After the Windows probe exceeded 10 seconds in run 40595697117, the user explicitly approved
+a bounded 30-second startup/version probe on Windows CI only. Linux retains 10 seconds;
+the 300-second render bound and all application/test limits are unchanged. This approval
+does not disable a sandbox, skip a check or declare an unobserved render successful.
 Puppeteer's [Ubuntu AppArmor guidance](https://pptr.dev/troubleshooting) documents this boundary;
 its mostly obsolete setuid workaround is not adopted. The CI-only browser is runner-provided,
 not an application dependency pin. Future observed CI results must prove the selected path

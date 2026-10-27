@@ -55,7 +55,7 @@ def renderer_browser(prepared: str, values: dict[str, str]) -> tuple[str, str]:
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=10,
+        timeout=30 if windows else 10,
     )
     pattern = r"(\d+\.\d+\.\d+\.\d+)" if windows else r"Google Chrome (\d+\.\d+\.\d+\.\d+)"
     match = re.fullmatch(pattern, result.stdout.strip())

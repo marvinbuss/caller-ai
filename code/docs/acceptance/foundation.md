@@ -9,7 +9,23 @@ new failing check or user request can reopen it. T031 requires ordinary current-
 verification, not further explanation of that historical issue. Pending/failed checks and
 the six external live/release gates are not waived.
 
-## Current Save Acknowledgment Repair: 2026-10-27
+## Current Windows Documentation Follow-up: 2026-10-27
+
+[Run 40595697117](https://github.com/marvinbuss/caller-ai/actions/runs/40595697117) on
+`c0836e73c6cafc851a5e94774eb663a65fc333af` passes native Ubuntu and Linux images. Windows
+passes all 384 runtime/413 management/165 tooling cases and the assertion gate, then its
+sandbox-enabled Chrome launch/version probe exceeds 10 seconds before any diagram render.
+The later Windows package audit is skipped; the complete Windows job is not green.
+
+The user explicitly approved 30 seconds for this Windows CI startup probe only. Its
+platform regression fails before the change (two Windows cases, six other passes) and all
+eight cases pass afterward, retaining sandbox=True, version validation, Linux's 10-second
+probe and the renderer's 300-second bound. Application/test/build/request budgets remain
+unchanged. Actual new native/image CI must verify this bounded change before T031 closes.
+The historical missing-community investigation stays closed for now, not reopened by this
+unrelated documentation startup failure. External gates remain pending.
+
+## Save Acknowledgment Repair: 2026-10-27
 
 A deterministic handler-level check reproduces a separate acknowledgment defect: after a
 previous Saved or Saved; audit pending outcome, a new request emits busy=true while leaving

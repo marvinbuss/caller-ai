@@ -724,7 +724,7 @@ def test_renderer_selects_sandboxed_ci_chrome_and_records_version(
 
     def execute(command, **options):
         commands.append(command)
-        assert options["timeout"] == 10
+        assert options["timeout"] == (30 if platform == "win32" else 10)
         return SimpleNamespace(stdout=reported, returncode=0)
 
     monkeypatch.setattr(module.subprocess, "run", execute)

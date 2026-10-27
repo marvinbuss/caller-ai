@@ -16,6 +16,14 @@ that is requirements approval, not proof that any task below is implemented.
 Write story contract/unit/integration tests before the behavior they specify, observe meaningful
 failures, then implement and rerun. Generated tests require reviewed assertions and recorded results.
 
+**Current Windows documentation follow-up (2026-10-27)**: c0836e7/run 40595697117 passes
+Ubuntu and images. Windows passes 384/413/165 tests and the assertion gate, then its sandboxed
+Chrome launch/version probe exceeds 10 seconds, before diagram rendering; the later audit is
+skipped. The user explicitly approves 30 seconds for that Windows-only startup probe, keeping
+Linux 10 seconds, rendering 300 seconds and all application/test budgets unchanged. The
+platform contract is red-first (two fail/six pass), then all eight pass. T031 awaits actual
+full CI; the historical investigation stays closed and no external gate is waived.
+
 **Investigation disposition (2026-10-27)**: at the user's explicit direction, the historical
 missing-community investigation is closed for now because its cause was not reproduced.
 Preserve failure history and every original/stronger assertion; only a new failure or user
