@@ -121,6 +121,12 @@ strips ANSI sequences internally and recognizes encoding/type/missing-file error
 red-first regressions and all 153 local tooling cases/repository gates passing. No raw log
 body is published and no request/build budget or security boundary is changed.
 
+A bounded editor probe now reports only a fixed phase label, capped log byte count and
+boolean encoding/traceback indicators from its owned diagnostic file. Regression tests
+exclude raw fixture content. This probe changes no application/timeout behavior; it is
+needed because the current remote build remains unclassified. All 153 tooling cases and
+repository gates pass, but the new observed phase is required before another root-cause claim.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock

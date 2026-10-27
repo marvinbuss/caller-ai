@@ -12,6 +12,34 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def build_failure_metadata(log: Path) -> dict[str, int | str | bool]:
+    with log.open("rb") as source:
+        source.seek(0, os.SEEK_END)
+        size = source.tell()
+        source.seek(max(0, size - 65536))
+        data = source.read(65536)
+    diagnostic = re.sub(
+        r"\x1b\[[0-?]*[ -/]*[@-~]", "", data.decode("utf-8", errors="replace").lower()
+    )
+    phase = "before_initialization"
+    for label, marker in (
+        ("initialization", "initializing"),
+        ("compilation", "compiling"),
+        ("client_bundle", "building client environment"),
+        ("server_bundle", "building ssr environment"),
+        ("prerender", "prerender"),
+    ):
+        if marker in diagnostic:
+            phase = label
+    return {
+        "phase": phase,
+        "log_bytes": min(size, 16777216),
+        "utf16_marker": data.startswith((b"\xff\xfe", b"\xfe\xff")),
+        "python_traceback": "traceback (most recent call last)" in diagnostic,
+        "replacement_characters": "\ufffd" in diagnostic,
+    }
+
+
 def build_failure_category(log: Path) -> str:
     try:
         with log.open("rb") as source:

@@ -280,7 +280,13 @@ def running_configuration_editor(
                 if build.wait(timeout=180) != 0:
                     output.flush()
                     category = build_tools().build_failure_category(directory / "process.log")
-                    raise RuntimeError("editor_frontend_build_failed:" + category)
+                    metadata = build_tools().build_failure_metadata(directory / "process.log")
+                    raise RuntimeError(
+                        "editor_frontend_build_failed:"
+                        + category
+                        + ":"
+                        + json.dumps(metadata, separators=(",", ":"))
+                    )
                 environment.update(
                     {
                         "__REFLEX_SKIP_COMPILE": "true",

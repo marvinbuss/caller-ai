@@ -203,6 +203,8 @@ def test_editor_build_failure_reports_only_safe_category(monkeypatch, tmp_path):
         ):
             pytest.fail("failed_build_was_accepted")
     assert candidate not in str(rejected.value)
+    assert '"phase":"prerender"' in str(rejected.value)
+    assert '"log_bytes":' in str(rejected.value)
 
 
 def test_image_cleanup_targets_owned_ids_only(images, monkeypatch: pytest.MonkeyPatch) -> None:
