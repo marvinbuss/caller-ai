@@ -235,6 +235,14 @@ sandbox; Windows remained unclassified. Tail-based classification retains errors
 compiler progress output without increasing memory bounds or disclosing payloads. Missing
 categories remain failed gates, not permission to retry indefinitely or weaken assertions.
 
+The owned editor compiler/server children explicitly set `PYTHONUTF8=1` and
+`PYTHONIOENCODING=utf-8` to match their UTF-8 log files. A clean redirected Windows Python
+child was observed using cp1252 and failing on a checkmark; a real-process regression now
+verifies correct UTF-8 bytes without changing the user terminal or interpreter selection.
+The subsequent full local management run still reports 379 passes/24 prerender setup errors;
+this I/O repair is not claimed to fix the remaining framework preview timeout. SSR, dependency
+versions, package manager, assertions and deadlines remain unchanged.
+
 ```text
 uv run --project code/tools --locked python code/tools/scripts/verify_failure_gate.py
 uv run --project code/tools --locked python code/tools/scripts/verify_docs.py

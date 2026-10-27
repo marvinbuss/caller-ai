@@ -227,6 +227,8 @@ def running_configuration_editor(
             "CALLER_MODE": "local",
             "CALLER_INSTANCE_ID": uuid4().hex,
             "APP_MODULE_IMPORT": "tests.editor_app",
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
             "API_URL": origin,
             "REFLEX_SSR": "true",
             "UV_DEFAULT_INDEX": environment.get("UV_DEFAULT_INDEX", "https://pypi.org/simple"),

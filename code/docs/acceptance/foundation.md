@@ -76,6 +76,13 @@ step fails on editor-build setup with an unclassified safe category. Neither tha
 whole workflow is green. The bounded-tail improvement did not resolve or classify this failure;
 its root cause must be established separately, without dumping raw content or weakening tests.
 
+Windows encoding follow-up: redirected child stdout was reproduced as cp1252/UTF-8 mode off,
+and a Unicode checkmark failed with `UnicodeEncodeError`. Owned editor children now explicitly
+use UTF-8, verified through a real fresh-process regression. The complete local management
+check still has 379 passes and 24 `frontend_prerender_failed` setup errors (259.18 seconds),
+so this separate encoding defect does not clear T031. The remaining preview timeout is not
+worked around through npm, another SSR mode, vendor changes, retries or increased limits.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock

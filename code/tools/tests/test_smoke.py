@@ -168,6 +168,17 @@ def test_editor_build_module_override_survives_frontend_reinitialization(monkeyp
             pytest.fail("failed_editor_compile_was_accepted")
     assert len(commands) == 1
     assert commands[0]["APP_MODULE_IMPORT"] == "tests.editor_app"
+    assert commands[0]["PYTHONUTF8"] == "1"
+    assert commands[0]["PYTHONIOENCODING"] == "utf-8"
+    encoded = SMOKE.subprocess.run(
+        [sys.executable, "-c", "import sys; sys.stdout.write(chr(10003))"],
+        env=commands[0],
+        stdin=SMOKE.subprocess.DEVNULL,
+        capture_output=True,
+        check=True,
+        timeout=10,
+    )
+    assert encoded.stdout == b"\xe2\x9c\x93"
     assert restored == [True]
 
 
