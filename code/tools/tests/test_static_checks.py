@@ -231,15 +231,25 @@ def test_workflow_has_unprivileged_native_jobs() -> None:
         if "uses" in step:
             assert re.fullmatch(r"[a-zA-Z0-9_/-]+@[0-9a-f]{40}", step["uses"])
         if "run" in step:
-            assert step["run"].startswith("python code/tools/scripts/")
+            assert step["run"].startswith(
+                "uv run --project code/tools --locked python code/tools/scripts/"
+            )
     assert native["steps"][0]["with"]["persist-credentials"] == "false"
     native_commands = [step["run"] for step in native["steps"] if "run" in step]
-    assert "python code/tools/scripts/ci.py frontend" in native_commands
-    assert "python code/tools/scripts/ci.py test" in native_commands
+    assert (
+        "uv run --project code/tools --locked python code/tools/scripts/ci.py frontend"
+        in native_commands
+    )
+    assert (
+        "uv run --project code/tools --locked python code/tools/scripts/ci.py test"
+        in native_commands
+    )
     images = workflow["jobs"]["images"]
     assert images["runs-on"] == "ubuntu-24.04"
     assert any(
-        step.get("run") == "python code/tools/scripts/test_images.py" for step in images["steps"]
+        step.get("run")
+        == "uv run --project code/tools --locked python code/tools/scripts/test_images.py"
+        for step in images["steps"]
     )
     for job in workflow["jobs"].values():
         node = next(
@@ -250,7 +260,10 @@ def test_workflow_has_unprivileged_native_jobs() -> None:
             if "uses" in step:
                 assert re.fullmatch(r"[a-zA-Z0-9_/-]+@[0-9a-f]{40}", step["uses"])
             if "run" in step:
-                assert step["run"].startswith("python code/tools/scripts/")
+                assert step["run"].startswith(
+                    "uv run --project code/tools --locked python code/tools/scripts/"
+                )
+            assert not step.get("uses", "").startswith("actions/setup-python@")
     assert "secrets." not in source
     assert "id-token" not in source
 

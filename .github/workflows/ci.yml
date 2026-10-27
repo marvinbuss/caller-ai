@@ -23,10 +23,6 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version-file: code/tools/.python-version
       - name: Set up uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
         with:
@@ -38,19 +34,19 @@ jobs:
           node-version: "24.22.0"
           package-manager-cache: false
       - name: Prepare independent locked environments
-        run: python code/tools/scripts/ci.py prepare
+        run: uv run --project code/tools --locked python code/tools/scripts/ci.py prepare
       - name: Check source and tooling regressions
-        run: python code/tools/scripts/ci.py check
+        run: uv run --project code/tools --locked python code/tools/scripts/ci.py check
       - name: Prepare real frontend and Chromium
-        run: python code/tools/scripts/ci.py frontend
+        run: uv run --project code/tools --locked python code/tools/scripts/ci.py frontend
       - name: Test both applications and responsive shell
-        run: python code/tools/scripts/ci.py test
+        run: uv run --project code/tools --locked python code/tools/scripts/ci.py test
       - name: Prove starter assertion failure and restoration
-        run: python code/tools/scripts/verify_failure_gate.py
+        run: uv run --project code/tools --locked python code/tools/scripts/verify_failure_gate.py
       - name: Validate documentation and render Mermaid
-        run: python code/tools/scripts/verify_docs.py
+        run: uv run --project code/tools --locked python code/tools/scripts/verify_docs.py
       - name: Audit hashed Python and resolved frontend dependencies
-        run: python code/tools/scripts/audit_dependencies.py
+        run: uv run --project code/tools --locked python code/tools/scripts/audit_dependencies.py
 
   images:
     name: Linux image health and browser smoke
@@ -61,10 +57,6 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version-file: code/tools/.python-version
       - name: Set up uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
         with:
@@ -76,10 +68,10 @@ jobs:
           node-version: "24.22.0"
           package-manager-cache: false
       - name: Prepare locked test environments
-        run: python code/tools/scripts/ci.py prepare
+        run: uv run --project code/tools --locked python code/tools/scripts/ci.py prepare
       - name: Prepare frontend and browser tools
-        run: python code/tools/scripts/ci.py frontend
+        run: uv run --project code/tools --locked python code/tools/scripts/ci.py frontend
       - name: Build and exercise actual images
-        run: python code/tools/scripts/test_images.py
+        run: uv run --project code/tools --locked python code/tools/scripts/test_images.py
       - name: Audit dependencies and actual runtime/build images
-        run: python code/tools/scripts/audit_dependencies.py --images
+        run: uv run --project code/tools --locked python code/tools/scripts/audit_dependencies.py --images

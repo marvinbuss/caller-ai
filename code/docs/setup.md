@@ -239,6 +239,15 @@ discovery path. Both services reject live startup rather than falling back to lo
 
 ## CI and Evidence Boundary
 
+The first published Windows job failed in `actions/setup-python`: Python 3.12.15 was not
+available for that action's Windows 2022 cache/download source. CI now runs every helper via
+`uv run --project code/tools --locked python`, using the existing SHA-pinned uv action and
+the exact tools `.python-version` pin. No Python patch downgrade, shared environment or global
+dependency install is substituted. This also ensures dependency-using scripts run in the tools
+environment. The red-first workflow regression passes; a new remote run must establish actual
+bootstrap and test success. The initial setup failure does not satisfy the deliberate T028
+assertion gate or native second-platform acceptance.
+
 The initial workflow runs isolated native Windows Server 2022 and Ubuntu 24.04 jobs with
 read-only repository permissions and no publication, deployment, cloud identity or privileged
 PR checkout. Executable helpers remain under `code/`.

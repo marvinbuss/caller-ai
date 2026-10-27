@@ -85,5 +85,9 @@ private lock URLs; the guard detected them and verified relocation restored the 
 Dockerfiles now use public defaults and locks. The earlier image/audit results do not validate
 these changed build inputs: fresh public dependency/image/advisory verification is pending.
 Local public metadata/download attempts encountered TLS failures; Windows native HTTPS could
-fetch Python metadata, without bypassing certificate checks. GitHub now recognizes the CLI
-login but returned HTTP 403 rate limiting, so no remote CI result is claimed.
+fetch Python metadata, without bypassing certificate checks. GitHub initially returned HTTP
+403 rate limiting. Sanitized source was then published as draft PR #1; its first Windows CI
+job failed before tests because setup-python lacked Python 3.12.15 for Windows 2022. A tested
+follow-up moves all CI helper execution into the independently locked uv tools environment.
+This observed setup failure is not T028 deliberate assertion proof or a passing native gate;
+successful remote bootstrap/test/image evidence remains pending.
