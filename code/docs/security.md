@@ -99,7 +99,19 @@ public download/build/scanner evidence remains pending. TLS failures are not byp
 management again has 24 root-prerender errors, so merge/release remains blocked despite the
 passing source/private-URL guard and tools tests. Draft source review is separately authorized.
 
-## Runtime Trust Boundaries
+## CI Browser Sandbox Boundary
+
+The user explicitly approved selecting installed Google Chrome only for native Ubuntu GitHub
+diagram rendering after the prepared browser failed with `browser_sandbox_unavailable` in
+run 40491123126 on 381e38d. The fixed runner path and reported version are validated; absence
+fails closed, without falling back or disabling the sandbox. Local/Windows rendering keeps
+the prepared browser. No host sandbox policy, sysctl, sudo or setuid permissions are changed.
+Puppeteer's [Ubuntu AppArmor guidance](https://pptr.dev/troubleshooting) documents this boundary;
+its mostly obsolete setuid workaround is not adopted. The CI-only browser is runner-provided,
+not an application dependency pin. Future observed CI results must prove the selected path
+works; approval alone does not count as a successful render or qualify Windows editor builds.
+
+## Application Trust Boundaries
 
 Callers, model output, remote tool/MCP discovery, submitted configuration and dependency
 responses are untrusted. One organization `default` is not a tenant-management feature;

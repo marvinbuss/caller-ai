@@ -222,6 +222,19 @@ through its approved-feed locked commands. Recovery integration tests cover thes
 
 ## Failure Gate and Diagrams
 
+Ubuntu GitHub CI uses the explicitly approved runner Chrome executable at
+`/opt/google/chrome/chrome`, whose AppArmor profile permits normal sandbox operation.
+The renderer validates and records its four-part version and fails if the binary/version is
+unavailable. The runner image, not the application lock, supplies that CI-only browser version.
+Other environments retain prepared Playwright Chromium. No sandbox-disabling arguments,
+host AppArmor/sysctl changes, elevation or deprecated setuid installation are used.
+
+Build failures report only fixed categories derived from the final bounded 64 KiB of owned
+logs, never raw log text. The first diagnostic CI run identified Ubuntu's missing browser
+sandbox; Windows remained unclassified. Tail-based classification retains errors after long
+compiler progress output without increasing memory bounds or disclosing payloads. Missing
+categories remain failed gates, not permission to retry indefinitely or weaken assertions.
+
 ```text
 uv run --project code/tools --locked python code/tools/scripts/verify_failure_gate.py
 uv run --project code/tools --locked python code/tools/scripts/verify_docs.py

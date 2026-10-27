@@ -13,8 +13,10 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def build_failure_category(log: Path) -> str:
     try:
-        with log.open("r", encoding="utf-8", errors="replace") as source:
-            diagnostic = source.read(65536).lower()
+        with log.open("rb") as source:
+            source.seek(0, os.SEEK_END)
+            source.seek(max(0, source.tell() - 65536))
+            diagnostic = source.read(65536).decode("utf-8", errors="replace").lower()
     except OSError:
         return "diagnostic_unavailable"
     categories = (

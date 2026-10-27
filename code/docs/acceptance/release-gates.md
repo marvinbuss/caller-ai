@@ -86,3 +86,9 @@ was initially rate-limited (HTTP 403). Later observed c60f7b0 Ubuntu results pas
 management 403 and the exact 0/1/0 starter assertion gate; T028 closes. Its Mermaid step fails,
 and Windows still has 24 editor setup errors. Local follow-up passes 143 tools cases, adds
 safe non-content failure categories and preserves all failed gates; T029/T031 remain open.
+
+The later 381e38d run identifies Ubuntu's renderer failure as `browser_sandbox_unavailable`;
+Windows editor failure remains unclassified. A user-approved follow-up selects only installed
+sandboxed Chrome on Ubuntu CI, records its version and fails if it is absent. Local rendering
+and all timeout/TLS/assertion controls are unchanged. Tail-based categories remain bounded and
+content-free. No success is claimed until the next actual remote result establishes it.

@@ -620,6 +620,65 @@ def test_diagram_renderer_reports_only_safe_failure_category(
     assert stopped == [child]
 
 
+@pytest.mark.parametrize(
+    "github,platform,available,reported,error",
+    [
+        (False, "linux", False, "unused", None),
+        (True, "win32", False, "unused", None),
+        (True, "linux", True, "Google Chrome 143.0.7499.10\n", None),
+        (True, "linux", False, "unused", "ci_sandboxed_browser_unavailable"),
+        (True, "linux", True, "unexpected-version-output", "ci_sandboxed_browser_version_invalid"),
+    ],
+)
+def test_renderer_selects_sandboxed_ci_chrome_and_records_version(
+    monkeypatch, github, platform, available, reported, error
+):
+    import importlib.util
+    from types import SimpleNamespace
+
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    specification = importlib.util.spec_from_file_location(
+        "caller_docs", SCRIPTS / "verify_docs.py"
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    monkeypatch.setattr(module.sys, "platform", platform)
+    monkeypatch.setattr(module, "Path", lambda path: SimpleNamespace(is_file=lambda: available))
+    commands = []
+
+    def execute(command, **options):
+        commands.append(command)
+        assert options["timeout"] == 10
+        return SimpleNamespace(stdout=reported, returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", execute)
+    if error:
+        with pytest.raises(RuntimeError, match=error):
+            module.renderer_browser("prepared-chromium", {"GITHUB_ACTIONS": "true"})
+        assert len(commands) == int(available)
+        return
+    selected, version = module.renderer_browser(
+        "prepared-chromium", {"GITHUB_ACTIONS": "true" if github else "false"}
+    )
+    if github and platform == "linux":
+        assert selected == "/opt/google/chrome/chrome"
+        assert version == "143.0.7499.10"
+        assert commands == [[selected, "--version"]]
+    else:
+        assert (selected, version) == ("prepared-chromium", "prepared")
+        assert commands == []
+
+
+def test_build_failure_category_reads_bounded_log_tail(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    from ci import build_failure_category
+
+    log = tmp_path / "build.log"
+    log.write_text("compile progress\n" * 10000 + "Prerender: Request failed for /: timeout\n")
+    assert build_failure_category(log) == "frontend_prerender_failed"
+
+
 def test_diagram_renderer_timeout_cleans_owned_process(tmp_path: Path, monkeypatch) -> None:
     import importlib.util
 

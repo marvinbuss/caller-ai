@@ -50,11 +50,18 @@ commit `c60f7b0738815017777b6433b4fe4d6aa6530b46`, not the later local follow-up
 | Linux strict package audits | Python backend 68/management 90/tools 59 and frontend 294; zero findings |
 | Actual runtime/build-stage image audits | three images, zero HIGH/CRITICAL |
 
-The current local follow-up passes 143 tooling cases and all repository/type/Terraform/
+The preceding diagnostic follow-up passes 143 tooling cases and all repository/type/Terraform/
 secret/publication gates. Fixed safe failure categories now distinguish sandbox, shared-library,
 package-fetch, syntax, prerender and module errors without emitting raw content. No cause of
 the generic remote renderer failure is assumed before a new observed result. No timeout,
 sandbox flag, TLS check, test or assertion was relaxed. T029/T031 and all live gates stay open.
+
+Run [40491123126](https://github.com/marvinbuss/caller-ai/actions/runs/40491123126) on 381e38d
+again passes the Ubuntu application/assertion steps and Linux image job, but the new fixed
+diagnostic identifies `browser_sandbox_unavailable` for Mermaid. Windows still fails editor
+setup with an unclassified build error. The user approved CI-only installed sandboxed Chrome
+with recorded version; other platforms keep prepared Chromium. The new browser-selection and
+bounded-tail diagnostic regressions pass locally; actual repaired remote results are pending.
 
 ## Historical Security Update: 2026-10-26
 

@@ -2,8 +2,10 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -13,6 +15,28 @@ import psutil
 from ci import ROOT, build_failure_category, environment
 from markdown_it import MarkdownIt
 from smoke import stop
+
+
+def renderer_browser(prepared: str, values: dict[str, str]) -> tuple[str, str]:
+    if sys.platform != "linux" or values.get("GITHUB_ACTIONS") != "true":
+        return prepared, "prepared"
+    browser = "/opt/google/chrome/chrome"
+    if not Path(browser).is_file():
+        raise RuntimeError("ci_sandboxed_browser_unavailable")
+    result = subprocess.run(
+        [browser, "--version"],
+        cwd=ROOT,
+        env=values,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+    )
+    match = re.fullmatch(r"Google Chrome (\d+\.\d+\.\d+\.\d+)", result.stdout.strip())
+    if match is None:
+        raise RuntimeError("ci_sandboxed_browser_version_invalid")
+    return browser, match[1]
 
 
 def run_renderer(arguments: list[str], values: dict[str, str], log: Path) -> None:
@@ -89,6 +113,7 @@ def main() -> None:
     ).stdout.strip()
     if not Path(browser).is_file():
         raise RuntimeError("prepared_chromium_required_for_mermaid_validation")
+    browser, browser_version = renderer_browser(browser, values)
     output = ROOT / "code/tools/test-results/diagrams"
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="caller-diagrams-") as temporary:
@@ -135,6 +160,7 @@ def main() -> None:
                 "result": "documentation_verified",
                 "documents": len(paths),
                 "rendered_mermaid_diagrams": len(diagrams),
+                "browser_version": browser_version,
             }
         )
     )
