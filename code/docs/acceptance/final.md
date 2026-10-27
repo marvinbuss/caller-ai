@@ -8,8 +8,11 @@ approved a sanitized source commit, branch push and draft PR. No provider/cloud/
 real phone/model call, deployment, image publication or live qualification is authorized.
 Source review is not release acceptance. All external obligations remain explicit.
 
-The current full regression runner reports runtime **384 passing cases**, management
-**407 passing cases** and tools **149 passing cases**, zero failures/errors/skips. Therefore
+The latest hosted full suites report runtime **384 passing cases**, management
+**407 passing cases** and tools **165 passing cases** on each native platform, zero
+failures/errors/skips. Native Windows, native Ubuntu and the Linux image job all succeed in
+[run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on `57b4e1d`.
+The earlier complete combined local profile passed 384/407/149. Therefore
 `local_status=passed`, `live_status=pending` and `release_status=blocked`.
 The earlier missing-media module errors are removed by actual local media implementation,
 not test deselection. Root-prerender failures are retained as history; the current local
@@ -34,9 +37,10 @@ eager-preview repair passes the complete management suite without exclusions.
 
 Qualified T042 telephony, T097 cloud metrics/alert delivery, T099 actual environment, real
 T117 protected planning/publication, T118 live acceptance, and the complete T119 release
-decision remain open. T028 has observed Ubuntu 0/1/0 assertion/cleanup evidence and T029 has
-observed documentation/render verification; T031 remains open for complete native acceptance.
-No source-only change can manufacture those results. SC-008 remains deferred, not passed.
+decision remain open: six tasks. T028/T029/T031 are complete on actual two-platform
+application, 0/1/0 assertion/cleanup, documentation/render, audit and image evidence recorded
+in [foundation acceptance](foundation.md). No source-only change can manufacture the remaining
+external results. SC-008 remains deferred, not passed.
 
 The isolated editor host retains the supported `APP_MODULE_IMPORT` selection. Its unattended
 build and the Mermaid renderer now close stdin with `subprocess.DEVNULL` instead of inheriting
@@ -101,18 +105,20 @@ native workflow acceptance and remaining live/release obligations stay open.
 
 ## Latest Verified CI Result
 
-Run [40495295307](https://github.com/marvinbuss/caller-ai/actions/runs/40495295307) on 9e76e90
-has successful native Ubuntu and Linux image jobs. Ubuntu validates 33 documents and renders
-27 diagrams with user-approved sandboxed system Chrome 155.0.8059.39; strict package audits
-report no findings. The current local follow-up passes 149 tooling cases and all repository
-gates. T029's documentation/diagram verification is complete, alongside T028's assertion gate.
+Run [40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on
+`57b4e1d9ad7bca3113e612b198af736d8d264392` passes every native Windows, native Ubuntu and
+Linux image step. Both native jobs validate 33 documents and render all 28 diagrams, using
+approved sandboxed installed Chrome 156.0.8078.48 on Windows and 156.0.8078.47 on Ubuntu.
+Both prove exact 0/1/0 assertion failure/restoration with fixture cleanup. Strict Python and
+294-coordinate frontend audits report zero findings; three actual images have zero
+HIGH/CRITICAL findings. Actual image smoke passes offline/non-root and 360/768/1440 checks.
 
-Windows still fails application tests on editor build setup with a safe `unclassified`
-category. No root cause or Windows repair is claimed. T031 plus provider, environment,
-monitoring and release tasks remain open: seven tasks, not full feature completion. All
-private feed settings remain ignored locally; no TLS/sandbox/test threshold was weakened.
+This closes T031's foundation gate, not the six external tasks above. Telephony remains
+explicitly deferred and no live/release authorization is implied. Private feed settings
+remain ignored locally; no TLS/sandbox/test threshold was weakened. Earlier Ubuntu-only
+success and Windows failures are retained in the [foundation history](foundation.md).
 
-## Current Preview Startup Repair
+## Preview Startup Repair History
 
 A fresh retained SSR module import took 34,037 ms on Windows while React Router lazily
 performed it inside its first 10-second preview request. A supported Reflex pre-compile Vite
@@ -120,8 +126,8 @@ hook now awaits that module during preview startup, under the original 180-secon
 budget. Real Node regressions distinguish awaited initialization from the deliberately
 unawaited variant. No dependency, package manager, SSR mode, vendor file or deadline changed.
 The first full Windows check passes 405 then-collected cases; the final combined runner
-passes 384 runtime/407 management/149 tools cases. The new remote native/image results remain
-pending; T031 is not closed from local evidence alone, and no global framework claim is made.
+passes 384 runtime/407 management/149 tools cases. At that snapshot the new remote results
+remained pending; local evidence alone did not close T031 or establish a global framework fix.
 
 The published eager-preview candidate ebb35db has now been checked remotely: run 40509624842
 passes Ubuntu native and image jobs but Windows still has 383 passes/24 editor setup errors.

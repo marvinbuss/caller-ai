@@ -1,4 +1,42 @@
-# Foundation Evidence: Partial Delivery
+# Foundation Acceptance Evidence
+
+## Current Foundation Acceptance: 2026-10-27
+
+T031 is complete on observed [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375),
+source `57b4e1d9ad7bca3113e612b198af736d8d264392`. All three jobs succeed; this is
+credential-free foundation acceptance, not live calling or release approval.
+
+| Check | Native Windows 2022 | Native Ubuntu 24.04 |
+|-------|---------------------|---------------------|
+| Runtime tests | 384 passed | 384 passed |
+| Management tests, including browser/editor | 407 passed | 407 passed |
+| Tooling tests | 165 passed | 165 passed |
+| Starter assertion exits | baseline 0, broken 1, restored 0 | baseline 0, broken 1, restored 0 |
+| Disposable assertion fixture | cleaned | cleaned |
+| Documentation | 33 documents, 28 Mermaid diagrams rendered | 33 documents, 28 Mermaid diagrams rendered |
+| Installed sandboxed Chrome | 156.0.8078.48 | 156.0.8078.47 |
+| Strict Python audits, backend/management/tools | 69/92/60 packages, zero findings | 68/90/59 packages, zero findings |
+| Resolved frontend audit | 294 coordinates, zero findings | 294 coordinates, zero findings |
+
+The separate Linux image job passes actual offline/non-root startup, health and browser
+checks at 360/768/1440, plus audits of all three runtime/build-stage images with zero
+HIGH/CRITICAL findings. Both native jobs pass the repository/type/Terraform/secret/publication
+gates and complete application suites without failures, errors or skips. This supplies
+SC-015/SC-016/SC-017 evidence on both declared native platforms, not a Linux-container
+substitution for native execution.
+
+The canonical temporary-root repair resolves the observed hosted editor failure; approved
+installed sandboxed Chrome resolves the subsequent Windows diagram failure. No timeout,
+assertion, TLS check or sandbox control was weakened. Temporary compiler upload steps remain
+removed and their single remote diagnostic artifact was deleted early. Private feeds remain
+only in ignored local settings.
+
+T001-T031 are complete. T042/T097/T099/T117/T118/T119 still require qualified external
+evidence or authorization; telephony remains deferred under the user's local-only scope.
+SC-008 remains deferred. The following sections preserve historical failures and recovery,
+not current open foundation gates. See the [handoff](final.md) and [release gates](release-gates.md).
+
+## Historical Delivery Snapshot
 
 **Original Snapshot**: 2026-10-23. **Status**: Local Windows behavior verified; foundation acceptance
 is incomplete. T001-T025, T027 and T030 are implemented and checked. The user authorized
@@ -19,7 +57,7 @@ The historical sections below retain their original scope and counts. The curren
 verification update is recorded separately; old missing-media and unavailable-security-fix
 statements are not current implementation claims.
 
-## Current Local Verification: 2026-10-27
+## Earlier Local Verification: 2026-10-27
 
 An earlier complete combined runner passed **384 runtime, 403 management and 119 tools cases**,
 with zero failures/errors/skips. All **33 documents and 27 Mermaid diagrams** rendered. The

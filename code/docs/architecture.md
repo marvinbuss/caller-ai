@@ -14,14 +14,15 @@ See the [runbook index](runbooks/README.md), [local call evidence](acceptance/us
 [revision evidence](acceptance/us4.md), [scaling evidence](acceptance/us6.md),
 [requirement matrix](acceptance/requirements.md) and [release gates](acceptance/release-gates.md).
 
-The current complete local runner passes 384 runtime, 407 management and 149 tooling cases.
+The earlier complete local runner passes 384 runtime, 407 management and 149 tooling cases.
 Preview startup now eagerly initializes the SSR bundle before timed page requests, using the
 supported Reflex compile hook; cold module loading remains in the unchanged build budget.
-See [preview initialization](setup.md#preview-module-initialization). Earlier failures remain
-recorded, and the changed build still requires actual new native/image CI evidence. Live metric
-delivery, qualified phone/model/storage access, real cluster enforcement and remote/native
-platform evidence remain pending. A typed injected port is not a deployed authorization
-mechanism, and local all-green components cannot mint release readiness.
+See [preview initialization](setup.md#preview-module-initialization). Latest observed
+[run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on 57b4e1d
+passes full native Windows/Ubuntu suites (384/407/165 each) and the Linux image job, completing
+T031. Earlier failures remain recorded. Live metric delivery, qualified phone/model/storage
+access and real cluster enforcement remain pending. A typed injected port is not a deployed
+authorization mechanism, and green components cannot mint release readiness.
 
 ```mermaid
 flowchart LR
@@ -89,10 +90,10 @@ The shell shows only local status and unavailable business capabilities. Its ref
 changes server-owned state through Reflex, not a client-only simulation. Development uses
 ports 3000/8001 with loopback backend binding, disabled framework telemetry and memory state.
 
-Both native Windows application smoke and actual Linux image browser smoke have passed.
-Native Linux host, remote CI, complete advisory acceptance and monitoring qualification
-remain pending. This design does not claim live capacity, alert delivery,
-production persistence, authenticated editing or real call handling.
+Both native Windows and Ubuntu application suites, actual Linux image browser smoke and
+strict package/three-image advisory gates have passed on the recorded source. Monitoring
+qualification remains pending. This design does not claim live capacity, alert delivery,
+production persistence, deployed authenticated editing or real call handling.
 
 ```mermaid
 flowchart TD
@@ -117,13 +118,13 @@ the original listener still accepts connections. Owned process trees are termina
 outcome. See [failure-gate evidence](acceptance/ci-failure-gate.md) and
 [foundation evidence](acceptance/foundation.md) for verified versus pending acceptance.
 
-## Phase 3 Transport Contracts
+## Historical Phase 3 Transport Contracts
 
-The user authorized local Phase 3 work before full foundation acceptance. The current
-call-transport suite has 25 cases: 12 callback cases pass and 13 media cases remain red until
+The user authorized local Phase 3 work before full foundation acceptance. At that snapshot the
+call-transport suite had 25 cases: 12 callback cases passed and 13 media cases remained red until
 the production media router is implemented. No pending test is skipped or excluded
-from normal pytest discovery. Historical foundation results do not mean this expanded suite
-currently passes.
+from normal pytest discovery. The current complete runtime suite passes as recorded above;
+these earlier foundation results alone did not establish that expanded-suite success.
 
 The tests compose real FastAPI/Starlette routes with separate phone-adapter and conditional
 admission doubles. Callbacks carry opaque fixture bytes, and the codec name is deliberately

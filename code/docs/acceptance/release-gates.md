@@ -1,8 +1,14 @@
 # Release Gates
 
-**Release blocked.** The current full local profile passes runtime **384**, management **407**
-and tools **149** cases with zero failures/errors/skips. Overall local status is passed.
-The runner correctly keeps live status pending and release status blocked.
+**Release blocked.** The latest full native Windows and Ubuntu CI suites each pass runtime
+**384**, management **407** and tools **165** cases with zero failures/errors/skips. The earlier
+combined local profile passed 384/407/149. Local status is passed; live status remains pending
+and release status remains blocked.
+
+T031 foundation acceptance is complete on [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375)
+at `57b4e1d`: both native jobs and the actual Linux image job succeed. Both platforms prove
+the 0/1/0 assertion gate with cleanup, render all 28 diagrams and pass strict package audits;
+actual image smoke and all three image audits pass. See [foundation evidence](foundation.md).
 
 The user explicitly authorized remaining local-only implementations with injected doubles.
 The user later separately approved sanitized source commit/push/draft-PR review. Neither scope
@@ -11,9 +17,7 @@ or live qualification. Source publication does not waive failed or missing relea
 
 | Remaining gate | Required evidence |
 |----------------|-------------------|
-| Native editor export | Complete local suite passes, and ebb35db Ubuntu/image jobs succeed, but its Windows job still has 24 editor setup errors |
 | T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
-| T031 complete native verification | Ubuntu native/image jobs pass on 9e76e90 and T028/T029 have observed evidence; Windows editor setup still fails, so full two-platform acceptance is blocked |
 | T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
 | T099 actual environment | Approved provisioned/pre-provisioned resources and real identity/probe adapters; eleven offline unavailable checks are not qualification |
 | T117 actual protected plan/publication | Reviewed identity, immutable artifacts, protected repository controls and qualified adapters; read-only blocked workflow is not publication |
@@ -97,3 +101,9 @@ success. All 33 documents/27 diagrams render with sandboxed Chrome 155.0.8059.39
 Python/frontend audits pass. T029 documentation verification closes. Windows still fails its
 application-test step with `editor_frontend_build_failed:unclassified`; T031 and release stay
 blocked. No participant study, provider/environment qualification or Windows result is invented.
+
+The subsequent canonical temporary-root repair passes hosted Windows application and assertion
+steps in run 40541941197, but its Mermaid step fails. After explicit user approval for Windows
+CI's sandboxed installed Chrome, run 40549068375 on 57b4e1d passes all three jobs, including
+Windows documentation and audits. T031 closes on that actual evidence. All historical failures
+above remain disclosed; telephony and the six external task gates remain deferred or blocked.

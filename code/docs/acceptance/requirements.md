@@ -2,9 +2,11 @@
 
 This matrix covers all FR-001 through FR-034 and SC-001 through SC-019. **No row grants release
 acceptance.** Local component tests are distinguished from pending integrated/deployed proof;
-the current complete local regression passes 384 runtime, 407 management and 149 tools cases.
-The supported preview-startup repair still requires new native Windows/Linux/image CI; earlier
-failed editor runs remain part of the evidence history.
+the earlier complete local regression passes 384 runtime, 407 management and 149 tools cases.
+Latest [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on
+57b4e1d passes all native Windows/Ubuntu and Linux image jobs, with 384/407/165 cases on each
+native platform. T031's credential-free foundation evidence is complete; earlier failed editor
+runs remain part of the evidence history. This does not qualify deployed or live behavior.
 The machine inventory keeps all entries
 `pending_qualification` except explicitly `deferred` SC-008. Read [release gates](release-gates.md).
 
@@ -22,7 +24,7 @@ The machine inventory keeps all entries
 | FR-010 committed owner epoch | [US3](us3.md), conditional commit/race tests | Actual persistence and phone continuity |
 | FR-011 handover rate limit | [US3](us3.md), rolling-window tests | Live clarification/closure behavior |
 | FR-012 bounded interruption/failure | [US1](us1.md), [US6](us6.md), deadline/cancellation tests | Actual phone/model timing |
-| FR-013 manager CRUD | [US2](us2.md), API contracts and current complete local editor passes | New candidate CI and deployed identity/storage qualification |
+| FR-013 manager CRUD | [US2](us2.md), API contracts and complete local/native CI editor passes | Deployed identity/storage qualification |
 | FR-014 public tool/MCP catalogs | [US5](us5.md), reviewed immutable definitions | Actual reviewed external connectors |
 | FR-015 durable complete revisions | [US4](us4.md), local/Cosmos-double atomic writes | Real Cosmos restart/durability |
 | FR-016 validated references | [US2](us2.md), [US4](us4.md), strict graph/cache tests | Deployed rejected-save guarantees |
@@ -34,14 +36,14 @@ The machine inventory keeps all entries
 | FR-022 secret references/detection | [Security](../security.md), [US2](us2.md), audit privacy tests | Actual approved registry/retention review |
 | FR-023 isolation and disposal | [US1](us1.md), SDK/session/cleanup privacy tests | Live provider retention and full owned-content paths |
 | FR-024 metadata-only audit | [US1](us1.md), [US2](us2.md), strict audit repositories | Actual access/retention/recovery |
-| FR-025 responsive/keyboard management | [US2](us2.md), current complete local browser/editor passes | New candidate native CI and deployment qualification |
+| FR-025 responsive/keyboard management | [US2](us2.md), complete local/native CI browser/editor passes | Deployment qualification |
 | FR-026 call-preserving scaling | [US6](us6.md), guarded drain doubles | Persistent deployed guards and live zero-disconnect profile |
 | FR-027 bounded admission/quota | [US6](us6.md), conservative capacity tests | Actual quotas/cost/global authority |
 | FR-028 telemetry and traces | [Monitoring](../runbooks/monitoring.md), SDK safe opt-in/export tests | Qualified cloud collection/alerts and real speech signals |
 | FR-029 guidance/runbooks | [Runbook index](../runbooks/README.md) | Operator review in qualified environment |
-| FR-030 foundation/CI | [Foundation](foundation.md), local health/image/failure and full regression | Observed remote CI and native second-platform evidence |
-| FR-031 no-cloud local startup | [Foundation](foundation.md), blocked-egress/offline images | Native second-platform observation |
-| FR-032 Windows/Linux support | Native Windows and real Linux images in [foundation](foundation.md) | Actual native Linux host/remote jobs |
+| FR-030 foundation/CI | [Foundation](foundation.md), full two-platform CI, image and failure gates | None for the credential-free foundation scope |
+| FR-031 no-cloud local startup | [Foundation](foundation.md), both native jobs and blocked-egress/offline images | None for local-mode startup; live remains disabled |
+| FR-032 Windows/Linux support | Native Windows 2022 and Ubuntu 24.04 in [foundation](foundation.md) | None for the declared native CI matrix |
 | FR-033 one organization | [US2](us2.md), fixed default partition/schema | Approved deployed organization boundaries |
 | FR-034 public read-only only | [US5](us5.md), assigned forbidden-action tests | Real reviewed connectors and live explanations |
 | SC-001 eligible journeys | 200 synthetic sequences in [US1](us1.md) | At least 99% of 200 eligible actual journeys |
@@ -52,16 +54,16 @@ The machine inventory keeps all entries
 | SC-006 invalid edits/protected roles | [US2](us2.md), [US4](us4.md), atomic rejection | Effective live storage/identity |
 | SC-007 twenty updates/revocations | [US4](us4.md), virtual cadence and fresh admission | Measured deployed 60-second visibility |
 | SC-008 participant study | Explicitly deferred | Not passed; no recruitment or invented threshold |
-| SC-009 responsive/keyboard tasks | [US2](us2.md), complete local browser assertions pass | New candidate native CI and deployment qualification |
+| SC-009 responsive/keyboard tasks | [US2](us2.md), complete local/native CI browser assertions pass | Deployment qualification |
 | SC-010 outage/overload/failure | [US1](us1.md), [US5](us5.md), [US6](us6.md) | Actual provider/model/storage/owner failure timing |
 | SC-011 interruption/closure | Cleanup/lifecycle tests in [US1](us1.md) | Actual one-second clear and phone acknowledgment |
 | SC-012 durable restart | [US2](us2.md), [US4](us4.md), injected Cosmos profiles | Authorized real persistence/restart execution |
 | SC-013 content cleanup/privacy | [US1](us1.md), terminal/cancel disposal and audit tests | Real provider/owned-buffer/retention review |
 | SC-014 operator diagnosis | Fixed telemetry and [runbooks](../runbooks/README.md) | Ten approved operator cases within five minutes |
-| SC-015 local foundations | [Foundation](foundation.md), real health/shell/images/full regression | Native second-platform/remote evidence |
-| SC-016 cross-platform setup | Native Windows/local Linux images | Actual native second-host execution |
-| SC-017 CI failure signal | [Assertion gate](ci-failure-gate.md), local 0/1/0 | Observed remote assertion failure and restoration |
-| SC-018 permissions/management | [US2](us2.md), auth/concurrency and full editor regression | Deployed authority and native second-platform evidence |
+| SC-015 local foundations | [Foundation](foundation.md), both native jobs and real health/shell/images | None for the credential-free foundation scope |
+| SC-016 cross-platform setup | [Foundation](foundation.md), actual Windows 2022 and Ubuntu 24.04 jobs | None for the declared native CI matrix |
+| SC-017 CI failure signal | [Assertion gate](ci-failure-gate.md), 0/1/0 with cleanup on both native jobs | None for the foundation assertion gate |
+| SC-018 permissions/management | [US2](us2.md), auth/concurrency and full local/native CI editor regression | Deployed authority qualification |
 | SC-019 no private/mutating tools | [US5](us5.md), current gateway denials | Integrated reviewed live connectors |
 
 The runner is intentionally not an automatic acceptance oracle. Raw JUnit and candidate
