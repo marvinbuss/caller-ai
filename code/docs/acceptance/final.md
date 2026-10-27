@@ -34,8 +34,8 @@ earlier passing full runs are historical, not a current green regression claim.
 
 Qualified T042 telephony, T097 cloud metrics/alert delivery, T099 actual environment, real
 T117 protected planning/publication, T118 live acceptance, and the complete T119 release
-decision remain open. T028 now has observed Ubuntu 0/1/0 assertion/cleanup evidence; T029/T031
-remain open for complete native verification, not merely wiring or partial successful steps.
+decision remain open. T028 has observed Ubuntu 0/1/0 assertion/cleanup evidence and T029 has
+observed documentation/render verification; T031 remains open for complete native acceptance.
 No source-only change can manufacture those results. SC-008 remains deferred, not passed.
 
 The isolated editor host retains the supported `APP_MODULE_IMPORT` selection. Its unattended
@@ -98,3 +98,16 @@ The later Ubuntu native job on c60f7b0 passes runtime 384 and management 403 cas
 with bounded safe build-failure categories to identify missing renderer/editor diagnostics.
 No raw failure content or private URLs are emitted, and no existing gate is relaxed. Full
 native workflow acceptance and remaining live/release obligations stay open.
+
+## Latest Verified CI Result
+
+Run [40495295307](https://github.com/marvinbuss/caller-ai/actions/runs/40495295307) on 9e76e90
+has successful native Ubuntu and Linux image jobs. Ubuntu validates 33 documents and renders
+27 diagrams with user-approved sandboxed system Chrome 155.0.8059.39; strict package audits
+report no findings. The current local follow-up passes 149 tooling cases and all repository
+gates. T029's documentation/diagram verification is complete, alongside T028's assertion gate.
+
+Windows still fails application tests on editor build setup with a safe `unclassified`
+category. No root cause or Windows repair is claimed. T031 plus provider, environment,
+monitoring and release tasks remain open: seven tasks, not full feature completion. All
+private feed settings remain ignored locally; no TLS/sandbox/test threshold was weakened.

@@ -63,6 +63,19 @@ setup with an unclassified build error. The user approved CI-only installed sand
 with recorded version; other platforms keep prepared Chromium. The new browser-selection and
 bounded-tail diagnostic regressions pass locally; actual repaired remote results are pending.
 
+The subsequent [run 40495295307](https://github.com/marvinbuss/caller-ai/actions/runs/40495295307)
+on `9e76e90ea70ce2cf5ac45be9a85ef66cff708529` confirms the repair: native Ubuntu and the
+separate Linux image job both succeed. Ubuntu reports all 33 documents/27 actual diagrams
+rendered with installed sandboxed Chrome **155.0.8059.39**, and strict Python 68/90/59 plus
+frontend 294 package audits report zero findings. No sandbox-disabling flags or host policy
+changes were used. All 149 local tooling cases and repository gates also pass.
+
+T029 documentation/command/diagram verification is complete on observed results and disclosed
+failure/recovery scope. T031 remains unchecked: the same current run's Windows application
+step fails on editor-build setup with an unclassified safe category. Neither that job nor the
+whole workflow is green. The bounded-tail improvement did not resolve or classify this failure;
+its root cause must be established separately, without dumping raw content or weakening tests.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock

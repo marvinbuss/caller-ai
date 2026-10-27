@@ -24,7 +24,7 @@ regressions. A baseline full management run reproduced 379 passes/24 export erro
 and combined runs after the change pass 403. This does not prove a global fix for framework
 intermittency. Original deadlines/SSR/assertions/dependencies/discovery and all external gates
 are retained. The failure recurred after feed isolation: stdin hardening is not a complete
-fix. Eight tasks remain open after observed T028 CI evidence; see the current records in
+fix. Seven tasks remain open after observed T028/T029 CI evidence; see the current records in
 `code/docs/acceptance/final.md` and `release-gates.md`.
 
 **Publication authorization and isolation**: the user approved committing/pushing the sanitized
@@ -42,6 +42,13 @@ errors. The separate Linux image job passes actual offline/non-root/three-width 
 strict Python/frontend/three-image audits. These observations close only T028, not T029/T031
 or any live gate. Local follow-up passes 143 tooling cases and all repository gates; safe
 bounded build-failure categories expose no raw logs and change no timeout/sandbox/assertion.
+
+**Sandbox repair evidence (9e76e90, run 40495295307)**: native Ubuntu and the Linux image job
+are fully successful. Ubuntu validates 33 documents and actually renders 27 Mermaid diagrams
+with user-approved installed sandboxed Chrome 155.0.8059.39; strict package audits pass.
+T029's setup/architecture/diagram/failure-recovery documentation verification is complete.
+Windows application tests still fail on editor build setup (`unclassified`); T031's complete
+two-platform acceptance remains blocked. No Windows pass, live approval or release is claimed.
 
 **Organization**: Setup, a complete credential-free foundation, P1 story phases US1/US2/US3/US5/US6,
 then P2 story US4, followed by cross-cutting qualification. The numeric story labels retain the
@@ -135,7 +142,7 @@ current evidence; other native/remote, full-suite, media/live and release gates 
 
 - [X] T027 Define typed runtime and management dependency ports plus deterministic local stand-ins in `code/backend/src/caller_runtime/domain/ports.py` and `code/management/management_app/services/ports.py`; make tests injectable without importing a live SDK client, sharing a private database, or inventing a production persistence substitute (after T015-T020).
 - [X] T028 Add `code/tools/scripts/verify_failure_gate.py` and `code/docs/acceptance/ci-failure-gate.md` for a disposable broken starter assertion whose nonzero result is observed locally and in CI; restore the disposable fixture without altering genuine assertions, reverting user work, or claiming an unobserved remote job passed (after T025; observed Ubuntu job 122108740893 on c60f7b0, 0/1/0 and fixture_cleaned=true; later render failure retained).
-- [ ] T029 Update `code/docs/setup.md` and `code/docs/architecture.md` with verified Windows/Linux commands, Mermaid service/mode diagrams, pre-commit installation, Docker port differences, and dependency preparation; document meaningful failure/recovery outcomes and validate the diagrams (after T021-T028).
+- [X] T029 Update `code/docs/setup.md` and `code/docs/architecture.md` with verified Windows/Linux commands, Mermaid service/mode diagrams, pre-commit installation, Docker port differences, and dependency preparation; document meaningful failure/recovery outcomes and validate the diagrams (after T021-T028; observed Ubuntu full documentation/render job on 9e76e90 and local Windows validation; failed Windows editor outcome disclosed, not T031 acceptance).
 - [X] T030 Add interrupted-startup, occupied-port, invalid-mode, and missing/stale-lock regressions in `code/backend/tests/integration/test_foundation_recovery.py` and `code/management/tests/integration/test_foundation_recovery.py`; ensure failed attempts leave no orphan processes or implicit cloud fallback (after T021, T027).
 - [ ] T031 Run the foundation quickstart and record SC-015/SC-016/SC-017 evidence in `code/docs/acceptance/foundation.md`, including two native operating systems, both real application foundations, credential-free tests, actual Docker smoke, and deliberate failure-gate results; disclose unavailable evidence rather than marking the milestone complete (after T025-T030).
 

@@ -14,7 +14,7 @@ or live qualification. Source publication does not waive failed or missing relea
 |----------------|-------------------|
 | Native editor export | Current complete management run again has 24 root-prerender setup errors; earlier green runs are historical |
 | T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
-| T029/T031 complete native verification | Ubuntu apps and T028 assertion gate pass on c60f7b0, but its Mermaid step and Windows editor setup fail; neither full native job is green |
+| T031 complete native verification | Ubuntu native/image jobs pass on 9e76e90 and T028/T029 have observed evidence; Windows editor setup still fails, so full two-platform acceptance is blocked |
 | T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
 | T099 actual environment | Approved provisioned/pre-provisioned resources and real identity/probe adapters; eleven offline unavailable checks are not qualification |
 | T117 actual protected plan/publication | Reviewed identity, immutable artifacts, protected repository controls and qualified adapters; read-only blocked workflow is not publication |
@@ -92,3 +92,9 @@ Windows editor failure remains unclassified. A user-approved follow-up selects o
 sandboxed Chrome on Ubuntu CI, records its version and fails if it is absent. Local rendering
 and all timeout/TLS/assertion controls are unchanged. Tail-based categories remain bounded and
 content-free. No success is claimed until the next actual remote result establishes it.
+
+The next actual result, run 40495295307 on 9e76e90, confirms full native Ubuntu and Linux image
+success. All 33 documents/27 diagrams render with sandboxed Chrome 155.0.8059.39, and strict
+Python/frontend audits pass. T029 documentation verification closes. Windows still fails its
+application-test step with `editor_frontend_build_failed:unclassified`; T031 and release stay
+blocked. No participant study, provider/environment qualification or Windows result is invented.
