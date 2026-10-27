@@ -34,7 +34,8 @@ earlier passing full runs are historical, not a current green regression claim.
 
 Qualified T042 telephony, T097 cloud metrics/alert delivery, T099 actual environment, real
 T117 protected planning/publication, T118 live acceptance, and the complete T119 release
-decision remain open. T028/T029/T031 still need native second-platform/observed CI evidence.
+decision remain open. T028 now has observed Ubuntu 0/1/0 assertion/cleanup evidence; T029/T031
+remain open for complete native verification, not merely wiring or partial successful steps.
 No source-only change can manufacture those results. SC-008 remains deferred, not passed.
 
 The isolated editor host retains the supported `APP_MODULE_IMPORT` selection. Its unattended
@@ -82,12 +83,18 @@ Terraform checks, 129 tools cases and 12 real-process recovery cases pass. The c
 runner still reports the management failure above. A local frontend compile reintroduced
 private lock URLs; the guard detected them and verified relocation restored the public lock.
 
-Dockerfiles now use public defaults and locks. The earlier image/audit results do not validate
-these changed build inputs: fresh public dependency/image/advisory verification is pending.
+Dockerfiles now use public defaults and locks. On source commit c60f7b0, the actual published
+Linux image job passes public-input builds, offline/non-root/three-width smoke and strict
+Python/frontend/three-image audits (Linux package counts 68/90/59, frontend 294, findings zero;
+three images HIGH/CRITICAL zero). This is observed image evidence, not live qualification.
 Local public metadata/download attempts encountered TLS failures; Windows native HTTPS could
 fetch Python metadata, without bypassing certificate checks. GitHub initially returned HTTP
 403 rate limiting. Sanitized source was then published as draft PR #1; its first Windows CI
 job failed before tests because setup-python lacked Python 3.12.15 for Windows 2022. A tested
 follow-up moves all CI helper execution into the independently locked uv tools environment.
-This observed setup failure is not T028 deliberate assertion proof or a passing native gate;
-successful remote bootstrap/test/image evidence remains pending.
+The later Ubuntu native job on c60f7b0 passes runtime 384 and management 403 cases plus the exact
+0/1/0 assertion gate with cleanup, closing T028. Its Mermaid step fails; Windows still has
+24 editor setup errors. Local follow-up passes 143 tooling cases and all repository checks,
+with bounded safe build-failure categories to identify missing renderer/editor diagnostics.
+No raw failure content or private URLs are emitted, and no existing gate is relaxed. Full
+native workflow acceptance and remaining live/release obligations stay open.

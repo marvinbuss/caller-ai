@@ -20,6 +20,33 @@ sys.modules[SPECIFICATION.name] = SMOKE
 SPECIFICATION.loader.exec_module(SMOKE)
 
 
+def test_smoke_loads_local_settings_without_shell_activation(monkeypatch, tmp_path):
+    monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
+    for key in (
+        "UV_DEFAULT_INDEX",
+        "NPM_CONFIG_REGISTRY",
+        "BUN_CONFIG_DEFAULT_REGISTRY",
+        "CI",
+        "GITHUB_ACTIONS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    settings = tmp_path / "code/.local/feeds.toml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(
+        '[environment]\nUV_DEFAULT_INDEX = "https://mirror.example.invalid/simple"\n'
+        'NPM_CONFIG_REGISTRY = "https://mirror.example.invalid/npm/"\n'
+    )
+    values = SMOKE.build_environment()
+    assert values["UV_DEFAULT_INDEX"] == "https://mirror.example.invalid/simple"
+    assert values["NPM_CONFIG_REGISTRY"] == "https://mirror.example.invalid/npm/"
+    assert values["UV_NO_SYNC"] == "1"
+    monkeypatch.setenv("BUN_CONFIG_DEFAULT_REGISTRY", "https://explicit.example.invalid/bun/")
+    assert (
+        SMOKE.build_environment()["BUN_CONFIG_DEFAULT_REGISTRY"]
+        == "https://explicit.example.invalid/bun/"
+    )
+
+
 def test_allocated_ports_are_distinct_and_released() -> None:
     ports = SMOKE.free_ports(3)
     assert len(set(ports)) == 3
@@ -121,6 +148,7 @@ def test_image_creation_is_loopback_and_hardened(images, monkeypatch: pytest.Mon
 
 def test_editor_build_module_override_survives_frontend_reinitialization(monkeypatch, tmp_path):
     commands = []
+    restored = []
     child = SimpleNamespace(wait=lambda **kwargs: 1)
 
     def spawn(command, **options):
@@ -132,6 +160,7 @@ def test_editor_build_module_override_survives_frontend_reinitialization(monkeyp
     monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345])
     monkeypatch.setattr(SMOKE.psutil, "Popen", spawn)
     monkeypatch.setattr(SMOKE, "stop", lambda processes: None)
+    monkeypatch.setattr(SMOKE, "restore_frontend_lock", lambda: restored.append(True))
     with pytest.raises(RuntimeError, match="editor_frontend_build_failed"):
         with SMOKE.running_configuration_editor(
             graph={}, identities=("manager-one",), mode="local"
@@ -139,6 +168,30 @@ def test_editor_build_module_override_survives_frontend_reinitialization(monkeyp
             pytest.fail("failed_editor_compile_was_accepted")
     assert len(commands) == 1
     assert commands[0]["APP_MODULE_IMPORT"] == "tests.editor_app"
+    assert restored == [True]
+
+
+def test_editor_build_failure_reports_only_safe_category(monkeypatch, tmp_path):
+    candidate = "sensitive-editor-fixture-must-not-leak"
+    child = SimpleNamespace(wait=lambda **options: 1)
+
+    def spawn(*arguments, **options):
+        options["stdout"].write("Prerender: Request failed for /: timeout\n" + candidate)
+        return child
+
+    monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
+    monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345])
+    monkeypatch.setattr(SMOKE.psutil, "Popen", spawn)
+    monkeypatch.setattr(SMOKE, "stop", lambda processes: None)
+    monkeypatch.setattr(SMOKE, "restore_frontend_lock", lambda: None)
+    with pytest.raises(
+        RuntimeError, match="editor_frontend_build_failed:frontend_prerender_failed"
+    ) as rejected:
+        with SMOKE.running_configuration_editor(
+            graph={}, identities=("manager-one",), mode="local"
+        ):
+            pytest.fail("failed_build_was_accepted")
+    assert candidate not in str(rejected.value)
 
 
 def test_image_cleanup_targets_owned_ids_only(images, monkeypatch: pytest.MonkeyPatch) -> None:

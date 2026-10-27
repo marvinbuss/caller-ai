@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
-import os
 import shutil
 import socket
 import ssl
@@ -15,12 +15,33 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
+from types import ModuleType
 from uuid import uuid4
 
 import httpx
 import psutil
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def build_tools() -> ModuleType:
+    specification = importlib.util.spec_from_file_location(
+        "caller_build_environment", Path(__file__).with_name("ci.py")
+    )
+    if specification is None or specification.loader is None:
+        raise RuntimeError("build_environment_unavailable")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    module.ROOT = ROOT
+    return module
+
+
+def build_environment() -> dict[str, str]:
+    return build_tools().environment()
+
+
+def restore_frontend_lock() -> None:
+    build_tools().restore_frontend_lock()
 
 
 def free_ports(count: int) -> list[int]:
@@ -114,7 +135,7 @@ def running_apps() -> Iterator[dict[str, str]]:
     }
     environment = {
         key: value
-        for key, value in os.environ.items()
+        for key, value in build_environment().items()
         if not key.startswith(("CALLER_", "AZURE_", "OPENAI_"))
     }
     environment.pop("VIRTUAL_ENV", None)
@@ -183,6 +204,7 @@ def running_apps() -> Iterator[dict[str, str]]:
                 yield urls
             finally:
                 stop(processes)
+                restore_frontend_lock()
 
 
 @contextmanager
@@ -195,7 +217,7 @@ def running_configuration_editor(
     origin = f"https://127.0.0.1:{port}"
     environment = {
         key: value
-        for key, value in os.environ.items()
+        for key, value in build_environment().items()
         if not key.startswith(("CALLER_", "AZURE_", "OPENAI_"))
     }
     environment.pop("VIRTUAL_ENV", None)
@@ -212,7 +234,7 @@ def running_configuration_editor(
                 "NPM_CONFIG_REGISTRY", "https://registry.npmjs.org/"
             ),
             "BUN_CONFIG_DEFAULT_REGISTRY": environment.get(
-                "NPM_CONFIG_REGISTRY", "https://registry.npmjs.org/"
+                "BUN_CONFIG_DEFAULT_REGISTRY", environment["NPM_CONFIG_REGISTRY"]
             ),
         }
     )
@@ -254,7 +276,9 @@ def running_configuration_editor(
                 )
                 processes.append(build)
                 if build.wait(timeout=180) != 0:
-                    raise RuntimeError("editor_frontend_build_failed")
+                    output.flush()
+                    category = build_tools().build_failure_category(directory / "process.log")
+                    raise RuntimeError("editor_frontend_build_failed:" + category)
                 environment.update(
                     {
                         "__REFLEX_SKIP_COMPILE": "true",
@@ -320,6 +344,7 @@ def running_configuration_editor(
                 raise
             finally:
                 stop(processes)
+                restore_frontend_lock()
 
                 output.flush()
                 log = ROOT / "code/management/test-results/editor-host.log"
@@ -333,7 +358,7 @@ def main() -> None:
     parser.add_argument("--editor", action="store_true")
     arguments = parser.parse_args()
     if arguments.editor:
-        values = dict(os.environ)
+        values = build_environment()
         values.pop("VIRTUAL_ENV", None)
         prepared = subprocess.run(
             [
@@ -381,7 +406,7 @@ def main() -> None:
                     if time.monotonic() - started >= 1:
                         raise RuntimeError("smoke_health_latency_exceeded")
         if arguments.browser:
-            environment = dict(os.environ, CALLER_UI_URL=urls["ui"])
+            environment = dict(build_environment(), CALLER_UI_URL=urls["ui"])
             subprocess.run(
                 [
                     "uv",

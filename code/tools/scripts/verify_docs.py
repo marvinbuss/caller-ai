@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import psutil
-from ci import ROOT, environment
+from ci import ROOT, build_failure_category, environment
 from markdown_it import MarkdownIt
 from smoke import stop
 
@@ -27,7 +27,8 @@ def run_renderer(arguments: list[str], values: dict[str, str], log: Path) -> Non
         )
         try:
             if process.wait(timeout=300) != 0:
-                raise RuntimeError("diagram_renderer_failed")
+                output.flush()
+                raise RuntimeError("diagram_renderer_failed:" + build_failure_category(log))
         finally:
             stop([process])
 

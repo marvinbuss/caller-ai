@@ -21,18 +21,40 @@ statements are not current implementation claims.
 
 ## Current Local Verification: 2026-10-27
 
-The complete combined runner now passes **384 runtime, 403 management and 119 tools cases**,
-with zero failures/errors/skips. All **33 documents and 27 Mermaid diagrams** render. The
+An earlier complete combined runner passed **384 runtime, 403 management and 119 tools cases**,
+with zero failures/errors/skips. All **33 documents and 27 Mermaid diagrams** rendered. The
 unattended editor compiler and diagram renderer close inherited stdin; regression tests enforce
 that launch contract and original timeout cleanup. Baseline management reproduced 379 passes/
 24 export errors, followed by standalone and combined 403-case passes after the change.
 This does not prove a universal cause or permanent fix for historical framework intermittency.
 No SSR mode, timeout, assertion, dependency or suite selection was relaxed.
 
-T028/T029/T031 remain open for observed remote CI and native second-platform evidence; all
+T029/T031 remain open for complete native verification; all
 qualified-provider/environment/live/release obligations remain pending. See the [current
 handoff](final.md) and [release gates](release-gates.md). The following security update and
 original tables remain historical evidence rather than another current audit run.
+
+## Observed Remote Evidence: 2026-10-27
+
+Run [40480335153](https://github.com/marvinbuss/caller-ai/actions/runs/40480335153) uses source
+commit `c60f7b0738815017777b6433b4fe4d6aa6530b46`, not the later local follow-up:
+
+| Check | Observed result |
+|-------|-----------------|
+| Native Ubuntu runtime | 384 passed |
+| Native Ubuntu management, including all browser/editor cases | 403 passed |
+| Native Ubuntu starter assertion gate | baseline 0, broken 1, restored 0, fixture cleaned; T028 complete |
+| Later Ubuntu Mermaid step | failed with generic renderer error; full native job not green |
+| Native Windows management | 379 passed, 24 editor-export setup errors |
+| Separate Linux image job | success; actual offline/non-root startup and Chromium 360/768/1440 |
+| Linux strict package audits | Python backend 68/management 90/tools 59 and frontend 294; zero findings |
+| Actual runtime/build-stage image audits | three images, zero HIGH/CRITICAL |
+
+The current local follow-up passes 143 tooling cases and all repository/type/Terraform/
+secret/publication gates. Fixed safe failure categories now distinguish sandbox, shared-library,
+package-fetch, syntax, prerender and module errors without emitting raw content. No cause of
+the generic remote renderer failure is assumed before a new observed result. No timeout,
+sandbox flag, TLS check, test or assertion was relaxed. T029/T031 and all live gates stay open.
 
 ## Historical Security Update: 2026-10-26
 

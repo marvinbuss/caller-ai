@@ -17,10 +17,14 @@ from packaging.version import Version
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 
-def test_ci_registry_defaults_are_public_and_local_overrides_are_not_hardcoded(monkeypatch):
+def test_ci_registry_defaults_are_public_and_local_overrides_are_not_hardcoded(
+    monkeypatch, tmp_path
+):
     monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
     from ci import environment
 
+    monkeypatch.setattr(ci, "ROOT", tmp_path)
     for name in ("UV_DEFAULT_INDEX", "NPM_CONFIG_REGISTRY", "BUN_CONFIG_DEFAULT_REGISTRY"):
         monkeypatch.delenv(name, raising=False)
     values = environment()
@@ -32,6 +36,95 @@ def test_ci_registry_defaults_are_public_and_local_overrides_are_not_hardcoded(m
     assert values["UV_DEFAULT_INDEX"] == "https://mirror.example.invalid/simple"
     assert values["NPM_CONFIG_REGISTRY"] == "https://mirror.example.invalid/npm/"
     assert values["BUN_CONFIG_DEFAULT_REGISTRY"] == values["NPM_CONFIG_REGISTRY"]
+    monkeypatch.setenv("BUN_CONFIG_DEFAULT_REGISTRY", "https://explicit.example.invalid/bun/")
+    assert environment()["BUN_CONFIG_DEFAULT_REGISTRY"] == "https://explicit.example.invalid/bun/"
+
+
+@pytest.mark.parametrize("continuous_integration", [False, True])
+def test_local_feed_settings_load_automatically_except_in_ci(
+    monkeypatch, tmp_path, continuous_integration
+):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
+
+    monkeypatch.setattr(ci, "ROOT", tmp_path)
+    for key in (
+        "UV_DEFAULT_INDEX",
+        "NPM_CONFIG_REGISTRY",
+        "BUN_CONFIG_DEFAULT_REGISTRY",
+        "CI",
+        "GITHUB_ACTIONS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    if continuous_integration:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    settings = tmp_path / "code/.local/feeds.toml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(
+        '[environment]\nUV_DEFAULT_INDEX = "https://mirror.example.invalid/simple"\n'
+        'NPM_CONFIG_REGISTRY = "https://mirror.example.invalid/npm/"\n'
+    )
+    values = ci.environment()
+    assert values["UV_DEFAULT_INDEX"] == (
+        "https://pypi.org/simple"
+        if continuous_integration
+        else "https://mirror.example.invalid/simple"
+    )
+    assert values["NPM_CONFIG_REGISTRY"] == (
+        "https://registry.npmjs.org/"
+        if continuous_integration
+        else "https://mirror.example.invalid/npm/"
+    )
+    assert values["BUN_CONFIG_DEFAULT_REGISTRY"] == values["NPM_CONFIG_REGISTRY"]
+    monkeypatch.setenv("UV_DEFAULT_INDEX", "https://explicit.example.invalid/simple")
+    assert ci.environment()["UV_DEFAULT_INDEX"] == "https://explicit.example.invalid/simple"
+
+
+def test_malformed_local_feed_settings_fail_without_value_disclosure(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
+
+    monkeypatch.setattr(ci, "ROOT", tmp_path)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    settings = tmp_path / "code/.local/feeds.toml"
+    settings.parent.mkdir(parents=True)
+    candidate = "not-a-url-fixture"
+    settings.write_text('[environment]\nUV_DEFAULT_INDEX = "' + candidate + '"\n')
+    with pytest.raises(ValueError, match="local_feed_settings_invalid") as rejected:
+        ci.environment()
+    assert candidate not in str(rejected.value)
+
+
+def test_local_prepare_uses_hashed_mirror_install_without_rewriting_locks(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
+
+    monkeypatch.setattr(ci, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        ci,
+        "local_feed_settings",
+        lambda values: {"UV_DEFAULT_INDEX": "https://mirror.example.invalid/simple"},
+    )
+    commands = []
+    monkeypatch.setattr(ci, "run", lambda *arguments: commands.append(arguments))
+    for name in ("backend", "management", "tools"):
+        project = tmp_path / "code" / name
+        project.mkdir(parents=True)
+        (project / ".python-version").write_text("3.12.15\n")
+        (project / "uv.lock").write_text("unchanged-lock\n")
+    ci.prepare()
+    assert not any(command[:2] == ("uv", "sync") for command in commands)
+    exports = [command for command in commands if command[:2] == ("uv", "export")]
+    installs = [command for command in commands if command[:3] == ("uv", "pip", "sync")]
+    assert len(exports) == len(installs) == 3
+    assert all("--locked" in command and "--no-emit-project" in command for command in exports)
+    assert all("--require-hashes" in command and "--python" in command for command in installs)
+    assert all(
+        (tmp_path / "code" / name / "uv.lock").read_text() == "unchanged-lock\n"
+        for name in ("backend", "management", "tools")
+    )
+    assert len([command for command in commands if "--editable" in command]) == 2
 
 
 @pytest.fixture
@@ -101,6 +194,68 @@ def test_frontend_lock_relocation_preserves_version_and_integrity(publication):
     }
     result = json.loads(publication.relocate_frontend(json.dumps(original)))
     assert result["packages"]["fixture"] == ["fixture@1.0.0", "", {}, integrity]
+
+
+def test_frontend_cleanup_command_needs_no_metadata(publication, monkeypatch, tmp_path):
+    import base64
+    import json
+
+    monkeypatch.setattr(publication, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["check_publication.py", "frontend"])
+    lock = tmp_path / "code/management/reflex.lock/bun.lock"
+    lock.parent.mkdir(parents=True)
+    integrity = "sha512-" + base64.b64encode(b"x" * 64).decode()
+    lock.write_text(
+        json.dumps(
+            {
+                "packages": {
+                    "fixture": [
+                        "fixture@1.0.0",
+                        "https://mirror.example.invalid/fixture-1.0.0.tgz",
+                        {},
+                        integrity,
+                    ]
+                }
+            }
+        )
+    )
+    assert publication.main() == 0
+    assert json.loads(lock.read_text())["packages"]["fixture"] == [
+        "fixture@1.0.0",
+        "",
+        {},
+        integrity,
+    ]
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_frontend_commands_always_restore_public_lock(monkeypatch, tmp_path, failed):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    from types import SimpleNamespace
+
+    import ci
+
+    monkeypatch.setattr(ci, "ROOT", tmp_path)
+    lock = tmp_path / "code/management/reflex.lock/bun.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("{}")
+    commands = []
+
+    def execute(command, **options):
+        commands.append(command)
+        if len(commands) == 1 and failed:
+            raise subprocess.CalledProcessError(1, command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(ci.subprocess, "run", execute)
+    if failed:
+        with pytest.raises(subprocess.CalledProcessError):
+            ci.run("uv", "run", "reflex", "export")
+    else:
+        ci.run("uv", "run", "reflex", "export")
+    assert len(commands) == 2
+    assert commands[1][-1] == "frontend"
+    assert "--no-sync" in commands[1]
 
 
 @pytest.mark.parametrize("digest", ["a" * 64, "b" * 64])
@@ -423,6 +578,46 @@ def test_documentation_structure_and_links(tmp_path: Path, monkeypatch, text, va
     else:
         with pytest.raises(ValueError):
             module.validate_documents([document], tmp_path)
+
+
+@pytest.mark.parametrize(
+    "diagnostic,category",
+    [
+        ("No usable sandbox!", "browser_sandbox_unavailable"),
+        ("libnss3.so: cannot open shared object file", "browser_dependency_unavailable"),
+        ("npm ERR! code E404", "package_fetch_failed"),
+        ("Parse error on line 3", "diagram_syntax_invalid"),
+        ("unexpected external diagnostic", "unclassified"),
+    ],
+)
+def test_diagram_renderer_reports_only_safe_failure_category(
+    tmp_path: Path, monkeypatch, diagnostic, category
+):
+    import importlib.util
+    from types import SimpleNamespace
+
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    specification = importlib.util.spec_from_file_location(
+        "caller_docs", SCRIPTS / "verify_docs.py"
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    child = SimpleNamespace(wait=lambda **options: 1)
+    stopped = []
+    candidate = "sensitive-fixture-must-not-leak"
+
+    def spawn(*arguments, **options):
+        options["stdout"].write(diagnostic + "\n" + candidate)
+        return child
+
+    monkeypatch.setattr(module.psutil, "Popen", spawn)
+    monkeypatch.setattr(module, "stop", lambda processes: stopped.extend(processes))
+    with pytest.raises(RuntimeError, match="diagram_renderer_failed:" + category) as rejected:
+        module.run_renderer(["renderer"], {}, tmp_path / "renderer.log")
+    assert candidate not in str(rejected.value)
+    assert diagnostic not in str(rejected.value)
+    assert stopped == [child]
 
 
 def test_diagram_renderer_timeout_cleans_owned_process(tmp_path: Path, monkeypatch) -> None:

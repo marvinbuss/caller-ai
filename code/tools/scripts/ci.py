@@ -3,31 +3,177 @@
 import argparse
 import os
 import subprocess
+import tempfile
+import tomllib
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def build_failure_category(log: Path) -> str:
+    try:
+        with log.open("r", encoding="utf-8", errors="replace") as source:
+            diagnostic = source.read(65536).lower()
+    except OSError:
+        return "diagnostic_unavailable"
+    categories = (
+        (
+            "browser_sandbox_unavailable",
+            (
+                "no usable sandbox",
+                "running as root without --no-sandbox",
+                "failed to move to new namespace",
+            ),
+        ),
+        (
+            "browser_dependency_unavailable",
+            ("cannot open shared object file", "host system is missing dependencies"),
+        ),
+        (
+            "package_fetch_failed",
+            ("npm err!", "npm error", "unable to verify", "certificate", "econnreset"),
+        ),
+        ("diagram_syntax_invalid", ("parse error on line", "syntax error in text")),
+        ("frontend_prerender_failed", ("prerender: request failed", "error during prerendering")),
+        ("frontend_module_missing", ("cannot find module", "err_module_not_found")),
+    )
+    for category, markers in categories:
+        if any(marker in diagnostic for marker in markers):
+            return category
+    return "unclassified"
+
+
+def local_feed_settings(values: dict[str, str]) -> dict[str, str]:
+    if any(values.get(name, "").lower() in ("true", "1") for name in ("CI", "GITHUB_ACTIONS")):
+        return {}
+    path = ROOT / "code/.local/feeds.toml"
+    if not path.exists():
+        return {}
+    try:
+        if path.is_symlink() or path.stat().st_size > 4096:
+            raise ValueError
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        if set(data) != {"environment"} or not isinstance(data["environment"], dict):
+            raise ValueError
+        settings = data["environment"]
+        allowed = {"UV_DEFAULT_INDEX", "NPM_CONFIG_REGISTRY", "BUN_CONFIG_DEFAULT_REGISTRY"}
+        if not settings or not set(settings) <= allowed:
+            raise ValueError
+        for value in settings.values():
+            if not isinstance(value, str) or any(character.isspace() for character in value):
+                raise ValueError
+            endpoint = urlsplit(value)
+            if (
+                endpoint.scheme != "https"
+                or not endpoint.hostname
+                or endpoint.username is not None
+                or endpoint.password is not None
+                or endpoint.query
+                or endpoint.fragment
+                or endpoint.port not in (None, 443)
+            ):
+                raise ValueError
+        return settings
+    except (OSError, ValueError, TypeError):
+        raise ValueError("local_feed_settings_invalid") from None
 
 
 def environment() -> dict[str, str]:
     values = dict(os.environ)
     values.pop("VIRTUAL_ENV", None)
     values.pop("UV_PROJECT_ENVIRONMENT", None)
+    settings = local_feed_settings(values)
+    for name, value in settings.items():
+        values.setdefault(name, value)
+    if settings:
+        values.setdefault("UV_NO_SYNC", "1")
     values.setdefault("UV_DEFAULT_INDEX", "https://pypi.org/simple")
     values.setdefault("NPM_CONFIG_REGISTRY", "https://registry.npmjs.org/")
-    values["BUN_CONFIG_DEFAULT_REGISTRY"] = values["NPM_CONFIG_REGISTRY"]
+    values.setdefault("BUN_CONFIG_DEFAULT_REGISTRY", values["NPM_CONFIG_REGISTRY"])
     return values
 
 
 def run(*arguments: str) -> None:
-    subprocess.run(arguments, cwd=ROOT, env=environment(), check=True, timeout=900)
+    values = environment()
+    if arguments[:2] in (("uv", "export"), ("uv", "lock")):
+        values["UV_DEFAULT_INDEX"] = "https://pypi.org/simple"
+    try:
+        subprocess.run(arguments, cwd=ROOT, env=values, check=True, timeout=900)
+    finally:
+        if "reflex" in arguments:
+            restore_frontend_lock()
+
+
+def restore_frontend_lock() -> None:
+    if not (ROOT / "code/management/reflex.lock/bun.lock").is_file():
+        return
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(ROOT / "code/tools"),
+            "--no-sync",
+            "python",
+            str(ROOT / "code/tools/scripts/check_publication.py"),
+            "frontend",
+        ],
+        cwd=ROOT,
+        env=environment(),
+        check=True,
+        timeout=30,
+    )
+
+
+def prepare_local() -> None:
+    directory = ROOT / "code/.local"
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="prepare-", dir=directory) as temporary:
+        for project in ("backend", "management", "tools"):
+            path = ROOT / "code" / project
+            python = path / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            if not python.is_file():
+                version = (path / ".python-version").read_text(encoding="utf-8").strip()
+                run("uv", "venv", "--python", version, str(path / ".venv"))
+            requirements = Path(temporary) / f"{project}.txt"
+            run(
+                "uv",
+                "export",
+                "--locked",
+                "--all-groups",
+                "--no-emit-project",
+                "--quiet",
+                "--project",
+                str(path),
+                "--format",
+                "requirements-txt",
+                "--output-file",
+                str(requirements),
+            )
+            run("uv", "pip", "sync", "--require-hashes", "--python", str(python), str(requirements))
+            if project != "tools":
+                run(
+                    "uv",
+                    "pip",
+                    "install",
+                    "--no-deps",
+                    "--python",
+                    str(python),
+                    "--editable",
+                    str(path),
+                )
 
 
 def prepare() -> None:
-    for project in ("backend", "management", "tools"):
-        arguments = ["uv", "sync", "--locked", "--project", f"code/{project}"]
-        if project != "tools":
-            arguments.extend(("--group", "dev"))
-        run(*arguments)
+    if local_feed_settings(dict(os.environ)):
+        prepare_local()
+    else:
+        for project in ("backend", "management", "tools"):
+            arguments = ["uv", "sync", "--locked", "--project", f"code/{project}"]
+            if project != "tools":
+                arguments.extend(("--group", "dev"))
+            run(*arguments)
     run(
         "uv",
         "run",
@@ -41,6 +187,8 @@ def prepare() -> None:
 
 
 def check() -> None:
+    for project in ("backend", "management", "tools"):
+        run("uv", "lock", "--check", "--offline", "--project", f"code/{project}")
     result = subprocess.run(
         [
             "git",

@@ -46,9 +46,13 @@ Always retain normal TLS verification and run the [publication check](setup.md) 
 committing. Do not publish a lock rewritten by a local private registry.
 
 ```powershell
-. ./code/.local/feeds.ps1
-uv run --directory code/management --locked --no-sync reflex export --frontend-only --no-zip
+uv run --no-project --python 3.12.15 python code/tools/scripts/ci.py prepare
+uv run --project code/tools --no-sync python code/tools/scripts/ci.py frontend
 ```
+
+The ignored `code/.local/feeds.toml` file is loaded automatically by these helpers and direct
+smoke/editor commands. No shell activation is needed. CI ignores it; public locks remain the
+shared contract, and local hash-checked installation never rewrites those Python locks.
 
 Native Windows dependency installation and production frontend export succeeded with
 Reflex 0.10.0, Bun 1.4.2 and Node 24.22.0. The saved `reflex.lock/` manifest and Bun lock

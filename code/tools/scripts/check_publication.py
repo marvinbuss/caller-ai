@@ -163,10 +163,23 @@ def relocate(root: Path, metadata: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("check", "inventory", "relocate"), nargs="?", default="check"
+        "command",
+        choices=("check", "inventory", "relocate", "frontend"),
+        nargs="?",
+        default="check",
     )
     parser.add_argument("--metadata", type=Path)
     options = parser.parse_args()
+    if options.command == "frontend":
+        try:
+            path = ROOT / "code/management/reflex.lock/bun.lock"
+            path.write_text(
+                relocate_frontend(path.read_text(encoding="utf-8")), encoding="utf-8", newline="\n"
+            )
+        except Exception:
+            print("frontend_lock_cleanup_failed", file=sys.stderr)
+            return 1
+        return 0
     if options.command == "inventory":
         print(json.dumps(inventory(ROOT)))
         return 0

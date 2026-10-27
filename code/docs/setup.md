@@ -56,11 +56,24 @@ export UV_DEFAULT_INDEX=https://pypi.org/simple
 export NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
 ```
 
-On this workstation, the approved private values are preserved only in the ignored local
-settings file. Load it with `. ./code/.local/feeds.ps1`; do not commit that file or its local
-lock backups. Keep TLS verification enabled. A prepared environment can run verification with
-`uv run --no-sync` without reinstalling its unchanged package versions. An explicit local mirror
-override can produce mirror-specific Python locks: do not publish those generated locks.
+On this workstation, the approved private values are already stored in the ignored
+`code/.local/feeds.toml` file. Tooling, frontend preparation and direct smoke/editor helpers load
+it automatically: no shell activation or extra environment-setting step is required. Explicit
+process variables still take precedence. CI ignores the local file and retains public defaults.
+Only the three registry variables are accepted; malformed/unsafe URLs fail with a fixed error
+without echoing their values. Do not commit this file or local lock backups. TLS stays verified.
+
+For local preparation, the helper exports exact hashed requirements from the checked public
+locks, installs through the automatically configured mirror into each project's own environment,
+and installs the two editable local applications without changing dependency versions. The real
+three-environment preparation and Terraform preparation passed with all public Python locks
+byte-identical afterward. Prepared verification uses no-sync internally, while `ci.py check`
+still explicitly validates all three public locks offline. No frozen/stale-lock bypass is used.
+Frontend helpers and direct smoke/editor shutdown also restore registry-relative saved Bun
+lock entries automatically, including after failed builds. Versions and integrity values are
+preserved. The actual cleanup helper passed against the current lock without metadata changes;
+no manual post-build lock repair is required. The publication guard remains a final independent
+check and still rejects private values if someone stages a local settings file forcibly.
 
 The publication guard scans tracked and untracked nonignored files and reports filenames,
 not matching endpoint values:
@@ -89,11 +102,16 @@ uv sync --project code/management --locked --group dev
 uv sync --project code/tools --locked
 ```
 
-The equivalent portable helper is:
+The portable helper automatically selects local mirrors where the ignored settings file exists.
+Its bootstrap uses only standard-library Python before installing the tools dependencies:
 
 ```text
-uv run --project code/tools --locked python code/tools/scripts/ci.py prepare
+uv run --no-project --python 3.12.15 python code/tools/scripts/ci.py prepare
 ```
+
+The direct `uv sync` commands above are the public-registry/CI alternative, not the local mirror
+bootstrap. Use the helper here to keep private registry URLs out of canonical locks. No `.env`
+file is evaluated as shell code and no workstation configuration is loaded by the shipped apps.
 
 Missing or stale locks must fail. Do not replace `--locked` with an implicit dependency update.
 The backend alone includes the OpenAI Agents SDK; configuration CRUD does not require that
