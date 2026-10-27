@@ -31,6 +31,8 @@ Access to a graph in the manager UI does not authorize reproducing its content i
 
 | Observation | Action and exit condition |
 |---|---|
+| Saving | This request has not acknowledged a commit. Earlier Saved messages are cleared before the request starts. Do not treat the disabled button or prior revision as success for this attempt; wait for its current result. |
+| Save unavailable, Unsaved | The request did not acknowledge success. Preserve the draft and classify the failure; do not infer that an old Saved message proves this attempt committed. Confirm the authoritative revision before any approved retry. |
 | 401, expired session, socket refused | Reauthenticate through configured OIDC, with a fresh Reflex state token if switching actor. Check exact tenant/issuer/distinct audiences and clock without printing tokens. Exit when API and events agree on the authorized manager. |
 | 403 or CSRF denial | Check manager role/scope and exact same-origin HTTPS/CSRF flow. Do not trust an actor header, put a bearer in browser storage or grant a runtime role manager access. Exit only after the intended authorized identity succeeds. |
 | 428 | Start from a fresh authorized GET and retain its exact strong ETag. The editor normally does this; do not fabricate a wildcard precondition. |

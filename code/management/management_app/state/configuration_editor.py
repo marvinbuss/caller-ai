@@ -665,6 +665,7 @@ class ConfigurationEditorState(rx.State):
         try:
             draft = self._editing()
             self.busy = True
+            self.status = "Saving"
             services = self._services()
             yield
             response = await services.request(
@@ -693,6 +694,7 @@ class ConfigurationEditorState(rx.State):
                 self.status = "Unsaved"
             self.generation += 1
         except Exception:
+            self.status = "Unsaved"
             self.error = "Save unavailable. Unsaved edits retained."
         finally:
             self.busy = False

@@ -1,6 +1,12 @@
 # Release Gates
 
-**Release blocked; T031 root-cause investigation remains open.** Diagnostic
+**Release blocked; historical investigation closed for now by the user.** Its cause was
+not reproduced, not certified repaired. T031 tracks ordinary verification of the separate
+save-status change rather than more diagnosis of that historical issue. The complete local
+profile passes 384/413/165 cases with zero failures/errors/skips; current native/image checks
+and all external gates remain required. No test or assertion is waived.
+
+Earlier diagnostic
 [run 40590188047](https://github.com/marvinbuss/caller-ai/actions/runs/40590188047) on 6b7f03a
 passes all three jobs, including 384/407/165 tests per native platform, all original and
 stronger keyboard assertions, assertion/cleanup gates, diagrams, package audits and image
@@ -30,7 +36,7 @@ or live qualification. Source publication does not waive failed or missing relea
 
 | Remaining gate | Required evidence |
 |----------------|-------------------|
-| T031 native regression | Diagnostic 6b7f03a passes full native/image gates; reproduce and explain/repair the earlier post-save missing-community failure without retrying away or weakening assertions |
+| T031 current verification | Historical investigation closed for now by user direction; verify the separate save-status repair with required native/image checks, retaining every original assertion |
 | T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
 | T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
 | T099 actual environment | Approved provisioned/pre-provisioned resources and real identity/probe adapters; eleven offline unavailable checks are not qualification |

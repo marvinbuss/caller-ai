@@ -2,7 +2,14 @@
 
 ## Status
 
-**Latest diagnostic CI passes; root cause remains unresolved.**
+**Historical investigation closed for now at the user's direction.** Its cause was not
+reproduced; closure is not certification of a root-cause repair. Preserve assertions/history
+and move on unless a new failing check or user request reopens it. The separate save-status
+repair has six red/green regressions; its complete local profile passes 384 runtime, 413
+management and 165 tools cases with zero failures/errors/skips. T031 now tracks normal
+changed-source native/image verification, while six external tasks remain open.
+
+**Earlier diagnostic CI passes; root cause remains unresolved.**
 [Run 40590188047](https://github.com/marvinbuss/caller-ai/actions/runs/40590188047) on 6b7f03a
 passes all Windows/Ubuntu/image steps, with 384/407/165 cases on each native platform and the
 stronger keyboard assertions intact. This is verified probe execution, not a reproduced fix.

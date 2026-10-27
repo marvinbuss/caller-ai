@@ -189,6 +189,68 @@ def test_success_advances_etag_and_clears_only_saved_validation_state(draft) -> 
     assert draft.graph["agents"][3]["prompt"] == "Synthetic saved value"
 
 
+@pytest.mark.parametrize("previous_status", ["Saved", "Saved; audit pending"])
+@pytest.mark.parametrize("outcome", ["saved", "audit_pending", "unavailable"])
+def test_save_acknowledgment_belongs_to_the_current_request(
+    draft, previous_status, outcome
+) -> None:
+    from types import SimpleNamespace
+
+    import httpx
+
+    from management_app.state.configuration_editor import ConfigurationEditorState
+
+    requests = []
+
+    async def request(*args, **kwargs):
+        requests.append(kwargs)
+        if outcome == "unavailable":
+            raise RuntimeError("synthetic_transport_unavailable")
+        return httpx.Response(
+            200,
+            json={**copy.deepcopy(kwargs["graph"]), "id": "revision-two"},
+            headers={
+                "ETag": '"etag-two"',
+                "X-Audit-Status": "pending" if outcome == "audit_pending" else "complete",
+            },
+        )
+
+    state = SimpleNamespace(
+        busy=False,
+        status=previous_status,
+        errors={},
+        error="",
+        generation=0,
+        router=SimpleNamespace(
+            session=SimpleNamespace(session_id="fixture-sid", client_token="fixture-token")
+        ),
+        _editing=lambda: draft,
+        _services=lambda: SimpleNamespace(request=request),
+    )
+
+    async def scenario():
+        submission = ConfigurationEditorState.save.fn(state)
+        try:
+            await anext(submission)
+            assert state.busy and state.status == "Saving"
+            assert not requests
+            with pytest.raises(StopAsyncIteration):
+                await anext(submission)
+            assert len(requests) == 1 and not state.busy
+            if outcome == "unavailable":
+                assert state.status == "Unsaved"
+                assert state.error == "Save unavailable. Unsaved edits retained."
+                assert draft.etag == '"etag-one"'
+            else:
+                expected = "Saved; audit pending" if outcome == "audit_pending" else "Saved"
+                assert state.status == expected and not state.error
+                assert draft.etag == '"etag-two"'
+        finally:
+            await submission.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_submitted_catalog_cannot_approve_its_own_action(validator, capability_graph) -> None:
     graph = copy.deepcopy(capability_graph)
     reviewed = copy.deepcopy(graph["mcpConnections"][0]["reviewedCapabilityCatalog"][0])

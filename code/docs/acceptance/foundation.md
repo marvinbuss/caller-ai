@@ -1,6 +1,36 @@
 # Foundation Verification Evidence
 
-## Current Diagnostic Outcome: 2026-10-27
+## Investigation Disposition: 2026-10-27
+
+At the user's explicit direction, the historical missing-community investigation is closed
+for now because its cause was not reproduced. This is a work disposition, not a verified
+root-cause repair. Preserve its failure history and every original/stronger assertion; a
+new failing check or user request can reopen it. T031 requires ordinary current-change
+verification, not further explanation of that historical issue. Pending/failed checks and
+the six external live/release gates are not waived.
+
+## Current Save Acknowledgment Repair: 2026-10-27
+
+A deterministic handler-level check reproduces a separate acknowledgment defect: after a
+previous Saved or Saved; audit pending outcome, a new request emits busy=true while leaving
+that previous success visible. All six new cases fail against the unchanged handler. The
+handler now sets Saving before its initial yield and Unsaved on request exception; the same
+six cases pass, covering normal commit, pending audit and unavailable transport from both
+prior statuses. All 41 draft/API-client cases pass locally. No frontend compilation, timing
+retry or external service is involved in this reproduction.
+
+The complete local profile now passes 384 runtime, 413 management and 165 tooling cases,
+zero failures/errors/skips, with local_status=passed, live_status=pending and release_status=blocked.
+All repository/type/Terraform/secret/publication checks pass. The changed save-sequence
+diagram actually renders with prepared Chromium and nonempty SVG checks; its initial
+semicolon-label syntax error was corrected without changing renderer controls.
+This repairs stale success acknowledgment, not a proven cause of the historical missing
+community. Full native/image verification of the changed handler is still required. T031
+tracks those checks, not the now-closed historical investigation. The six external tasks
+remain open; no timeout, assertion or live-mode boundary changes.
+See the [save contract and sequence](../configuration-guide.md#save-conflict-and-recovery).
+
+## Earlier Diagnostic Outcome: 2026-10-27
 
 [Run 40590188047](https://github.com/marvinbuss/caller-ai/actions/runs/40590188047) on
 `6b7f03a0d2f127e06cfba4b82f68f9cd885bc483` passes every Windows, Ubuntu and Linux image step.

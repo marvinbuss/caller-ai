@@ -16,7 +16,23 @@ that is requirements approval, not proof that any task below is implemented.
 Write story contract/unit/integration tests before the behavior they specify, observe meaningful
 failures, then implement and rerun. Generated tests require reviewed assertions and recorded results.
 
-**Current diagnostic result (2026-10-27)**: run 40590188047 on
+**Investigation disposition (2026-10-27)**: at the user's explicit direction, the historical
+missing-community investigation is closed for now because its cause was not reproduced.
+Preserve failure history and every original/stronger assertion; only a new failure or user
+request reopens diagnosis. T031 tracks ordinary current-change verification, not more
+explanation of that historical issue. No pending or failed check, reviewer decision or
+external gate is converted into success.
+
+**Current acknowledgment repair (2026-10-27)**: six deterministic state-handler cases
+reproduce stale Saved/Saved; audit pending while a new save is busy. Setting Saving before
+the initial yield and Unsaved on request exception makes all six pass; the complete draft
+slice passes 41 cases. This is a demonstrated acknowledgment defect, not an established
+cause of the missing-community failure. The complete local profile passes 384 runtime,
+413 management and 165 tooling cases with zero failures/errors/skips. Full changed-handler
+native/image checks remain pending; T031 and six external gates stay open. No budget or
+assertion is relaxed; the historical investigation itself is closed for now as directed.
+
+**Earlier diagnostic result (2026-10-27)**: run 40590188047 on
 `6b7f03a0d2f127e06cfba4b82f68f9cd885bc483` passes all Windows/Ubuntu/image steps. Each native
 job passes 384 runtime/407 management/165 tooling cases, including the stronger keyboard
 assertions and all original persistence checks, plus failure/cleanup, render and audit gates.
@@ -178,7 +194,7 @@ current evidence; other native/remote, full-suite, media/live and release gates 
 - [X] T028 Add `code/tools/scripts/verify_failure_gate.py` and `code/docs/acceptance/ci-failure-gate.md` for a disposable broken starter assertion whose nonzero result is observed locally and in CI; restore the disposable fixture without altering genuine assertions, reverting user work, or claiming an unobserved remote job passed (after T025; observed Ubuntu job 122108740893 on c60f7b0, 0/1/0 and fixture_cleaned=true; later render failure retained).
 - [X] T029 Update `code/docs/setup.md` and `code/docs/architecture.md` with verified Windows/Linux commands, Mermaid service/mode diagrams, pre-commit installation, Docker port differences, and dependency preparation; document meaningful failure/recovery outcomes and validate the diagrams (after T021-T028; observed Ubuntu full documentation/render job on 9e76e90 and local Windows validation; failed Windows editor outcome disclosed, not T031 acceptance).
 - [X] T030 Add interrupted-startup, occupied-port, invalid-mode, and missing/stale-lock regressions in `code/backend/tests/integration/test_foundation_recovery.py` and `code/management/tests/integration/test_foundation_recovery.py`; ensure failed attempts leave no orphan processes or implicit cloud fallback (after T021, T027).
-- [ ] T031 Run the foundation quickstart and record SC-015/SC-016/SC-017 evidence in `code/docs/acceptance/foundation.md`, including two native operating systems, both real application foundations, credential-free tests, actual Docker smoke, and deliberate failure-gate results; disclose unavailable evidence rather than marking the milestone complete (after T025-T030; earlier green run 40549068375 on 57b4e1d retained, but reopened after run 40552023091 on 78c54ba fails Ubuntu's keyboard persistence assertion; current local probe blocked by compiler timeout, no repair claimed).
+- [ ] T031 Run the foundation quickstart and record SC-015/SC-016/SC-017 evidence in `code/docs/acceptance/foundation.md`, including two native operating systems, both real application foundations, credential-free tests, actual Docker smoke, and deliberate failure-gate results; disclose unavailable evidence rather than marking the milestone complete (after T025-T030; historical investigation closed for now at user direction, not a verified root-cause repair; current save-status repair passes the complete 384/413/165 local profile and repository gates, but its changed-source native/image verification remains pending; all original assertions retained).
 
 **Checkpoint: Foundation MVP**. Stop here for the initial repository delivery. Both apps are
 locally usable and CI is meaningful; live call handling, agent editing, cloud resources, and

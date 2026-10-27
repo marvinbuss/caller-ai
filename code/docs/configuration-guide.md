@@ -135,9 +135,12 @@ Reauthorization belongs to later explicit permission administration.
 ## Save, Conflict and Recovery
 
 Text fields buffer typing locally and flush on blur, preventing server round trips from
-dropping keystrokes. Save shows a busy/disabled state and publishes the complete graph with
-its original exact strong ETag. Publication atomically creates a revision, advances `active`
-and orders permission changes. It never writes a partial configuration.
+dropping keystrokes. Save replaces any previous success message with Saving before emitting
+its busy/disabled state and publishing the complete graph with its original exact strong ETag.
+Saved or Saved; audit pending acknowledges only the current returned revision. A request
+failure returns to Unsaved and retains the draft, rather than leaving an earlier success
+visible. Publication atomically creates a revision, advances `active` and orders permission
+changes. It never writes a partial configuration.
 
 ```mermaid
 sequenceDiagram
@@ -146,13 +149,18 @@ sequenceDiagram
     participant API as Management API
     participant Store as Management-owned configuration partition
     Manager->>Editor: Create or edit configuration
+    Editor-->>Manager: Saving, previous acknowledgment cleared
     Editor->>API: Complete graph with session, CSRF and If-Match
     API->>Store: Conditional atomic revision, pointer and policy batch
     alt Commit succeeds
         Store-->>Editor: Complete revision and new ETag
+        Editor-->>Manager: Saved for the returned revision
     else Invalid graph or stale ETag
         Store-->>Editor: Safe validation or conflict result
-        Editor-->>Manager: Original unsaved values retained
+        Editor-->>Manager: Unsaved, original values retained
+    else Request unavailable
+        API-->>Editor: Safe unavailable outcome
+        Editor-->>Manager: Unsaved, original values retained
     end
 ```
 
