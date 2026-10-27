@@ -83,6 +83,14 @@ check still has 379 passes and 24 `frontend_prerender_failed` setup errors (259.
 so this separate encoding defect does not clear T031. The remaining preview timeout is not
 worked around through npm, another SSR mode, vendor changes, retries or increased limits.
 
+Published encoding repair `9517f07ba8a6249fd6647f97282c08743fc173ac` triggered
+[run 40500604711](https://github.com/marvinbuss/caller-ai/actions/runs/40500604711).
+Its native Windows job 122177030397 still reports failure. The detailed log cannot currently
+be inspected because the REST API is rate-limited; GraphQL check metadata confirms the failed
+job but does not establish its inner error category. The isolated UTF-8 regression, all 15
+smoke-helper cases, all 149 tooling cases and repository gates pass locally. T031 stays open;
+no root-cause claim for the remaining build failure or repeated green-run retry is made.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock
