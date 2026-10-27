@@ -112,6 +112,15 @@ zero failures/errors/skips, after the actual Node-ordering regressions were adde
 type/Terraform/secret/publication checks pass. This does not substitute for the new native CI
 and actual image results for the changed frontend build; T031 remains pending those results.
 
+Published candidate `ebb35db0e9d774e004d9281090306c6202b78881` is now observed in
+[run 40509624842](https://github.com/marvinbuss/caller-ai/actions/runs/40509624842).
+Ubuntu native and image jobs succeed, but native Windows reports **383 passes/24 editor
+setup errors** with a still-unclassified safe build category. The local complete pass is
+therefore not a full cross-platform repair, and T031 remains open. Safe classification now
+strips ANSI sequences internally and recognizes encoding/type/missing-file errors, with
+red-first regressions and all 153 local tooling cases/repository gates passing. No raw log
+body is published and no request/build budget or security boundary is changed.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock

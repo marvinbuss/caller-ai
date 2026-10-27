@@ -122,3 +122,9 @@ unawaited variant. No dependency, package manager, SSR mode, vendor file or dead
 The first full Windows check passes 405 then-collected cases; the final combined runner
 passes 384 runtime/407 management/149 tools cases. The new remote native/image results remain
 pending; T031 is not closed from local evidence alone, and no global framework claim is made.
+
+The published eager-preview candidate ebb35db has now been checked remotely: run 40509624842
+passes Ubuntu native and image jobs but Windows still has 383 passes/24 editor setup errors.
+Thus T031 is still blocked despite the observed complete local pass. A diagnostic-only
+follow-up normalizes ANSI internally and adds fixed encoding/type/file categories; all 153
+tooling cases and repository checks pass. No raw content or private feed URL is emitted.

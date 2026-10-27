@@ -587,6 +587,10 @@ def test_documentation_structure_and_links(tmp_path: Path, monkeypatch, text, va
         ("libnss3.so: cannot open shared object file", "browser_dependency_unavailable"),
         ("npm ERR! code E404", "package_fetch_failed"),
         ("Parse error on line 3", "diagram_syntax_invalid"),
+        ("Prerender:" + chr(27) + "[0m Request failed for /", "frontend_prerender_failed"),
+        ("UnicodeDecodeError: synthetic process output", "text_encoding_failed"),
+        ("TypeError: synthetic Python build failure", "build_type_error"),
+        ("FileNotFoundError: synthetic build path", "build_file_missing"),
         ("unexpected external diagnostic", "unclassified"),
     ],
 )

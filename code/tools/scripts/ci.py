@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 import subprocess
 import tempfile
 import tomllib
@@ -19,6 +20,7 @@ def build_failure_category(log: Path) -> str:
             diagnostic = source.read(65536).decode("utf-8", errors="replace").lower()
     except OSError:
         return "diagnostic_unavailable"
+    diagnostic = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", diagnostic)
     categories = (
         (
             "browser_sandbox_unavailable",
@@ -39,6 +41,9 @@ def build_failure_category(log: Path) -> str:
         ("diagram_syntax_invalid", ("parse error on line", "syntax error in text")),
         ("frontend_prerender_failed", ("prerender: request failed", "error during prerendering")),
         ("frontend_module_missing", ("cannot find module", "err_module_not_found")),
+        ("text_encoding_failed", ("unicodedecodeerror", "unicodeencodeerror")),
+        ("build_type_error", ("typeerror:",)),
+        ("build_file_missing", ("filenotfounderror:",)),
     )
     for category, markers in categories:
         if any(marker in diagnostic for marker in markers):

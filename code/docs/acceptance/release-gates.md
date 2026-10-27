@@ -11,7 +11,7 @@ or live qualification. Source publication does not waive failed or missing relea
 
 | Remaining gate | Required evidence |
 |----------------|-------------------|
-| Native editor export | Current complete local suite passes with eager preview initialization; new Windows CI and changed-image evidence still required |
+| Native editor export | Complete local suite passes, and ebb35db Ubuntu/image jobs succeed, but its Windows job still has 24 editor setup errors |
 | T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
 | T031 complete native verification | Ubuntu native/image jobs pass on 9e76e90 and T028/T029 have observed evidence; Windows editor setup still fails, so full two-platform acceptance is blocked |
 | T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
