@@ -1,5 +1,11 @@
 # Release Gates
 
+**Current CI blocker:** run 40597358226 on 4128902 passes Ubuntu/images, Windows 384/413/165
+tests, assertion restoration and approved sandboxed Chrome startup. Windows diagram rendering
+then reaches the unchanged 300-second limit; its package audit is skipped. Investigation is
+parked for now at the user's direction, but this failed gate still blocks T031/merge/release.
+No retry, further timeout increase, sandbox change or assertion waiver is made.
+
 **Release blocked; historical investigation closed for now by the user.** Its cause was
 not reproduced, not certified repaired. T031 tracks ordinary verification of the separate
 save-status change rather than more diagnosis of that historical issue. The complete local
@@ -36,7 +42,7 @@ or live qualification. Source publication does not waive failed or missing relea
 
 | Remaining gate | Required evidence |
 |----------------|-------------------|
-| T031 current verification | Historical investigation closed for now by user direction; verify the separate save-status repair with required native/image checks, retaining every original assertion |
+| T031 current verification | Investigations parked; actual Windows documentation gate still times out after 300 seconds on 4128902, so full required CI remains blocked rather than passed |
 | T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
 | T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
 | T099 actual environment | Approved provisioned/pre-provisioned resources and real identity/probe adapters; eleven offline unavailable checks are not qualification |

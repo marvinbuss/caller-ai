@@ -9,7 +9,23 @@ new failing check or user request can reopen it. T031 requires ordinary current-
 verification, not further explanation of that historical issue. Pending/failed checks and
 the six external live/release gates are not waived.
 
-## Current Windows Documentation Follow-up: 2026-10-27
+## Current Verification Boundary: 2026-10-27
+
+[Run 40597358226](https://github.com/marvinbuss/caller-ai/actions/runs/40597358226) on
+`4128902002ae60e997605c10263b4187bc7ad8f5` passes native Ubuntu and Linux images. Windows
+passes all 384 runtime/413 management/165 tooling cases and the assertion gate. Its approved
+30-second sandboxed Chrome launch/version probe succeeds, then an actual diagram renderer
+exceeds the unchanged 300-second bound in run_renderer. The later Windows package audit
+does not execute. The complete Windows job and workflow are not green.
+
+No renderer root cause is established. At the user's direction to move on when an error
+cannot be found, this renderer investigation is also parked for now; no further retry,
+timeout increase, sandbox change or diagnostic upload is made. Neither disposition converts
+the failed documentation gate into success. T031 remains blocked only by that required
+verification, not by further investigation of the closed missing-community issue. All six
+external tasks remain pending; live/release acceptance is still blocked.
+
+## Earlier Windows Documentation Follow-up: 2026-10-27
 
 [Run 40595697117](https://github.com/marvinbuss/caller-ai/actions/runs/40595697117) on
 `c0836e73c6cafc851a5e94774eb663a65fc333af` passes native Ubuntu and Linux images. Windows

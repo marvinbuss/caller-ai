@@ -14,6 +14,14 @@ See the [runbook index](runbooks/README.md), [local call evidence](acceptance/us
 [revision evidence](acceptance/us4.md), [scaling evidence](acceptance/us6.md),
 [requirement matrix](acceptance/requirements.md) and [release gates](acceptance/release-gates.md).
 
+The current local profile passes 384 runtime/413 management/165 tooling cases. Run 40597358226
+on 4128902 passes Ubuntu/images and Windows tests/assertion checks; Windows documentation
+rendering then hits the unchanged 300-second bound after successful sandboxed browser startup.
+That required CI gate remains blocked. The historical issue and renderer investigation are
+parked for now at user direction, without certifying a root-cause fix or waiving checks.
+
+**Earlier verification history:**
+
 The earlier complete local runner passes 384 runtime, 407 management and 149 tooling cases.
 Preview startup now eagerly initializes the SSR bundle before timed page requests, using the
 supported Reflex compile hook; cold module loading remains in the unchanged build budget.

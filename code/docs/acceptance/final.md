@@ -2,6 +2,15 @@
 
 ## Status
 
+**Current required CI blocked by Windows documentation rendering.** Run
+[40597358226](https://github.com/marvinbuss/caller-ai/actions/runs/40597358226) on 4128902
+passes Ubuntu/images and all Windows 384/413/165 tests plus the assertion gate. The approved
+30-second Chrome startup check passes; a diagram render then exceeds its unchanged 300-second
+bound, and Windows package auditing does not execute. The renderer investigation is parked
+for now under the user's direction to move on, not certified repaired or waived. T031 stays
+unchecked for the failed required gate; six external tasks remain open. No more diagnosis
+of the historical missing-community issue is required. See [current evidence](foundation.md).
+
 **Historical investigation closed for now at the user's direction.** Its cause was not
 reproduced; closure is not certification of a root-cause repair. Preserve assertions/history
 and move on unless a new failing check or user request reopens it. The separate save-status

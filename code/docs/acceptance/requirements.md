@@ -2,17 +2,13 @@
 
 This matrix covers all FR-001 through FR-034 and SC-001 through SC-019. **No row grants release
 acceptance.** Local component tests are distinguished from pending integrated/deployed proof;
-the earlier complete local regression passes 384 runtime, 407 management and 149 tools cases.
-Earlier successful [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on
-57b4e1d passes all native Windows/Ubuntu and Linux image jobs, with 384/407/165 cases on each
-native platform. Later run 40552023091 on 78c54ba passes Windows/images but fails one Ubuntu
-keyboard persistence assertion (384 runtime passes, 406 management passes/one failure).
-T031 is reopened; the new read-only browser probe is locally blocked by compiler timeout.
-See [current evidence](foundation.md). This does not qualify deployed or live behavior.
-Subsequent diagnostic run 40590188047 on 6b7f03a passes every native/image step and all
-384/407/165 native cases, including the stronger browser assertions. The earlier failure
-did not recur; its root cause and the local compiler timeout remain unresolved, so T031
-stays open rather than treating this probe as a demonstrated application repair.
+the complete local profile passes 384 runtime, 413 management and 165 tools cases after the
+red-first save-acknowledgment repair. Current run 40597358226 on 4128902 passes native Ubuntu,
+Linux images and all Windows tests/assertion checks, but Windows diagram rendering exceeds
+300 seconds after successful sandboxed Chrome startup. Its later package audit is skipped;
+T031's complete CI gate is not green. The unreproduced historical issue and renderer
+investigation are parked for now by user direction, not declared root-cause fixes or passed
+checks. [Foundation evidence](foundation.md) retains all earlier successes/failures.
 The machine inventory keeps all entries
 `pending_qualification` except explicitly `deferred` SC-008. Read [release gates](release-gates.md).
 
@@ -47,9 +43,9 @@ The machine inventory keeps all entries
 | FR-027 bounded admission/quota | [US6](us6.md), conservative capacity tests | Actual quotas/cost/global authority |
 | FR-028 telemetry and traces | [Monitoring](../runbooks/monitoring.md), SDK safe opt-in/export tests | Qualified cloud collection/alerts and real speech signals |
 | FR-029 guidance/runbooks | [Runbook index](../runbooks/README.md) | Operator review in qualified environment |
-| FR-030 foundation/CI | [Foundation](foundation.md), earlier two-platform CI, image and failure gates | Current Ubuntu keyboard persistence regression and full native revalidation |
+| FR-030 foundation/CI | [Foundation](foundation.md), passing native application/image/assertion checks | Windows documentation-render gate and subsequent package audit |
 | FR-031 no-cloud local startup | [Foundation](foundation.md), both native jobs and blocked-egress/offline images | None for local-mode startup; live remains disabled |
-| FR-032 Windows/Linux support | Earlier native Windows 2022 and Ubuntu 24.04 in [foundation](foundation.md) | Repair current Ubuntu regression and revalidate the declared matrix |
+| FR-032 Windows/Linux support | Current native application suites on both platforms in [foundation](foundation.md) | Complete required Windows documentation/audit job; historical investigation closed |
 | FR-033 one organization | [US2](us2.md), fixed default partition/schema | Approved deployed organization boundaries |
 | FR-034 public read-only only | [US5](us5.md), assigned forbidden-action tests | Real reviewed connectors and live explanations |
 | SC-001 eligible journeys | 200 synthetic sequences in [US1](us1.md) | At least 99% of 200 eligible actual journeys |
@@ -66,7 +62,7 @@ The machine inventory keeps all entries
 | SC-012 durable restart | [US2](us2.md), [US4](us4.md), injected Cosmos profiles | Authorized real persistence/restart execution |
 | SC-013 content cleanup/privacy | [US1](us1.md), terminal/cancel disposal and audit tests | Real provider/owned-buffer/retention review |
 | SC-014 operator diagnosis | Fixed telemetry and [runbooks](../runbooks/README.md) | Ten approved operator cases within five minutes |
-| SC-015 local foundations | [Foundation](foundation.md), earlier both-native and real health/shell/image results | Current native regression; no all-green current acceptance |
+| SC-015 local foundations | [Foundation](foundation.md), passing local/full native application and image checks | Windows documentation gate; no all-green complete current CI acceptance |
 | SC-016 cross-platform setup | [Foundation](foundation.md), actual Windows 2022 and Ubuntu 24.04 jobs | None for the declared native CI matrix |
 | SC-017 CI failure signal | [Assertion gate](ci-failure-gate.md), 0/1/0 with cleanup on both native jobs | None for the foundation assertion gate |
 | SC-018 permissions/management | [US2](us2.md), auth/concurrency and full local/native CI editor regression | Deployed authority qualification |
