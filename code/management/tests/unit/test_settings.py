@@ -57,3 +57,61 @@ def test_external_connections_are_blocked() -> None:
     with socket.socket() as connection:
         with pytest.raises(SocketConnectBlockedError):
             connection.connect(("203.0.113.10", 443))
+
+
+def test_preview_warmup_hook_is_registered_and_idempotent() -> None:
+    from rxconfig import PreviewWarmupPlugin, config
+
+    plugin = next(value for value in config.plugins if isinstance(value, PreviewWarmupPlugin))
+    tasks = []
+    plugin.pre_compile(add_modify_task=lambda path, modify: tasks.append((path, modify)))
+    assert len(tasks) == 1 and tasks[0][0] == "vite.config.js"
+    original = (
+        "export default defineConfig(() => ({plugins: "
+        "[alwaysUseReactDomServerNode(), reactRouter()]}));"
+    )
+    transformed = tasks[0][1](original)
+    assert transformed.count("function callerPreviewWarmup()") == 1
+    assert transformed.count("callerPreviewWarmup(),") == 1
+    assert "async configurePreviewServer" in transformed
+    assert '"build/server/index.js"' in transformed
+    assert "await import" in transformed
+    assert tasks[0][1](transformed) == transformed
+    assert "timeout" not in transformed and "no-sandbox" not in transformed
+
+
+def test_preview_warmup_rejects_changed_framework_template() -> None:
+    from rxconfig import PreviewWarmupPlugin
+
+    tasks = []
+    PreviewWarmupPlugin().pre_compile(add_modify_task=lambda path, modify: tasks.append(modify))
+    with pytest.raises(RuntimeError, match="frontend_preview_template_changed"):
+        tasks[0]("export default unrelatedConfiguration;")
+
+
+@pytest.mark.parametrize("waits_for_import", [True, False])
+def test_preview_startup_awaits_real_module_before_requests(tmp_path, waits_for_import) -> None:
+    import json
+    import subprocess
+
+    from rxconfig import PREVIEW_WARMUP
+
+    entry = tmp_path / "build/server/index.js"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("await Promise.resolve(); globalThis.callerPreviewReady = true;\n")
+    source = PREVIEW_WARMUP
+    if not waits_for_import:
+        source = source.replace("await import(pathToFileURL", "void import(pathToFileURL")
+    source += (
+        "\nawait callerPreviewWarmup().configurePreviewServer({config: {root: process.argv[1]}});"
+    )
+    source += "\nconsole.log(JSON.stringify({ready: globalThis.callerPreviewReady === true}));"
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", source, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=10,
+    )
+    assert json.loads(result.stdout)["ready"] is waits_for_import

@@ -91,6 +91,27 @@ job but does not establish its inner error category. The isolated UTF-8 regressi
 smoke-helper cases, all 149 tooling cases and repository gates pass locally. T031 stays open;
 no root-cause claim for the remaining build failure or repeated green-run retry is made.
 
+## Cold Preview Initialization Follow-up
+
+A fresh Node import of the retained real SSR bundle took **34,037 ms** on Windows. The
+installed React Router preview handler lazily imports that bundle inside the first request,
+whose existing budget is 10 seconds. The supported Reflex `add_modify_task` integration now
+registers a Vite preview-startup hook that awaits the completed server module before requests.
+No framework/vendor file, dependency, SSR mode, package manager or timeout was changed.
+
+The first full native Windows run after the hook passes **405 then-collected tests** with
+no skips/deselection (324.86 seconds). Registration/idempotency/template-drift regressions pass;
+real Node tests also prove the hook waits, and the deliberately unawaited variant exposes
+the initialization gap. These observations distinguish module startup from actual page
+response work, not permission to increase budgets. New remote Windows/Linux/image evidence
+is still required before T031 closes; earlier failed runs remain recorded above.
+
+The final complete local runner passes **384 runtime, 407 management and 149 tooling cases**,
+zero failures/errors/skips, after the actual Node-ordering regressions were added. It reports
+`local_status=passed`, `live_status=pending`, `release_status=blocked`. All repository/static/
+type/Terraform/secret/publication checks pass. This does not substitute for the new native CI
+and actual image results for the changed frontend build; T031 remains pending those results.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock

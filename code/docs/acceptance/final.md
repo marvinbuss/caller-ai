@@ -8,12 +8,12 @@ approved a sanitized source commit, branch push and draft PR. No provider/cloud/
 real phone/model call, deployment, image publication or live qualification is authorized.
 Source review is not release acceptance. All external obligations remain explicit.
 
-The 2026-10-27 full regression runner reports runtime **384 passing cases**, management
-**403 cases with 24 editor-export setup errors** and tools **129 passing cases**; no assertion
-failures/skips. Therefore `local_status=failed`, `live_status=pending` and `release_status=blocked`.
+The current full regression runner reports runtime **384 passing cases**, management
+**407 passing cases** and tools **149 passing cases**, zero failures/errors/skips. Therefore
+`local_status=passed`, `live_status=pending` and `release_status=blocked`.
 The earlier missing-media module errors are removed by actual local media implementation,
-not test deselection. Root prerender timed out again in the current complete management run;
-earlier passing full runs are historical, not a current green regression claim.
+not test deselection. Root-prerender failures are retained as history; the current local
+eager-preview repair passes the complete management suite without exclusions.
 
 ## Implemented Local Boundaries
 
@@ -111,3 +111,14 @@ Windows still fails application tests on editor build setup with a safe `unclass
 category. No root cause or Windows repair is claimed. T031 plus provider, environment,
 monitoring and release tasks remain open: seven tasks, not full feature completion. All
 private feed settings remain ignored locally; no TLS/sandbox/test threshold was weakened.
+
+## Current Preview Startup Repair
+
+A fresh retained SSR module import took 34,037 ms on Windows while React Router lazily
+performed it inside its first 10-second preview request. A supported Reflex pre-compile Vite
+hook now awaits that module during preview startup, under the original 180-second build
+budget. Real Node regressions distinguish awaited initialization from the deliberately
+unawaited variant. No dependency, package manager, SSR mode, vendor file or deadline changed.
+The first full Windows check passes 405 then-collected cases; the final combined runner
+passes 384 runtime/407 management/149 tools cases. The new remote native/image results remain
+pending; T031 is not closed from local evidence alone, and no global framework claim is made.

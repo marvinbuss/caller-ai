@@ -2,8 +2,9 @@
 
 This matrix covers all FR-001 through FR-034 and SC-001 through SC-019. **No row grants release
 acceptance.** Local component tests are distinguished from pending integrated/deployed proof;
-the latest combined regression passes 384 runtime/129 tools cases but management has 403 cases
-with 24 editor-export setup errors. Earlier all-green local results remain historical.
+the current complete local regression passes 384 runtime, 407 management and 149 tools cases.
+The supported preview-startup repair still requires new native Windows/Linux/image CI; earlier
+failed editor runs remain part of the evidence history.
 The machine inventory keeps all entries
 `pending_qualification` except explicitly `deferred` SC-008. Read [release gates](release-gates.md).
 
@@ -21,7 +22,7 @@ The machine inventory keeps all entries
 | FR-010 committed owner epoch | [US3](us3.md), conditional commit/race tests | Actual persistence and phone continuity |
 | FR-011 handover rate limit | [US3](us3.md), rolling-window tests | Live clarification/closure behavior |
 | FR-012 bounded interruption/failure | [US1](us1.md), [US6](us6.md), deadline/cancellation tests | Actual phone/model timing |
-| FR-013 manager CRUD | [US2](us2.md), API contracts and historical editor passes | Current full editor repair, deployed identity/storage and second-platform evidence |
+| FR-013 manager CRUD | [US2](us2.md), API contracts and current complete local editor passes | New candidate CI and deployed identity/storage qualification |
 | FR-014 public tool/MCP catalogs | [US5](us5.md), reviewed immutable definitions | Actual reviewed external connectors |
 | FR-015 durable complete revisions | [US4](us4.md), local/Cosmos-double atomic writes | Real Cosmos restart/durability |
 | FR-016 validated references | [US2](us2.md), [US4](us4.md), strict graph/cache tests | Deployed rejected-save guarantees |
@@ -33,7 +34,7 @@ The machine inventory keeps all entries
 | FR-022 secret references/detection | [Security](../security.md), [US2](us2.md), audit privacy tests | Actual approved registry/retention review |
 | FR-023 isolation and disposal | [US1](us1.md), SDK/session/cleanup privacy tests | Live provider retention and full owned-content paths |
 | FR-024 metadata-only audit | [US1](us1.md), [US2](us2.md), strict audit repositories | Actual access/retention/recovery |
-| FR-025 responsive/keyboard management | [US2](us2.md), historical native browser/editor passes | Current full editor repair, second-platform and deployment qualification |
+| FR-025 responsive/keyboard management | [US2](us2.md), current complete local browser/editor passes | New candidate native CI and deployment qualification |
 | FR-026 call-preserving scaling | [US6](us6.md), guarded drain doubles | Persistent deployed guards and live zero-disconnect profile |
 | FR-027 bounded admission/quota | [US6](us6.md), conservative capacity tests | Actual quotas/cost/global authority |
 | FR-028 telemetry and traces | [Monitoring](../runbooks/monitoring.md), SDK safe opt-in/export tests | Qualified cloud collection/alerts and real speech signals |
@@ -51,7 +52,7 @@ The machine inventory keeps all entries
 | SC-006 invalid edits/protected roles | [US2](us2.md), [US4](us4.md), atomic rejection | Effective live storage/identity |
 | SC-007 twenty updates/revocations | [US4](us4.md), virtual cadence and fresh admission | Measured deployed 60-second visibility |
 | SC-008 participant study | Explicitly deferred | Not passed; no recruitment or invented threshold |
-| SC-009 responsive/keyboard tasks | [US2](us2.md), historical browser assertions | Current full editor repair, second-platform and deployment qualification |
+| SC-009 responsive/keyboard tasks | [US2](us2.md), complete local browser assertions pass | New candidate native CI and deployment qualification |
 | SC-010 outage/overload/failure | [US1](us1.md), [US5](us5.md), [US6](us6.md) | Actual provider/model/storage/owner failure timing |
 | SC-011 interruption/closure | Cleanup/lifecycle tests in [US1](us1.md) | Actual one-second clear and phone acknowledgment |
 | SC-012 durable restart | [US2](us2.md), [US4](us4.md), injected Cosmos profiles | Authorized real persistence/restart execution |

@@ -14,10 +14,11 @@ See the [runbook index](runbooks/README.md), [local call evidence](acceptance/us
 [revision evidence](acceptance/us4.md), [scaling evidence](acceptance/us6.md),
 [requirement matrix](acceptance/requirements.md) and [release gates](acceptance/release-gates.md).
 
-The actual regression runner now observes 384 runtime cases passing with no media import
-errors and all 129 tooling cases passing, but management has 403 cases with 24 editor-export
-errors in the latest run. Unattended builds/renderers close stdin, but root prerender still
-fails intermittently; earlier green runs are not current acceptance. Live metric
+The current complete local runner passes 384 runtime, 407 management and 149 tooling cases.
+Preview startup now eagerly initializes the SSR bundle before timed page requests, using the
+supported Reflex compile hook; cold module loading remains in the unchanged build budget.
+See [preview initialization](setup.md#preview-module-initialization). Earlier failures remain
+recorded, and the changed build still requires actual new native/image CI evidence. Live metric
 delivery, qualified phone/model/storage access, real cluster enforcement and remote/native
 platform evidence remain pending. A typed injected port is not a deployed authorization
 mechanism, and local all-green components cannot mint release readiness.

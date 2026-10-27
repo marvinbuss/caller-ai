@@ -1,8 +1,7 @@
 # Release Gates
 
-**Release blocked.** The current full regression profile reports runtime **384 tests, zero
-failures/errors/skips**, management **403 tests with 24 editor-export setup errors**, and tools
-**129 tests, zero failures/errors/skips** on 2026-10-27. Overall local status is failed.
+**Release blocked.** The current full local profile passes runtime **384**, management **407**
+and tools **149** cases with zero failures/errors/skips. Overall local status is passed.
 The runner correctly keeps live status pending and release status blocked.
 
 The user explicitly authorized remaining local-only implementations with injected doubles.
@@ -12,7 +11,7 @@ or live qualification. Source publication does not waive failed or missing relea
 
 | Remaining gate | Required evidence |
 |----------------|-------------------|
-| Native editor export | Current complete management run again has 24 root-prerender setup errors; earlier green runs are historical |
+| Native editor export | Current complete local suite passes with eager preview initialization; new Windows CI and changed-image evidence still required |
 | T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
 | T031 complete native verification | Ubuntu native/image jobs pass on 9e76e90 and T028/T029 have observed evidence; Windows editor setup still fails, so full two-platform acceptance is blocked |
 | T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
@@ -25,9 +24,9 @@ or live qualification. Source publication does not waive failed or missing relea
 ```mermaid
 flowchart TD
     Local[Full runtime, management and tools regression] --> Counts[Nonempty JUnit counts and real exit status]
-    Counts --> Failed[Current editor errors keep local gate failed]
+    Counts --> Passed[Current local regression passes]
     External[Qualified provider, environment, monitoring and live evidence missing] --> Blocked[Release blocked]
-    Failed --> Review[Still requires all external reviewed gates]
+    Passed --> Review[Still requires all external reviewed gates]
     Review --> Blocked
 ```
 

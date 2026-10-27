@@ -20,8 +20,8 @@ python code/tools/scripts/release_checks.py --preflight
 ```
 
 The local profile runs complete runtime/management/tools test directories and reports real
-JUnit counts, not selected-test success. Current runtime is 384 clean cases and tools 129;
-management has 403 cases with 24 editor-export errors, so the current combined profile fails. Live profile
+JUnit counts, not selected-test success. The current combined local profile passes runtime
+384, management 407 and tools 149 cases with zero failures/errors/skips. Live profile
 and protected preflight refuse with exit 2, no credential discovery/cloud operation/publication.
 No local report or valid manifest grants release approval. See [release gates](acceptance/release-gates.md)
 and [runbooks](runbooks/README.md). Default apps still keep business/live routes disabled.
@@ -34,6 +34,41 @@ with `subprocess.DEVNULL`; output logs and owned process cleanup remain unchange
 invocation checks pass and earlier full suites/27 diagram renders passed. The later full
 management suite again has 24 prerender errors, so stdin hardening is not a complete fix;
 no SSR/profile/timeout or assertion was changed to conceal failures.
+
+## Preview Module Initialization
+
+The management config's `PreviewWarmupPlugin` uses Reflex's supported pre-compile modify
+task to add a Vite `configurePreviewServer` hook. It imports the completed server bundle
+before the preview server begins handling timed prerender requests. React Router otherwise
+performs that import lazily inside its first request; a fresh retained-bundle import on this
+Windows host took 34,037 ms, exceeding the unchanged 10-second page-request budget.
+
+Module initialization remains inside the original 180-second build budget. The hook changes
+no SSR setting, package manager, dependencies, page handlers or request timeout. Template
+changes fail closed rather than silently skipping the hook. Unit and real-Node regressions
+verify registration, idempotency, template drift and that removing the import `await` permits
+requests before initialization. The first complete Windows run after this change passes all
+405 then-collected cases, without skips/deselection; final cross-platform acceptance still
+requires observed CI for this source revision.
+
+```mermaid
+sequenceDiagram
+	participant Build as Frontend build
+	participant Preview as Vite preview startup
+	participant Module as Server module
+	participant Page as Prerender request
+	Build->>Preview: Initialize under original build budget
+	Preview->>Module: Await server bundle import
+	Module-->>Preview: Module initialized
+	Preview-->>Build: Preview ready
+	Build->>Page: Fetch page under original request budget
+	Page->>Module: Reuse initialized handler
+	Module-->>Page: Rendered page
+```
+
+The final combined profile also passes all 407 management cases, including the real Node
+ordering tests, plus 384 runtime and 149 tooling cases. Remote verification is still required
+before foundation acceptance; earlier failing runs are retained in the evidence record.
 
 ## Public and Local Feeds
 

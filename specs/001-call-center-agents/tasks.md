@@ -16,9 +16,9 @@ that is requirements approval, not proof that any task below is implemented.
 Write story contract/unit/integration tests before the behavior they specify, observe meaningful
 failures, then implement and rerun. Generated tests require reviewed assertions and recorded results.
 
-**Current local verification (2026-10-27)**: the full combined runner passes runtime 384 and
-tools 129 cases; management has 403 cases with 24 editor-export setup errors, no assertion
-failures/skips. Earlier 403-case native passes and 33-document/27-diagram renders are historical.
+**Current local verification (2026-10-27)**: after the supported eager preview initialization
+repair, the full combined runner passes runtime 384, management 407 and tools 149 cases,
+zero failures/errors/skips. The earlier failed editor runs below remain historical evidence.
 Unattended editor-build/render processes now close inherited stdin, with red-first invocation
 regressions. A baseline full management run reproduced 379 passes/24 export errors; standalone
 and combined runs after the change pass 403. This does not prove a global fix for framework
@@ -49,6 +49,14 @@ with user-approved installed sandboxed Chrome 155.0.8059.39; strict package audi
 T029's setup/architecture/diagram/failure-recovery documentation verification is complete.
 Windows application tests still fail on editor build setup (`unclassified`); T031's complete
 two-platform acceptance remains blocked. No Windows pass, live approval or release is claimed.
+
+**Current preview-startup candidate**: fresh SSR module import was measured at 34,037 ms on
+Windows, while the framework lazily performs it inside a 10-second first preview request.
+A supported Reflex pre-compile Vite hook now awaits that module during preview setup under
+the unchanged 180-second build budget. Registration/template guards and real-Node awaited/
+unawaited regressions pass. The first full management run passes 405 then-collected cases;
+the final combined local profile passes 384/407/149. T031 remains unchecked until actual new
+native Windows/Linux/image CI verifies this candidate; no dependency/SSR/timeout change exists.
 
 **Organization**: Setup, a complete credential-free foundation, P1 story phases US1/US2/US3/US5/US6,
 then P2 story US4, followed by cross-cutting qualification. The numeric story labels retain the
