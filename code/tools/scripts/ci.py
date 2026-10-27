@@ -31,12 +31,33 @@ def build_failure_metadata(log: Path) -> dict[str, int | str | bool]:
     ):
         if marker in diagnostic:
             phase = label
+    node_error = "none"
+    for code in (
+        "ERR_UNSUPPORTED_ESM_URL_SCHEME",
+        "ERR_MODULE_NOT_FOUND",
+        "ERR_REQUIRE_ESM",
+        "ERR_UNKNOWN_FILE_EXTENSION",
+        "ERR_UNSUPPORTED_DIR_IMPORT",
+        "EACCES",
+        "ENOENT",
+        "EADDRINUSE",
+        "ECONNREFUSED",
+        "SYNTAXERROR",
+        "REFERENCEERROR",
+        "TYPEERROR",
+        "RANGEERROR",
+        "ROLLUPERROR",
+    ):
+        if code.lower() in diagnostic:
+            node_error = code
+            break
     return {
         "phase": phase,
         "log_bytes": min(size, 16777216),
         "utf16_marker": data.startswith((b"\xff\xfe", b"\xfe\xff")),
         "python_traceback": "traceback (most recent call last)" in diagnostic,
         "replacement_characters": "\ufffd" in diagnostic,
+        "node_error": node_error,
     }
 
 

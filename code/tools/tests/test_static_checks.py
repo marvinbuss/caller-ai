@@ -683,6 +683,17 @@ def test_build_failure_category_reads_bounded_log_tail(monkeypatch, tmp_path):
     assert build_failure_category(log) == "frontend_prerender_failed"
 
 
+def test_build_metadata_exposes_only_allowlisted_node_error(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    from ci import build_failure_metadata
+
+    log = tmp_path / "build.log"
+    log.write_text("Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]: sensitive-fixture-value\n")
+    metadata = build_failure_metadata(log)
+    assert metadata["node_error"] == "ERR_UNSUPPORTED_ESM_URL_SCHEME"
+    assert "sensitive-fixture-value" not in str(metadata)
+
+
 def test_diagram_renderer_timeout_cleans_owned_process(tmp_path: Path, monkeypatch) -> None:
     import importlib.util
 

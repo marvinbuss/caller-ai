@@ -127,6 +127,12 @@ exclude raw fixture content. This probe changes no application/timeout behavior;
 needed because the current remote build remains unclassified. All 153 tooling cases and
 repository gates pass, but the new observed phase is required before another root-cause claim.
 
+Run 40522578176 on 62d2231 confirms Windows stops at `server_bundle`, with 6,313 log bytes,
+no Python traceback, no UTF-16 marker and no decoding replacement characters; Ubuntu and
+image jobs still succeed. The next fixed-schema probe adds only allowlisted Node error codes
+(never their messages/paths) to distinguish resolution, syntax, permission and process errors.
+All 154 tooling cases and repository gates pass locally. T031 remains pending that evidence.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock
