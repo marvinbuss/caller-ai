@@ -242,6 +242,36 @@ def prepare() -> None:
     )
 
 
+def collect_editor_diagnostic() -> None:
+    from check_publication import check_paths
+
+    if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("RUNNER_OS") != "Windows":
+        raise RuntimeError("compiler_diagnostic_profile_not_authorized")
+    source = ROOT / "code/management/test-results/editor-host.log"
+    target = ROOT / "code/tools/test-results/diagnostics/editor-build.log"
+    target.unlink(missing_ok=True)
+    if source.is_symlink() or not source.is_file() or source.stat().st_size > 262144:
+        raise RuntimeError("compiler_diagnostic_source_invalid")
+    content = source.read_bytes()
+    if b"Creating Production Build failed" not in content:
+        raise RuntimeError("compiler_diagnostic_not_failed_build")
+    if check_paths([source], ROOT) != 0:
+        raise RuntimeError("compiler_diagnostic_private_origin_rejected")
+    run(
+        "uv",
+        "run",
+        "--project",
+        str(ROOT / "code/tools"),
+        "--no-sync",
+        "python",
+        str(ROOT / "code/tools/scripts/check_secrets.py"),
+        str(source),
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+    print("compiler_only_diagnostic_retained")
+
+
 def check() -> None:
     for project in ("backend", "management", "tools"):
         run("uv", "lock", "--check", "--offline", "--project", f"code/{project}")
@@ -284,10 +314,12 @@ def check() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("prepare", "check", "frontend", "test"))
+    parser.add_argument("command", choices=("prepare", "check", "frontend", "test", "diagnostics"))
     arguments = parser.parse_args()
     if arguments.command == "prepare":
         prepare()
+    elif arguments.command == "diagnostics":
+        collect_editor_diagnostic()
     elif arguments.command == "frontend":
         run(
             "uv",

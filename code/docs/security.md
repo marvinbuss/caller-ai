@@ -111,7 +111,24 @@ its mostly obsolete setuid workaround is not adopted. The CI-only browser is run
 not an application dependency pin. Future observed CI results must prove the selected path
 works; approval alone does not count as a successful render or qualify Windows editor builds.
 
-## Application Trust Boundaries
+## Temporary Synthetic Compiler Diagnostic
+
+The user explicitly approved retaining only the failed synthetic Windows editor compiler
+log as a GitHub Actions artifact for **one day** to diagnose the hosted-runner failure.
+The collector requires GitHub Actions/Windows, a regular file no larger than 256 KiB and
+the failed-production-build marker. Offline secret detection and private-origin checks must
+pass before the fixed single output file is created; failed scans prevent upload. No fixture
+JSON, keys, environment dump, screenshots, runtime logs or real caller data are collected.
+Workflow repository permissions remain read-only, with an official full-SHA Node-24 upload
+action, one exact nonhidden path and failure-only successful-collector conditions.
+
+Artifacts are readable to people with repository access, not an unrestricted public log
+channel. This approval is limited to this credential-free synthetic build diagnostic and
+does not authorize conversation-content collection or general debug logging. The temporary
+upload steps must be removed after the failure is diagnosed; retention expiry is not evidence
+that arbitrary data may be uploaded. Production/logging privacy requirements remain unchanged.
+
+## Call and Configuration Trust Boundaries
 
 Callers, model output, remote tool/MCP discovery, submitted configuration and dependency
 responses are untrusted. One organization `default` is not a tenant-management feature;

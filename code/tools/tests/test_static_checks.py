@@ -423,6 +423,89 @@ def test_workflow_has_unprivileged_native_jobs() -> None:
     assert "id-token" not in source
 
 
+def test_windows_compiler_artifact_is_failure_only_single_file_and_one_day() -> None:
+    root = SCRIPTS.parents[2]
+    workflow = yaml.load((root / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["native"]["steps"]
+    collector = next(step for step in steps if step.get("id") == "compiler_diagnostic")
+    uploader = next(
+        step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert collector["if"] == "failure() && runner.os == 'Windows'"
+    assert (
+        collector["run"]
+        == "uv run --project code/tools --locked python code/tools/scripts/ci.py diagnostics"
+    )
+    assert (
+        uploader["if"]
+        == "failure() && runner.os == 'Windows' && steps.compiler_diagnostic.outcome == 'success'"
+    )
+    assert uploader["uses"] == "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
+    assert uploader["with"]["retention-days"] == "1"
+    assert uploader["with"]["path"] == "code/tools/test-results/diagnostics/editor-build.log"
+    assert uploader["with"]["include-hidden-files"] == "false"
+    assert workflow["permissions"] == {"contents": "read"}
+
+
+@pytest.mark.parametrize("scanner_fails", [False, True])
+def test_compiler_artifact_requires_scanners_and_contains_only_compiler_output(
+    monkeypatch, tmp_path, scanner_fails
+):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
+
+    monkeypatch.setattr(ci, "ROOT", tmp_path)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("RUNNER_OS", "Windows")
+    source = tmp_path / "code/management/test-results/editor-host.log"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "Creating Production Build failed with exit code 1\nsynthetic compiler diagnostic\n"
+    )
+    calls = []
+
+    def scan(*arguments):
+        calls.append(arguments)
+        if scanner_fails:
+            raise subprocess.CalledProcessError(1, arguments)
+
+    monkeypatch.setattr(ci, "run", scan)
+    target = tmp_path / "code/tools/test-results/diagnostics/editor-build.log"
+    if scanner_fails:
+        with pytest.raises(subprocess.CalledProcessError):
+            ci.collect_editor_diagnostic()
+        assert not target.exists()
+    else:
+        ci.collect_editor_diagnostic()
+        assert target.read_text() == source.read_text()
+    assert len(calls) == 1 and "check_secrets.py" in str(calls[0])
+
+
+@pytest.mark.parametrize("rejection", ["profile", "oversized", "runtime_log", "private_origin"])
+def test_compiler_artifact_rejects_unapproved_inputs(monkeypatch, tmp_path, rejection):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
+
+    monkeypatch.setattr(ci, "ROOT", tmp_path)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("RUNNER_OS", "Windows")
+    source = tmp_path / "code/management/test-results/editor-host.log"
+    source.parent.mkdir(parents=True)
+    content = "Creating Production Build failed with exit code 1\n"
+    if rejection == "profile":
+        monkeypatch.delenv("GITHUB_ACTIONS")
+    elif rejection == "oversized":
+        content += "x" * 262145
+    elif rejection == "runtime_log":
+        content = "Application runtime output is not approved\n"
+    else:
+        content += "https://" + "feedproxy" + ".example.invalid/npm/"
+    source.write_text(content)
+    with pytest.raises(RuntimeError, match="compiler_diagnostic_"):
+        ci.collect_editor_diagnostic()
+    assert not (tmp_path / "code/tools/test-results/diagnostics/editor-build.log").exists()
+
+
 def test_whitespace_exception_is_limited_to_framework_manifest() -> None:
     import re
 

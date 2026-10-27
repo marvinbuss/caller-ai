@@ -41,6 +41,19 @@ jobs:
         run: uv run --project code/tools --locked python code/tools/scripts/ci.py frontend
       - name: Test both applications and responsive shell
         run: uv run --project code/tools --locked python code/tools/scripts/ci.py test
+      - name: Validate approved Windows compiler diagnostic
+        id: compiler_diagnostic
+        if: failure() && runner.os == 'Windows'
+        run: uv run --project code/tools --locked python code/tools/scripts/ci.py diagnostics
+      - name: Retain approved compiler-only diagnostic for one day
+        if: failure() && runner.os == 'Windows' && steps.compiler_diagnostic.outcome == 'success'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: windows-editor-compiler-${{ github.run_id }}
+          path: code/tools/test-results/diagnostics/editor-build.log
+          retention-days: 1
+          include-hidden-files: false
+          if-no-files-found: error
       - name: Prove starter assertion failure and restoration
         run: uv run --project code/tools --locked python code/tools/scripts/verify_failure_gate.py
       - name: Validate documentation and render Mermaid

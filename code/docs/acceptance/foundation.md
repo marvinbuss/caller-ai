@@ -133,6 +133,14 @@ image jobs still succeed. The next fixed-schema probe adds only allowlisted Node
 (never their messages/paths) to distinguish resolution, syntax, permission and process errors.
 All 154 tooling cases and repository gates pass locally. T031 remains pending that evidence.
 
+With hosted Windows still failing at server bundling and reporting no allowlisted Node code,
+the complete 407-case management suite was run locally with CI/GitHub Actions flags and also
+passed (460.99 seconds). This does not reproduce the hosted environment. The user therefore
+approved a temporary, one-day compiler-only diagnostic artifact; strict profile/size/build-
+marker/private-origin/secret checks and exact-path failure-only upload conditions are covered
+by regressions. Runtime data and fixture/key/env/screenshot files are excluded. This is a
+bounded diagnostic exception, not T031 acceptance or a relaxation of required test gates.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock
