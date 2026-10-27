@@ -696,7 +696,10 @@ def test_diagram_renderer_reports_only_safe_failure_category(
     "github,platform,available,reported,error",
     [
         (False, "linux", False, "unused", None),
-        (True, "win32", False, "unused", None),
+        (False, "win32", False, "unused", None),
+        (True, "win32", True, "143.0.7499.10\n", None),
+        (True, "win32", False, "unused", "ci_sandboxed_browser_unavailable"),
+        (True, "win32", True, "unexpected-version-output", "ci_sandboxed_browser_version_invalid"),
         (True, "linux", True, "Google Chrome 143.0.7499.10\n", None),
         (True, "linux", False, "unused", "ci_sandboxed_browser_unavailable"),
         (True, "linux", True, "unexpected-version-output", "ci_sandboxed_browser_version_invalid"),
@@ -733,10 +736,16 @@ def test_renderer_selects_sandboxed_ci_chrome_and_records_version(
     selected, version = module.renderer_browser(
         "prepared-chromium", {"GITHUB_ACTIONS": "true" if github else "false"}
     )
-    if github and platform == "linux":
-        assert selected == "/opt/google/chrome/chrome"
+    if github:
         assert version == "143.0.7499.10"
-        assert commands == [[selected, "--version"]]
+        if platform == "linux":
+            assert selected == "/opt/google/chrome/chrome"
+            assert commands == [[selected, "--version"]]
+        else:
+            assert selected == r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+            assert len(commands) == 1 and commands[0][-1] == selected
+            assert "chromium_sandbox=True" in commands[0][-2]
+            assert "--no-sandbox" not in str(commands[0])
     else:
         assert (selected, version) == ("prepared-chromium", "prepared")
         assert commands == []

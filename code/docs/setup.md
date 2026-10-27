@@ -269,8 +269,11 @@ Ubuntu GitHub CI uses the explicitly approved runner Chrome executable at
 `/opt/google/chrome/chrome`, whose AppArmor profile permits normal sandbox operation.
 The renderer validates and records its four-part version and fails if the binary/version is
 unavailable. The runner image, not the application lock, supplies that CI-only browser version.
-Other environments retain prepared Playwright Chromium. No sandbox-disabling arguments,
-host AppArmor/sysctl changes, elevation or deprecated setuid installation are used.
+Windows GitHub CI also uses its explicitly approved fixed installed Chrome path. Before
+rendering, existing Playwright launches it with `chromium_sandbox=True` to verify its actual
+four-part version; absent or invalid results fail closed. Local environments retain prepared
+Playwright Chromium. No sandbox-disabling arguments, ACL/host AppArmor/sysctl changes,
+elevation, browser installation or deprecated setuid installation are used.
 
 Build failures report only fixed categories derived from the final bounded 64 KiB of owned
 logs, never raw log text. The first diagnostic CI run identified Ubuntu's missing browser

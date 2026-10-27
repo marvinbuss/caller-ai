@@ -18,13 +18,37 @@ from smoke import stop
 
 
 def renderer_browser(prepared: str, values: dict[str, str]) -> tuple[str, str]:
-    if sys.platform != "linux" or values.get("GITHUB_ACTIONS") != "true":
+    if sys.platform not in ("linux", "win32") or values.get("GITHUB_ACTIONS") != "true":
         return prepared, "prepared"
-    browser = "/opt/google/chrome/chrome"
+    windows = sys.platform == "win32"
+    browser = (
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        if windows
+        else "/opt/google/chrome/chrome"
+    )
     if not Path(browser).is_file():
         raise RuntimeError("ci_sandboxed_browser_unavailable")
+    command = [browser, "--version"]
+    if windows:
+        probe = (
+            "import sys; from playwright.sync_api import sync_playwright; "
+            "runtime=sync_playwright().start(); "
+            "browser=runtime.chromium.launch(executable_path=sys.argv[1],chromium_sandbox=True); "
+            "print(browser.version); browser.close(); runtime.stop()"
+        )
+        command = [
+            "uv",
+            "run",
+            "--directory",
+            "code/management",
+            "--locked",
+            "python",
+            "-c",
+            probe,
+            browser,
+        ]
     result = subprocess.run(
-        [browser, "--version"],
+        command,
         cwd=ROOT,
         env=values,
         check=True,
@@ -33,7 +57,8 @@ def renderer_browser(prepared: str, values: dict[str, str]) -> tuple[str, str]:
         encoding="utf-8",
         timeout=10,
     )
-    match = re.fullmatch(r"Google Chrome (\d+\.\d+\.\d+\.\d+)", result.stdout.strip())
+    pattern = r"(\d+\.\d+\.\d+\.\d+)" if windows else r"Google Chrome (\d+\.\d+\.\d+\.\d+)"
+    match = re.fullmatch(pattern, result.stdout.strip())
     if match is None:
         raise RuntimeError("ci_sandboxed_browser_version_invalid")
     return browser, match[1]

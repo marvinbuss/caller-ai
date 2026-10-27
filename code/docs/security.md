@@ -104,8 +104,12 @@ passing source/private-URL guard and tools tests. Draft source review is separat
 The user explicitly approved selecting installed Google Chrome only for native Ubuntu GitHub
 diagram rendering after the prepared browser failed with `browser_sandbox_unavailable` in
 run 40491123126 on 381e38d. The fixed runner path and reported version are validated; absence
-fails closed, without falling back or disabling the sandbox. Local/Windows rendering keeps
-the prepared browser. No host sandbox policy, sysctl, sudo or setuid permissions are changed.
+fails closed, without falling back or disabling the sandbox. The user subsequently approved
+the same CI-only installed-browser policy on Windows after its app/assertion gates passed
+but prepared-browser Mermaid still failed. Windows uses the fixed installed Chrome path and
+the existing Playwright dependency to verify a real launch with `chromium_sandbox=True` and
+record its version. Missing/invalid versions fail closed. Local rendering retains prepared
+Chromium. No host sandbox policy, ACL, sysctl, sudo or setuid permissions are changed.
 Puppeteer's [Ubuntu AppArmor guidance](https://pptr.dev/troubleshooting) documents this boundary;
 its mostly obsolete setuid workaround is not adopted. The CI-only browser is runner-provided,
 not an application dependency pin. Future observed CI results must prove the selected path

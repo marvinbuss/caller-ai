@@ -154,6 +154,14 @@ remote artifact 12749685420 was deleted early; the retrieved compiler copy remai
 under ignored local diagnostics. The guarded collector's privacy-rejection tests remain,
 and the default workflow now explicitly tests that compiler artifacts are not uploaded.
 
+Run 40541941197 on b142780 confirms the canonical-path repair: hosted Windows passes both
+application suites and the deliberate assertion/restore step. Its remaining failed step is
+Mermaid rendering; Ubuntu native and image jobs succeed. The user approved using Windows
+CI's fixed installed Chrome path while retaining its sandbox, verifying a sandbox-enabled
+launch/version through existing Playwright, and leaving local browser selection unchanged.
+The focused selection/missing/invalid-version regressions pass; full native verification is
+still required before T031 closes. No security permission or timeout is relaxed.
+
 ## Historical Security Update: 2026-10-26
 
 The previously unavailable approved-feed fixes are now installed. A targeted tools-only lock
