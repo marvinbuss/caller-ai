@@ -14,11 +14,12 @@ See the [runbook index](runbooks/README.md), [local call evidence](acceptance/us
 [revision evidence](acceptance/us4.md), [scaling evidence](acceptance/us6.md),
 [requirement matrix](acceptance/requirements.md) and [release gates](acceptance/release-gates.md).
 
-The current local profile passes 384 runtime/413 management/165 tooling cases. Run 40597358226
-on 4128902 passes Ubuntu/images and Windows tests/assertion checks; Windows documentation
-rendering then hits the unchanged 300-second bound after successful sandboxed browser startup.
-That required CI gate remains blocked. The historical issue and renderer investigation are
-parked for now at user direction, without certifying a root-cause fix or waiving checks.
+The current local profile passes 384 runtime/413 management/165 tooling cases. Observed
+run 40599488969 on f4eae8f passes every native Windows/Ubuntu and Linux image step, including
+all application tests, assertion/cleanup, all 28 diagram renders and package/image audits.
+T031's credential-free foundation gate is complete, not live/release acceptance. The historical
+issue and renderer investigation remain parked at user direction, without certifying their
+root causes. No test, sandbox or remaining external gate is waived.
 
 **Earlier verification history:**
 

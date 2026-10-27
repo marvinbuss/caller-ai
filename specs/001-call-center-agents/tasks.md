@@ -16,7 +16,16 @@ that is requirements approval, not proof that any task below is implemented.
 Write story contract/unit/integration tests before the behavior they specify, observe meaningful
 failures, then implement and rerun. Generated tests require reviewed assertions and recorded results.
 
-**Current verification boundary (2026-10-27)**: run 40597358226 on 4128902 passes Ubuntu
+**Current foundation acceptance (recorded 2026-10-28)**: observed run 40599488969 on
+`f4eae8f722a60cada5c0803989c2883f642abc07` passes every native Windows, native Ubuntu and
+Linux image step. Each native platform passes 384 runtime/413 management/165 tools cases,
+0/1/0 assertion/cleanup, 33 documents/28 actual diagram renders and strict package audits.
+Actual image smoke and all three image audits pass. T031 is complete on actual evidence;
+113 of 119 tasks are checked. The six remaining tasks are T042/T097/T099/T117/T118/T119.
+Parked investigations stay closed for now, not certified root repairs; telephony stays
+deferred/local-only and no live/release approval or reviewer decision is implied.
+
+**Earlier verification boundary (2026-10-27)**: run 40597358226 on 4128902 passes Ubuntu
 and images. Windows passes 384/413/165 tests and the assertion gate; its approved 30-second
 sandboxed Chrome startup succeeds, but a diagram renderer exceeds the unchanged 300-second
 limit and the later package audit is skipped. Following the user's direction to move on,
@@ -210,7 +219,7 @@ current evidence; other native/remote, full-suite, media/live and release gates 
 - [X] T028 Add `code/tools/scripts/verify_failure_gate.py` and `code/docs/acceptance/ci-failure-gate.md` for a disposable broken starter assertion whose nonzero result is observed locally and in CI; restore the disposable fixture without altering genuine assertions, reverting user work, or claiming an unobserved remote job passed (after T025; observed Ubuntu job 122108740893 on c60f7b0, 0/1/0 and fixture_cleaned=true; later render failure retained).
 - [X] T029 Update `code/docs/setup.md` and `code/docs/architecture.md` with verified Windows/Linux commands, Mermaid service/mode diagrams, pre-commit installation, Docker port differences, and dependency preparation; document meaningful failure/recovery outcomes and validate the diagrams (after T021-T028; observed Ubuntu full documentation/render job on 9e76e90 and local Windows validation; failed Windows editor outcome disclosed, not T031 acceptance).
 - [X] T030 Add interrupted-startup, occupied-port, invalid-mode, and missing/stale-lock regressions in `code/backend/tests/integration/test_foundation_recovery.py` and `code/management/tests/integration/test_foundation_recovery.py`; ensure failed attempts leave no orphan processes or implicit cloud fallback (after T021, T027).
-- [ ] T031 Run the foundation quickstart and record SC-015/SC-016/SC-017 evidence in `code/docs/acceptance/foundation.md`, including two native operating systems, both real application foundations, credential-free tests, actual Docker smoke, and deliberate failure-gate results; disclose unavailable evidence rather than marking the milestone complete (after T025-T030; investigations parked for now at user direction; complete 384/413/165 local profile and native application/image/assertion checks pass, but Windows diagram rendering fails its 300-second gate in 4128902/run 40597358226 and its package audit is skipped; no required check or original assertion is waived).
+- [X] T031 Run the foundation quickstart and record SC-015/SC-016/SC-017 evidence in `code/docs/acceptance/foundation.md`, including two native operating systems, both real application foundations, credential-free tests, actual Docker smoke, and deliberate failure-gate results; disclose unavailable evidence rather than marking the milestone complete (after T025-T030; observed complete Windows/Ubuntu/image run 40599488969 on f4eae8f, including 384/413/165 native tests, both 0/1/0 cleanup gates, all 28 diagram renders and strict audits; parked investigations remain closed without root-cause certification, and all six external tasks stay open).
 
 **Checkpoint: Foundation MVP**. Stop here for the initial repository delivery. Both apps are
 locally usable and CI is meaningful; live call handling, agent editing, cloud resources, and

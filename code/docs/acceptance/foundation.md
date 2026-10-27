@@ -9,7 +9,29 @@ new failing check or user request can reopen it. T031 requires ordinary current-
 verification, not further explanation of that historical issue. Pending/failed checks and
 the six external live/release gates are not waived.
 
-## Current Verification Boundary: 2026-10-27
+## Current Foundation Acceptance: 2026-10-28
+
+T031 is complete on observed [run 40599488969](https://github.com/marvinbuss/caller-ai/actions/runs/40599488969),
+source `f4eae8f722a60cada5c0803989c2883f642abc07`. Every step of native Windows 2022,
+native Ubuntu 24.04 and Linux image verification succeeds, with no failed or skipped steps.
+Each native platform reports 384 runtime, 413 management and 165 tooling passes, zero
+failures/errors/skips; the local complete profile has the same counts.
+
+Both native jobs prove baseline 0/broken 1/restored 0 with fixture_cleaned=true, validate
+33 documents and actually render all 28 diagrams. Sandboxed installed Chrome versions are
+Windows 156.0.8078.48 and Ubuntu 155.0.8059.39. Strict Python audits cover Windows 69/92/60
+and Ubuntu 68/90/59 backend/management/tools packages; 294 frontend coordinates have zero
+findings on each platform. Actual Linux image smoke passes offline/non-root startup and
+360/768/1440 browser checks; all three runtime/build-stage image audits report zero
+HIGH/CRITICAL findings.
+
+This closes SC-015/SC-016/SC-017 foundation verification on observed current evidence, not
+an inferred repair from a parked investigation or permission to enable live services. The
+user-directed dispositions above and all historical failures below remain recorded. Six
+tasks remain open: T042/T097/T099/T117/T118/T119, requiring external qualification or approval.
+Telephony stays deferred, SC-008 stays deferred, and live/release acceptance remains blocked.
+
+## Earlier Verification Boundary: 2026-10-27
 
 [Run 40597358226](https://github.com/marvinbuss/caller-ai/actions/runs/40597358226) on
 `4128902002ae60e997605c10263b4187bc7ad8f5` passes native Ubuntu and Linux images. Windows

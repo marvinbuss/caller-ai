@@ -1,16 +1,18 @@
 # Release Gates
 
-**Current CI blocker:** run 40597358226 on 4128902 passes Ubuntu/images, Windows 384/413/165
-tests, assertion restoration and approved sandboxed Chrome startup. Windows diagram rendering
-then reaches the unchanged 300-second limit; its package audit is skipped. Investigation is
-parked for now at the user's direction, but this failed gate still blocks T031/merge/release.
-No retry, further timeout increase, sandbox change or assertion waiver is made.
+**Current foundation gates pass.** Observed
+[run 40599488969](https://github.com/marvinbuss/caller-ai/actions/runs/40599488969) on f4eae8f
+passes every native Windows, native Ubuntu and Linux image step. Both native platforms pass
+384/413/165 tests, 0/1/0 assertion/cleanup, all 33 documents/28 diagrams and strict package
+audits; image smoke and all three image audits pass. T031 is complete. Earlier renderer and
+keyboard failures remain in [foundation history](foundation.md); parked investigations remain
+closed for now without claiming root-cause repairs. This is not merge or release approval.
 
 **Release blocked; historical investigation closed for now by the user.** Its cause was
 not reproduced, not certified repaired. T031 tracks ordinary verification of the separate
 save-status change rather than more diagnosis of that historical issue. The complete local
 profile passes 384/413/165 cases with zero failures/errors/skips; current native/image checks
-and all external gates remain required. No test or assertion is waived.
+now pass as recorded above. All external gates remain required; no test or assertion is waived.
 
 Earlier diagnostic
 [run 40590188047](https://github.com/marvinbuss/caller-ai/actions/runs/40590188047) on 6b7f03a
@@ -42,7 +44,6 @@ or live qualification. Source publication does not waive failed or missing relea
 
 | Remaining gate | Required evidence |
 |----------------|-------------------|
-| T031 current verification | Investigations parked; actual Windows documentation gate still times out after 300 seconds on 4128902, so full required CI remains blocked rather than passed |
 | T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
 | T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
 | T099 actual environment | Approved provisioned/pre-provisioned resources and real identity/probe adapters; eleven offline unavailable checks are not qualification |

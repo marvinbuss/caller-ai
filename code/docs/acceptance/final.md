@@ -2,21 +2,21 @@
 
 ## Status
 
-**Current required CI blocked by Windows documentation rendering.** Run
-[40597358226](https://github.com/marvinbuss/caller-ai/actions/runs/40597358226) on 4128902
-passes Ubuntu/images and all Windows 384/413/165 tests plus the assertion gate. The approved
-30-second Chrome startup check passes; a diagram render then exceeds its unchanged 300-second
-bound, and Windows package auditing does not execute. The renderer investigation is parked
-for now under the user's direction to move on, not certified repaired or waived. T031 stays
-unchecked for the failed required gate; six external tasks remain open. No more diagnosis
-of the historical missing-community issue is required. See [current evidence](foundation.md).
+**Foundation complete; live/release acceptance remains blocked.** Observed
+[run 40599488969](https://github.com/marvinbuss/caller-ai/actions/runs/40599488969) on
+`f4eae8f722a60cada5c0803989c2883f642abc07` passes every Windows, Ubuntu and Linux image step.
+Each native platform passes 384 runtime/413 management/165 tooling tests, the 0/1/0 assertion
+and cleanup gate, all 33 documents/28 actual diagram renders and strict package audits.
+Actual image smoke and all three image audits pass. T031 is complete on this evidence;
+six external tasks remain open. Parked investigations remain closed for now, not certified
+root-cause repairs. See [current evidence and preserved history](foundation.md).
 
 **Historical investigation closed for now at the user's direction.** Its cause was not
 reproduced; closure is not certification of a root-cause repair. Preserve assertions/history
 and move on unless a new failing check or user request reopens it. The separate save-status
 repair has six red/green regressions; its complete local profile passes 384 runtime, 413
-management and 165 tools cases with zero failures/errors/skips. T031 now tracks normal
-changed-source native/image verification, while six external tasks remain open.
+management and 165 tools cases with zero failures/errors/skips. Its changed-source native/image
+verification is now complete as recorded above; six external tasks remain open.
 
 **Earlier diagnostic CI passes; root cause remains unresolved.**
 [Run 40590188047](https://github.com/marvinbuss/caller-ai/actions/runs/40590188047) on 6b7f03a
@@ -65,7 +65,7 @@ eager-preview repair passes the complete management suite without exclusions.
 
 Qualified T042 telephony, T097 cloud metrics/alert delivery, T099 actual environment, real
 T117 protected planning/publication, T118 live acceptance, and the complete T119 release
-decision remain open: six external tasks, plus the reopened T031 regression. T028/T029 have actual two-platform
+decision remain open: six external tasks. T028/T029/T031 have actual two-platform
 application, 0/1/0 assertion/cleanup, documentation/render, audit and image evidence recorded
 in [foundation acceptance](foundation.md). No source-only change can manufacture the remaining
 external results. SC-008 remains deferred, not passed.
