@@ -17,10 +17,13 @@ See the [runbook index](runbooks/README.md), [local call evidence](acceptance/us
 The earlier complete local runner passes 384 runtime, 407 management and 149 tooling cases.
 Preview startup now eagerly initializes the SSR bundle before timed page requests, using the
 supported Reflex compile hook; cold module loading remains in the unchanged build budget.
-See [preview initialization](setup.md#preview-module-initialization). Latest observed
+See [preview initialization](setup.md#preview-module-initialization). Earlier successful
 [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on 57b4e1d
 passes full native Windows/Ubuntu suites (384/407/165 each) and the Linux image job, completing
-T031. Earlier failures remain recorded. Live metric delivery, qualified phone/model/storage
+T031 at that snapshot. Later run 40552023091 on 78c54ba passes Windows/images but fails one
+Ubuntu keyboard-journey persistence assertion; T031 is reopened and the save-boundary probe
+is locally blocked by compiler timeout. See [current foundation evidence](acceptance/foundation.md).
+Earlier failures remain recorded. Live metric delivery, qualified phone/model/storage
 access and real cluster enforcement remain pending. A typed injected port is not a deployed
 authorization mechanism, and green components cannot mint release readiness.
 

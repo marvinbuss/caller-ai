@@ -3,10 +3,12 @@
 This matrix covers all FR-001 through FR-034 and SC-001 through SC-019. **No row grants release
 acceptance.** Local component tests are distinguished from pending integrated/deployed proof;
 the earlier complete local regression passes 384 runtime, 407 management and 149 tools cases.
-Latest [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on
+Earlier successful [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on
 57b4e1d passes all native Windows/Ubuntu and Linux image jobs, with 384/407/165 cases on each
-native platform. T031's credential-free foundation evidence is complete; earlier failed editor
-runs remain part of the evidence history. This does not qualify deployed or live behavior.
+native platform. Later run 40552023091 on 78c54ba passes Windows/images but fails one Ubuntu
+keyboard persistence assertion (384 runtime passes, 406 management passes/one failure).
+T031 is reopened; the new read-only browser probe is locally blocked by compiler timeout.
+See [current evidence](foundation.md). This does not qualify deployed or live behavior.
 The machine inventory keeps all entries
 `pending_qualification` except explicitly `deferred` SC-008. Read [release gates](release-gates.md).
 
@@ -41,9 +43,9 @@ The machine inventory keeps all entries
 | FR-027 bounded admission/quota | [US6](us6.md), conservative capacity tests | Actual quotas/cost/global authority |
 | FR-028 telemetry and traces | [Monitoring](../runbooks/monitoring.md), SDK safe opt-in/export tests | Qualified cloud collection/alerts and real speech signals |
 | FR-029 guidance/runbooks | [Runbook index](../runbooks/README.md) | Operator review in qualified environment |
-| FR-030 foundation/CI | [Foundation](foundation.md), full two-platform CI, image and failure gates | None for the credential-free foundation scope |
+| FR-030 foundation/CI | [Foundation](foundation.md), earlier two-platform CI, image and failure gates | Current Ubuntu keyboard persistence regression and full native revalidation |
 | FR-031 no-cloud local startup | [Foundation](foundation.md), both native jobs and blocked-egress/offline images | None for local-mode startup; live remains disabled |
-| FR-032 Windows/Linux support | Native Windows 2022 and Ubuntu 24.04 in [foundation](foundation.md) | None for the declared native CI matrix |
+| FR-032 Windows/Linux support | Earlier native Windows 2022 and Ubuntu 24.04 in [foundation](foundation.md) | Repair current Ubuntu regression and revalidate the declared matrix |
 | FR-033 one organization | [US2](us2.md), fixed default partition/schema | Approved deployed organization boundaries |
 | FR-034 public read-only only | [US5](us5.md), assigned forbidden-action tests | Real reviewed connectors and live explanations |
 | SC-001 eligible journeys | 200 synthetic sequences in [US1](us1.md) | At least 99% of 200 eligible actual journeys |
@@ -60,7 +62,7 @@ The machine inventory keeps all entries
 | SC-012 durable restart | [US2](us2.md), [US4](us4.md), injected Cosmos profiles | Authorized real persistence/restart execution |
 | SC-013 content cleanup/privacy | [US1](us1.md), terminal/cancel disposal and audit tests | Real provider/owned-buffer/retention review |
 | SC-014 operator diagnosis | Fixed telemetry and [runbooks](../runbooks/README.md) | Ten approved operator cases within five minutes |
-| SC-015 local foundations | [Foundation](foundation.md), both native jobs and real health/shell/images | None for the credential-free foundation scope |
+| SC-015 local foundations | [Foundation](foundation.md), earlier both-native and real health/shell/image results | Current native regression; no all-green current acceptance |
 | SC-016 cross-platform setup | [Foundation](foundation.md), actual Windows 2022 and Ubuntu 24.04 jobs | None for the declared native CI matrix |
 | SC-017 CI failure signal | [Assertion gate](ci-failure-gate.md), 0/1/0 with cleanup on both native jobs | None for the foundation assertion gate |
 | SC-018 permissions/management | [US2](us2.md), auth/concurrency and full local/native CI editor regression | Deployed authority qualification |

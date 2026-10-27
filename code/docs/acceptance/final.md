@@ -2,17 +2,23 @@
 
 ## Status
 
+**Current native verification blocked.** [Run 40552023091](https://github.com/marvinbuss/caller-ai/actions/runs/40552023091)
+on 78c54ba passes Windows and images, but Ubuntu has 384 runtime passes and 406 management
+passes/one keyboard-journey persistence failure. T031 is reopened. The added read-only
+save-boundary probe cannot yet be validated locally because its frontend build times out;
+no root-cause repair or current all-green workflow is claimed. See [current evidence](foundation.md).
+
 **Local implementation handoff, not full release acceptance.** The user authorized remaining
 local-only media/cleanup/audit/release code under injected provider doubles and subsequently
 approved a sanitized source commit, branch push and draft PR. No provider/cloud/backend access,
 real phone/model call, deployment, image publication or live qualification is authorized.
 Source review is not release acceptance. All external obligations remain explicit.
 
-The latest hosted full suites report runtime **384 passing cases**, management
+The earlier fully successful hosted suites report runtime **384 passing cases**, management
 **407 passing cases** and tools **165 passing cases** on each native platform, zero
 failures/errors/skips. Native Windows, native Ubuntu and the Linux image job all succeed in
 [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on `57b4e1d`.
-The earlier complete combined local profile passed 384/407/149. Therefore
+The earlier complete combined local profile passed 384/407/149. At that snapshot
 `local_status=passed`, `live_status=pending` and `release_status=blocked`.
 The earlier missing-media module errors are removed by actual local media implementation,
 not test deselection. Root-prerender failures are retained as history; the current local
@@ -37,7 +43,7 @@ eager-preview repair passes the complete management suite without exclusions.
 
 Qualified T042 telephony, T097 cloud metrics/alert delivery, T099 actual environment, real
 T117 protected planning/publication, T118 live acceptance, and the complete T119 release
-decision remain open: six tasks. T028/T029/T031 are complete on actual two-platform
+decision remain open: six external tasks, plus the reopened T031 regression. T028/T029 have actual two-platform
 application, 0/1/0 assertion/cleanup, documentation/render, audit and image evidence recorded
 in [foundation acceptance](foundation.md). No source-only change can manufacture the remaining
 external results. SC-008 remains deferred, not passed.
@@ -103,7 +109,7 @@ with bounded safe build-failure categories to identify missing renderer/editor d
 No raw failure content or private URLs are emitted, and no existing gate is relaxed. Full
 native workflow acceptance and remaining live/release obligations stay open.
 
-## Latest Verified CI Result
+## Earlier Fully Successful CI Result
 
 Run [40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375) on
 `57b4e1d9ad7bca3113e612b198af736d8d264392` passes every native Windows, native Ubuntu and
@@ -113,7 +119,7 @@ Both prove exact 0/1/0 assertion failure/restoration with fixture cleanup. Stric
 294-coordinate frontend audits report zero findings; three actual images have zero
 HIGH/CRITICAL findings. Actual image smoke passes offline/non-root and 360/768/1440 checks.
 
-This closes T031's foundation gate, not the six external tasks above. Telephony remains
+That snapshot closed T031's foundation gate, not the six external tasks above. Telephony remains
 explicitly deferred and no live/release authorization is implied. Private feed settings
 remain ignored locally; no TLS/sandbox/test threshold was weakened. Earlier Ubuntu-only
 success and Windows failures are retained in the [foundation history](foundation.md).

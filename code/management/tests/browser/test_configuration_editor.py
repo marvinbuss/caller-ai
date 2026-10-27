@@ -168,9 +168,15 @@ def test_keyboard_only_create_edit_assign_and_save(
         keyboard_reach(page, action)
         page.keyboard.press("Space")
         expect(action).to_be_checked()
+        community_name = page.get_by_role(
+            "group", name="Community Keyboard community", exact=True
+        ).get_by_label("Name", exact=True)
+        expect(community_name).to_have_value("Keyboard community")
+        expect(page.get_by_role("status")).to_have_text("Unsaved")
         keyboard_reach(page, page.get_by_role("button", name="Save configuration", exact=True))
         page.keyboard.press("Enter")
         expect(page.get_by_role("status").filter(has_text="Saved")).to_be_visible()
+        expect(community_name).to_have_value("Keyboard community")
         current = context.request.get(configuration_host["management"] + "/v1/configuration").json()
         assert any(item["name"] == "Keyboard community" for item in current["communities"])
         agent = next(item for item in current["agents"] if item["agentId"] == "agent-alpha")

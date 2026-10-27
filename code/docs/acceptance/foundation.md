@@ -1,8 +1,31 @@
-# Foundation Acceptance Evidence
+# Foundation Verification Evidence
 
-## Current Foundation Acceptance: 2026-10-27
+## Current Verification Regression: 2026-10-27
 
-T031 is complete on observed [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375),
+Run [40552023091](https://github.com/marvinbuss/caller-ai/actions/runs/40552023091) on
+documentation-only `78c54baaef30b5e7166849924f66640de8ddb054` passes native Windows and Linux
+images, but native Ubuntu reports 384 runtime passes and 406 management passes/one failure.
+The 1440px keyboard create/edit/assign/save journey sees Saved, then its repository read-back
+lacks the expected new community. This is a persistence assertion, not an editor-build error
+or evidence that keyboard navigation failed. Ubuntu's later assertion/render/audit steps do
+not execute. T031 is reopened rather than treating the earlier green run as current acceptance.
+
+A read-only diagnostic increment adds pre/post-save community-name assertions and requires
+the Unsaved acknowledgment before save in the same journey; every original keyboard and
+repository assertion remains. Its exact local check does not reach the browser: the owned
+frontend build exceeds the unchanged 180-second limit (one setup error, 210.48 seconds total).
+The retained ignored compiler log has fixed category unclassified, phase compilation, 1,367
+bytes, no Python traceback/encoding markers or allowlisted Node error. The browser probe and
+root cause are therefore unverified, not fixed by these additional assertions. No timeout,
+retry, dependency, sandbox or discovery change is made. The six external tasks remain open.
+
+All 35 existing draft tests and all 165 tooling tests pass locally, along with repository,
+strict typing, credential-free Terraform, secret/publication and document-link checks. These
+checks do not validate the blocked browser probe or establish a cause for the Ubuntu failure.
+
+## Earlier Foundation Acceptance: 2026-10-27
+
+T031 was complete at the snapshot in [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375),
 source `57b4e1d9ad7bca3113e612b198af736d8d264392`. All three jobs succeed; this is
 credential-free foundation acceptance, not live calling or release approval.
 
@@ -31,7 +54,7 @@ assertion, TLS check or sandbox control was weakened. Temporary compiler upload 
 removed and their single remote diagnostic artifact was deleted early. Private feeds remain
 only in ignored local settings.
 
-T001-T031 are complete. T042/T097/T099/T117/T118/T119 still require qualified external
+T001-T031 were complete at that snapshot. T042/T097/T099/T117/T118/T119 still require qualified external
 evidence or authorization; telephony remains deferred under the user's local-only scope.
 SC-008 remains deferred. The following sections preserve historical failures and recovery,
 not current open foundation gates. See the [handoff](final.md) and [release gates](release-gates.md).

@@ -1,11 +1,17 @@
 # Release Gates
 
-**Release blocked.** The latest full native Windows and Ubuntu CI suites each pass runtime
+**Release blocked. Current native verification also blocked.** Run
+[40552023091](https://github.com/marvinbuss/caller-ai/actions/runs/40552023091) on 78c54ba passes
+Windows and images, but Ubuntu fails the keyboard journey's post-save community assertion
+(384 runtime passes, 406 management passes/one failure). T031 is reopened; the read-only probe
+is blocked locally by a 180-second compiler timeout. No root cause or repair is established.
+
+The earlier fully successful native Windows and Ubuntu CI suites each pass runtime
 **384**, management **407** and tools **165** cases with zero failures/errors/skips. The earlier
-combined local profile passed 384/407/149. Local status is passed; live status remains pending
+combined local profile passed 384/407/149. That snapshot's local status was passed; live status remains pending
 and release status remains blocked.
 
-T031 foundation acceptance is complete on [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375)
+Earlier T031 foundation acceptance was recorded on [run 40549068375](https://github.com/marvinbuss/caller-ai/actions/runs/40549068375)
 at `57b4e1d`: both native jobs and the actual Linux image job succeed. Both platforms prove
 the 0/1/0 assertion gate with cleanup, render all 28 diagrams and pass strict package audits;
 actual image smoke and all three image audits pass. See [foundation evidence](foundation.md).
@@ -17,6 +23,7 @@ or live qualification. Source publication does not waive failed or missing relea
 
 | Remaining gate | Required evidence |
 |----------------|-------------------|
+| T031 native regression | Reproduce and repair the post-save missing-community failure; run complete native/image gates without retrying away or weakening assertions |
 | T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
 | T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
 | T099 actual environment | Approved provisioned/pre-provisioned resources and real identity/probe adapters; eleven offline unavailable checks are not qualification |

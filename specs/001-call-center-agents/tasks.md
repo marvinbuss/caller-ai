@@ -16,7 +16,15 @@ that is requirements approval, not proof that any task below is implemented.
 Write story contract/unit/integration tests before the behavior they specify, observe meaningful
 failures, then implement and rerun. Generated tests require reviewed assertions and recorded results.
 
-**Current foundation acceptance (2026-10-27)**: observed run 40549068375 on
+**Current native regression (2026-10-27)**: run 40552023091 on 78c54ba passes Windows and
+Linux images, but Ubuntu reports 384 runtime passes and 406 management passes/one failure:
+the 1440px keyboard journey's saved repository document lacks the expected new community.
+T031 is reopened. A read-only pre/post-save probe retains all original assertions; its exact
+local run is blocked before browser execution by the unchanged 180-second compiler bound
+(one setup error, 210.48 seconds). Root cause and repair remain unverified. Seven tasks are
+open, including the same six external gates; no provider/cloud/release approval is added.
+
+**Earlier foundation acceptance (2026-10-27)**: observed run 40549068375 on
 `57b4e1d9ad7bca3113e612b198af736d8d264392` passes every native Windows 2022, native Ubuntu 24.04
 and Linux image step. Each native job passes 384 runtime/407 management/165 tooling cases,
 renders 33 documents/28 diagrams and proves the 0/1/0 assertion gate with fixture cleanup.
@@ -161,7 +169,7 @@ current evidence; other native/remote, full-suite, media/live and release gates 
 - [X] T028 Add `code/tools/scripts/verify_failure_gate.py` and `code/docs/acceptance/ci-failure-gate.md` for a disposable broken starter assertion whose nonzero result is observed locally and in CI; restore the disposable fixture without altering genuine assertions, reverting user work, or claiming an unobserved remote job passed (after T025; observed Ubuntu job 122108740893 on c60f7b0, 0/1/0 and fixture_cleaned=true; later render failure retained).
 - [X] T029 Update `code/docs/setup.md` and `code/docs/architecture.md` with verified Windows/Linux commands, Mermaid service/mode diagrams, pre-commit installation, Docker port differences, and dependency preparation; document meaningful failure/recovery outcomes and validate the diagrams (after T021-T028; observed Ubuntu full documentation/render job on 9e76e90 and local Windows validation; failed Windows editor outcome disclosed, not T031 acceptance).
 - [X] T030 Add interrupted-startup, occupied-port, invalid-mode, and missing/stale-lock regressions in `code/backend/tests/integration/test_foundation_recovery.py` and `code/management/tests/integration/test_foundation_recovery.py`; ensure failed attempts leave no orphan processes or implicit cloud fallback (after T021, T027).
-- [X] T031 Run the foundation quickstart and record SC-015/SC-016/SC-017 evidence in `code/docs/acceptance/foundation.md`, including two native operating systems, both real application foundations, credential-free tests, actual Docker smoke, and deliberate failure-gate results; disclose unavailable evidence rather than marking the milestone complete (after T025-T030; observed complete Windows/Ubuntu/image run 40549068375 on 57b4e1d, including strict audits and both 0/1/0 cleanup gates; live/release tasks remain open).
+- [ ] T031 Run the foundation quickstart and record SC-015/SC-016/SC-017 evidence in `code/docs/acceptance/foundation.md`, including two native operating systems, both real application foundations, credential-free tests, actual Docker smoke, and deliberate failure-gate results; disclose unavailable evidence rather than marking the milestone complete (after T025-T030; earlier green run 40549068375 on 57b4e1d retained, but reopened after run 40552023091 on 78c54ba fails Ubuntu's keyboard persistence assertion; current local probe blocked by compiler timeout, no repair claimed).
 
 **Checkpoint: Foundation MVP**. Stop here for the initial repository delivery. Both apps are
 locally usable and CI is meaningful; live call handling, agent editing, cloud resources, and
