@@ -16,7 +16,16 @@ that is requirements approval, not proof that any task below is implemented.
 Write story contract/unit/integration tests before the behavior they specify, observe meaningful
 failures, then implement and rerun. Generated tests require reviewed assertions and recorded results.
 
-**Current native regression (2026-10-27)**: run 40552023091 on 78c54ba passes Windows and
+**Current diagnostic result (2026-10-27)**: run 40590188047 on
+`6b7f03a0d2f127e06cfba4b82f68f9cd885bc483` passes all Windows/Ubuntu/image steps. Each native
+job passes 384 runtime/407 management/165 tooling cases, including the stronger keyboard
+assertions and all original persistence checks, plus failure/cleanup, render and audit gates.
+The probe is verified remotely; the earlier missing-community failure did not reproduce and
+no root-cause application repair was made. T031 stays open, alongside the same six external
+tasks. Granian's installed default worker count is one, not evidence for a split-store cause.
+No timeout, retry, assertion, dependency or external authorization changes.
+
+**Earlier native regression (2026-10-27)**: run 40552023091 on 78c54ba passes Windows and
 Linux images, but Ubuntu reports 384 runtime passes and 406 management passes/one failure:
 the 1440px keyboard journey's saved repository document lacks the expected new community.
 T031 is reopened. A read-only pre/post-save probe retains all original assertions; its exact

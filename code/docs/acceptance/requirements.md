@@ -9,6 +9,10 @@ native platform. Later run 40552023091 on 78c54ba passes Windows/images but fail
 keyboard persistence assertion (384 runtime passes, 406 management passes/one failure).
 T031 is reopened; the new read-only browser probe is locally blocked by compiler timeout.
 See [current evidence](foundation.md). This does not qualify deployed or live behavior.
+Subsequent diagnostic run 40590188047 on 6b7f03a passes every native/image step and all
+384/407/165 native cases, including the stronger browser assertions. The earlier failure
+did not recur; its root cause and the local compiler timeout remain unresolved, so T031
+stays open rather than treating this probe as a demonstrated application repair.
 The machine inventory keeps all entries
 `pending_qualification` except explicitly `deferred` SC-008. Read [release gates](release-gates.md).
 

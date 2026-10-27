@@ -2,11 +2,17 @@
 
 ## Status
 
-**Current native verification blocked.** [Run 40552023091](https://github.com/marvinbuss/caller-ai/actions/runs/40552023091)
+**Latest diagnostic CI passes; root cause remains unresolved.**
+[Run 40590188047](https://github.com/marvinbuss/caller-ai/actions/runs/40590188047) on 6b7f03a
+passes all Windows/Ubuntu/image steps, with 384/407/165 cases on each native platform and the
+stronger keyboard assertions intact. This is verified probe execution, not a reproduced fix.
+T031 remains open, alongside the six external tasks. See [current evidence](foundation.md).
+
+**Earlier native verification failure.** [Run 40552023091](https://github.com/marvinbuss/caller-ai/actions/runs/40552023091)
 on 78c54ba passes Windows and images, but Ubuntu has 384 runtime passes and 406 management
 passes/one keyboard-journey persistence failure. T031 is reopened. The added read-only
-save-boundary probe cannot yet be validated locally because its frontend build times out;
-no root-cause repair or current all-green workflow is claimed. See [current evidence](foundation.md).
+save-boundary probe could not be validated locally because its frontend build timed out;
+the subsequent hosted success above does not establish a root-cause repair.
 
 **Local implementation handoff, not full release acceptance.** The user authorized remaining
 local-only media/cleanup/audit/release code under injected provider doubles and subsequently

@@ -1,6 +1,27 @@
 # Foundation Verification Evidence
 
-## Current Verification Regression: 2026-10-27
+## Current Diagnostic Outcome: 2026-10-27
+
+[Run 40590188047](https://github.com/marvinbuss/caller-ai/actions/runs/40590188047) on
+`6b7f03a0d2f127e06cfba4b82f68f9cd885bc483` passes every Windows, Ubuntu and Linux image step.
+Each native job reports 384 runtime, 407 management and 165 tooling passes, with no failures,
+errors or skips. The stronger keyboard journey executes its pre/post-save community-name
+checks, Unsaved acknowledgment and every original persisted-document assertion successfully.
+Both native jobs report baseline 0/broken 1/restored 0 with fixture cleanup and render all
+33 documents/28 diagrams. Sandboxed Chrome versions are Windows 156.0.8078.48 and Ubuntu
+155.0.8059.39. Strict Python package counts are Windows 69/92/60 and Ubuntu 68/90/59;
+294 frontend coordinates have zero findings. Image smoke passes offline/non-root startup and
+360/768/1440 browser checks; all three actual images have zero HIGH/CRITICAL findings.
+
+This verifies the diagnostic assertions, not a root-cause repair: the earlier missing-community
+failure did not recur, and the added assertions do not explain it. The installed Granian
+constructor's default worker count is verified as one, so omitted worker configuration does
+not support the proposed separate-worker-store hypothesis. No application behavior changed.
+T031 remains open for a reproducible explanation/repair and native revalidation; the local
+compiler timeout below also remains unresolved. The six external gates and local-only scope
+are unchanged. No repeated workflow rerun, timeout increase or assertion waiver was used.
+
+## Earlier Verification Regression: 2026-10-27
 
 Run [40552023091](https://github.com/marvinbuss/caller-ai/actions/runs/40552023091) on
 documentation-only `78c54baaef30b5e7166849924f66640de8ddb054` passes native Windows and Linux

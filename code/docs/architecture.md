@@ -23,6 +23,10 @@ passes full native Windows/Ubuntu suites (384/407/165 each) and the Linux image 
 T031 at that snapshot. Later run 40552023091 on 78c54ba passes Windows/images but fails one
 Ubuntu keyboard-journey persistence assertion; T031 is reopened and the save-boundary probe
 is locally blocked by compiler timeout. See [current foundation evidence](acceptance/foundation.md).
+Diagnostic run 40590188047 on 6b7f03a subsequently passes full Windows/Ubuntu/image gates
+and the stronger keyboard assertions. No application behavior changed or root cause was
+reproduced; T031 stays open. Granian's installed default is one worker, which does not support
+the proposed split-store explanation from an omitted worker setting.
 Earlier failures remain recorded. Live metric delivery, qualified phone/model/storage
 access and real cluster enforcement remain pending. A typed injected port is not a deployed
 authorization mechanism, and green components cannot mint release readiness.

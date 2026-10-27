@@ -1,6 +1,13 @@
 # Release Gates
 
-**Release blocked. Current native verification also blocked.** Run
+**Release blocked; T031 root-cause investigation remains open.** Diagnostic
+[run 40590188047](https://github.com/marvinbuss/caller-ai/actions/runs/40590188047) on 6b7f03a
+passes all three jobs, including 384/407/165 tests per native platform, all original and
+stronger keyboard assertions, assertion/cleanup gates, diagrams, package audits and image
+smoke/audits. No application fix was made and the earlier failure did not reproduce; another
+green run does not explain the intermittent missing-community result or local compiler timeout.
+
+Earlier run
 [40552023091](https://github.com/marvinbuss/caller-ai/actions/runs/40552023091) on 78c54ba passes
 Windows and images, but Ubuntu fails the keyboard journey's post-save community assertion
 (384 runtime passes, 406 management passes/one failure). T031 is reopened; the read-only probe
@@ -23,7 +30,7 @@ or live qualification. Source publication does not waive failed or missing relea
 
 | Remaining gate | Required evidence |
 |----------------|-------------------|
-| T031 native regression | Reproduce and repair the post-save missing-community failure; run complete native/image gates without retrying away or weakening assertions |
+| T031 native regression | Diagnostic 6b7f03a passes full native/image gates; reproduce and explain/repair the earlier post-save missing-community failure without retrying away or weakening assertions |
 | T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
 | T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
 | T099 actual environment | Approved provisioned/pre-provisioned resources and real identity/probe adapters; eleven offline unavailable checks are not qualification |
