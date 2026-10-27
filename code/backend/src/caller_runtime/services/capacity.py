@@ -1,0 +1,289 @@
+"""Explicit local admission controller; not a distributed quota or socket migration service."""
+
+from __future__ import annotations
+
+import asyncio
+import re
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, Protocol
+from uuid import uuid4
+
+from caller_runtime.adapters.session_repository import metadata_model
+from caller_runtime.domain.session import CallSession, LifecycleState
+from caller_runtime.domain.visibility import CommunityVisibility
+from caller_runtime.metrics import RuntimeMetrics
+
+
+class CapacityRepository(Protocol):
+    async def create(self, metadata: Mapping[str, Any]) -> bool: ...
+
+    async def read(self, session_id: str) -> dict[str, Any] | None: ...
+
+    async def replace(self, session_id: str, metadata: Mapping[str, Any]) -> dict[str, Any]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AdmissionResult:
+    outcome: Literal["admitted", "duplicate", "unavailable"]
+    session_id: str
+
+
+@dataclass(slots=True)
+class OwnerCapacity:
+    state: Literal["serving", "draining", "drained"]
+    heartbeat_at: float
+
+
+class CapacityService:
+    """One injected controller serializes local reservations; live integration remains gated."""
+
+    def __init__(
+        self,
+        *,
+        repository: CapacityRepository,
+        configuration: Mapping[str, Any],
+        sessions_per_owner: int,
+        maximum_sessions: int,
+        model_session_quota: int,
+        monotonic: Callable[[], float] = time.monotonic,
+        utc_now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        lease_seconds: float = 60,
+        operation_budget: float = 10,
+        maximum_pending: int = 256,
+        metrics: RuntimeMetrics | None = None,
+    ) -> None:
+        if (
+            any(
+                type(value) is not int or not 1 <= value <= 10000
+                for value in (sessions_per_owner, maximum_sessions)
+            )
+            or type(model_session_quota) is not int
+            or not 0 <= model_session_quota <= 10000
+            or type(maximum_pending) is not int
+            or not 1 <= maximum_pending <= 4096
+            or not 0 < lease_seconds <= 300
+            or not 0 < operation_budget <= 10
+        ):
+            raise ValueError("invalid_capacity_configuration")
+        self._repository = repository
+        self._revision = CommunityVisibility(configuration).revision_id
+        self._slots, self._maximum, self._quota = (
+            sessions_per_owner,
+            maximum_sessions,
+            model_session_quota,
+        )
+        self._monotonic, self._utc_now = monotonic, utc_now
+        self._lease, self._budget, self._pending_limit = (
+            lease_seconds,
+            operation_budget,
+            maximum_pending,
+        )
+        self._owners: dict[str, OwnerCapacity] = {}
+        self._active: dict[str, str] = {}
+        self._extra_models: dict[str, str] = {}
+        self._pending = 0
+        self._lock = asyncio.Lock()
+        self._metrics = metrics
+
+    def _publish_capacity(self) -> None:
+        if self._metrics is not None:
+            self._metrics.reservations(len(self._active))
+            self._metrics.saturation("session_slots", min(1, len(self._active) / self._maximum))
+            models = len(self._active) + len(self._extra_models)
+            self._metrics.saturation(
+                "model_sessions", min(1, models / self._quota) if self._quota else 1
+            )
+            self._metrics.saturation("admission_queue", self._pending / self._pending_limit)
+
+    async def register_owner(self, owner_id: str) -> None:
+        if not isinstance(owner_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", owner_id
+        ):
+            raise ValueError("invalid_capacity_owner")
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                if owner_id not in self._owners:
+                    if len(self._owners) >= 1024:
+                        raise RuntimeError("owner_registry_full")
+                    self._owners[owner_id] = OwnerCapacity("serving", self._monotonic())
+
+    async def admit(self, *, session_id: str, provider_call_ref: str) -> AdmissionResult:
+        try:
+            result = await self._admit(session_id=session_id, provider_call_ref=provider_call_ref)
+            if self._metrics is not None:
+                self._metrics.admission(result.outcome)
+            return result
+        finally:
+            self._publish_capacity()
+
+    async def _admit(self, *, session_id: str, provider_call_ref: str) -> AdmissionResult:
+        unavailable = AdmissionResult("unavailable", session_id)
+        if self._pending >= self._pending_limit:
+            return unavailable
+        self._pending += 1
+        self._publish_capacity()
+        try:
+            async with asyncio.timeout(self._budget):
+                async with self._lock:
+                    if (
+                        session_id in self._active
+                        or await self._repository.read(session_id) is not None
+                    ):
+                        return AdmissionResult("duplicate", session_id)
+                    if (
+                        len(self._active) >= self._maximum
+                        or len(self._active) + len(self._extra_models) >= self._quota
+                    ):
+                        return unavailable
+                    counts = {
+                        owner: sum(value == owner for value in self._active.values())
+                        for owner in self._owners
+                    }
+                    eligible = [
+                        owner
+                        for owner, metadata in self._owners.items()
+                        if metadata.state == "serving"
+                        and self._monotonic() - metadata.heartbeat_at < self._lease
+                        and counts[owner] < self._slots
+                    ]
+                    if not eligible:
+                        return unavailable
+                    owner = min(eligible, key=lambda item: (counts[item], item))
+                    now = self._utc_now()
+                    candidate = CallSession(
+                        sessionId=session_id,
+                        providerCallRef=provider_call_ref,
+                        configurationRevisionId=self._revision,
+                        physicalOwnerId=owner,
+                        connectionEpoch=1,
+                        startedAt=now,
+                        leaseUntil=now + timedelta(seconds=self._lease),
+                    )
+                    self._active[session_id] = owner
+                    if not await self._repository.create(candidate.to_document()):
+                        self._active.pop(session_id, None)
+                        return AdmissionResult("duplicate", session_id)
+                    return AdmissionResult("admitted", session_id)
+        except Exception:
+            return unavailable
+        finally:
+            self._pending -= 1
+
+    async def heartbeat(self, owner_id: str) -> None:
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                owner = self._owners[owner_id]
+                if (
+                    owner.state == "drained"
+                    or self._monotonic() - owner.heartbeat_at >= self._lease
+                ):
+                    raise PermissionError("owner_lease_lost")
+                for session_id, physical_owner in self._active.items():
+                    if physical_owner != owner_id:
+                        continue
+                    document = await self._repository.read(session_id)
+                    if document is None:
+                        raise RuntimeError("session_authority_unknown")
+                    current = metadata_model(document)
+                    if current.physical_owner_id != owner_id:
+                        raise PermissionError("session_owner_mismatch")
+                    if current.state != LifecycleState.ENDED:
+                        if current.lease_until <= self._utc_now():
+                            raise PermissionError("session_lease_lost")
+                        await self._repository.replace(
+                            session_id,
+                            document
+                            | {
+                                "leaseUntil": (
+                                    self._utc_now() + timedelta(seconds=self._lease)
+                                ).isoformat()
+                            },
+                        )
+                owner.heartbeat_at = self._monotonic()
+
+    async def release(self, session_id: str) -> None:
+        """Trusted caller invokes this only after verified physical call closure."""
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                if session_id not in self._active:
+                    return
+                document = await self._repository.read(session_id)
+                if document is not None:
+                    current = metadata_model(document)
+                    if current.physical_owner_id != self._active[session_id]:
+                        raise PermissionError("session_owner_mismatch")
+                    if current.state != LifecycleState.ENDED:
+                        ended = current.transition(
+                            LifecycleState.ENDED, at=self._utc_now(), terminal_reason="completed"
+                        )
+                        await self._repository.replace(session_id, ended.model_dump(by_alias=True))
+                self._active.pop(session_id, None)
+
+                self._publish_capacity()
+
+    async def active_count(self) -> int:
+        async with self._lock:
+            return len(self._active)
+
+    async def reserve_model_session(self, session_id: str) -> str | None:
+        """Trusted model adapter reserves overlap before preparing a fresh receiver."""
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                if session_id not in self._active:
+                    raise PermissionError("session_model_budget_not_owned")
+                document = await self._repository.read(session_id)
+                if document is None:
+                    raise PermissionError("session_authority_unknown")
+                current = metadata_model(document)
+                if (
+                    current.state == LifecycleState.ENDED
+                    or current.lease_until <= self._utc_now()
+                    or current.physical_owner_id != self._active[session_id]
+                ):
+                    raise PermissionError("session_model_budget_not_owned")
+                if len(self._active) + len(self._extra_models) >= self._quota:
+                    return None
+                reservation = uuid4().hex
+                self._extra_models[reservation] = session_id
+                self._publish_capacity()
+                return reservation
+
+    async def release_model_session(self, reservation: str) -> None:
+        """Release only after confirmed model disposal; duplicate release is harmless."""
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                self._extra_models.pop(reservation, None)
+                self._publish_capacity()
+
+    async def set_model_session_quota(self, quota: int) -> None:
+        if type(quota) is not int or not 0 <= quota <= 10000:
+            raise ValueError("invalid_model_session_quota")
+        async with self._lock:
+            self._quota = quota
+            self._publish_capacity()
+
+    async def owner_state(self, owner_id: str) -> str:
+        async with self._lock:
+            return self._owners[owner_id].state
+
+    async def begin_drain(self, owner_id: str) -> str:
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                owner = self._owners[owner_id]
+                if owner.state == "serving":
+                    owner.state = "draining"
+                return owner.state
+
+    async def finish_drain(self, owner_id: str) -> str:
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                owner = self._owners[owner_id]
+                if owner.state == "serving":
+                    raise PermissionError("drain_not_started")
+                if owner_id in self._active.values():
+                    return "postponed"
+                owner.state = "drained"
+                return "drained"

@@ -1,0 +1,32 @@
+[project]
+name = "caller-tools"
+version = "0.1.0"
+description = "Development and verification tooling for Caller AI"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "pre-commit>=4.2,<5",
+  "ruff>=0.12,<1",
+  "mypy>=1.15,<2",
+  "detect-secrets>=1.5,<2",
+  "pip-audit>=2.9,<3",
+  "pytest>=8.3,<10",
+  "httpx>=0.28,<1",
+  "jsonschema>=4.23,<5",
+  "pyyaml>=6,<7",
+  "types-pyyaml>=6",
+  "types-psutil>=7.2.2,<7.3",
+  "psutil>=7,<8",
+  "json5>=0.12,<1",
+  "markdown-it-py>=4,<5",
+]
+
+[tool.uv]
+package = false
+constraint-dependencies = ["virtualenv>=21.14.9", "filelock>=4.2.1"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

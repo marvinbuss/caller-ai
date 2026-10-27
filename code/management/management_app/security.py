@@ -1,0 +1,687 @@
+"""Entra JWT verification and bounded server-owned sessions; no implicit identity sources."""
+
+import asyncio
+import base64
+import hashlib
+import hmac
+import re
+import secrets
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Protocol, Self
+from urllib.parse import parse_qs, urlsplit
+from uuid import UUID
+
+import jwt
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from reflex import constants
+from reflex.app import EventNamespace
+from reflex.middleware.middleware import Middleware
+from starlette.responses import JSONResponse, RedirectResponse, Response
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+COOKIE = "__Host-caller-session"
+OPAQUE = re.compile(r"^[A-Za-z0-9_-]{43}$")
+
+if TYPE_CHECKING:
+    from reflex.app import App
+    from reflex.event import Event
+    from reflex.state import BaseState, StateUpdate
+
+
+def unauthorized() -> HTTPException:
+    return HTTPException(401, "invalid_identity", headers={"WWW-Authenticate": "Bearer"})
+
+
+class EntraPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
+    tenant_id: str
+    client_id: str
+    api_audience: str
+    origin: str
+    manager_role: str
+    manager_scope: str
+
+    @field_validator("tenant_id", "client_id", "api_audience")
+    @classmethod
+    def opaque_guid(cls, value: str) -> str:
+        return str(UUID(value))
+
+    @model_validator(mode="after")
+    def safe_boundaries(self) -> Self:
+        parts = urlsplit(self.origin)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or parts.path
+            or parts.query
+            or parts.fragment
+            or (parts.port is not None and not 1 <= parts.port <= 65535)
+        ):
+            raise ValueError("https_management_origin_required")
+        if self.api_audience == self.client_id:
+            raise ValueError("distinct_api_audience_required")
+        if not all(
+            re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]{0,127}", value)
+            for value in (self.manager_role, self.manager_scope)
+        ):
+            raise ValueError("invalid_permission_configuration")
+        return self
+
+    @property
+    def issuer(self) -> str:
+        return f"https://login.microsoftonline.com/{self.tenant_id}/v2.0"
+
+
+class SigningKeys(Protocol):
+    async def signing_keys(self) -> dict[str, Any]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class Principal:
+    actor_id: str
+    tenant_id: str
+    expires_at: int
+    roles: tuple[str, ...]
+
+
+class TokenVerifier:
+    def __init__(self, *, policy: EntraPolicy, keys: SigningKeys) -> None:
+        self.policy = policy
+        self.keys = keys
+
+    async def _verify(
+        self,
+        token: str,
+        *,
+        audience: str,
+        nonce: str | None,
+        application_clients: frozenset[str] | None = None,
+        application_role: str | None = None,
+    ) -> Principal:
+        if not isinstance(token, str) or not 1 <= len(token) <= 16384:
+            raise unauthorized()
+        try:
+            header = jwt.get_unverified_header(token)
+            kid = header.get("kid")
+            if (
+                header.get("alg") != "RS256"
+                or not isinstance(kid, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", kid)
+                or any(name in header for name in ("jku", "x5u", "crit", "jwk"))
+            ):
+                raise ValueError("invalid_header")
+        except Exception:
+            raise unauthorized() from None
+        try:
+            async with asyncio.timeout(2):
+                document = await self.keys.signing_keys()
+        except Exception:
+            raise HTTPException(503, "identity_authority_unavailable") from None
+        try:
+            candidates = document["keys"]
+            if not isinstance(candidates, list) or len(candidates) > 32:
+                raise ValueError("invalid_key_set")
+            matching = [
+                key for key in candidates if isinstance(key, dict) and key.get("kid") == kid
+            ]
+            if len(matching) != 1:
+                raise ValueError("unknown_signing_key")
+            key = matching[0]
+            if (
+                key.get("kty") != "RSA"
+                or key.get("use") != "sig"
+                or key.get("alg", "RS256") != "RS256"
+                or any(name in key for name in ("d", "p", "q"))
+            ):
+                raise ValueError("invalid_signing_key")
+            key_issuer = key.get("issuer", self.policy.issuer)
+            if (
+                not isinstance(key_issuer, str)
+                or key_issuer.replace("{tenantid}", self.policy.tenant_id) != self.policy.issuer
+            ):
+                raise ValueError("invalid_key_issuer")
+            public = jwt.PyJWK.from_dict(key, algorithm="RS256").key
+            if not 2048 <= public.key_size <= 8192:
+                raise ValueError("invalid_key_size")
+            claims = jwt.decode(
+                token,
+                public,
+                algorithms=["RS256"],
+                audience=audience,
+                issuer=self.policy.issuer,
+                leeway=0,
+                options={
+                    "require": ["exp", "iat", "nbf", "iss", "aud", "tid", "oid", "sub"],
+                    "strict_aud": True,
+                },
+            )
+            if (
+                claims["tid"] != self.policy.tenant_id
+                or claims.get("ver") != "2.0"
+                or any(type(claims[name]) is not int for name in ("exp", "iat", "nbf"))
+            ):
+                raise ValueError("invalid_claims")
+            actor = str(UUID(claims["oid"]))
+            if nonce is not None:
+                if not isinstance(claims.get("nonce"), str) or not hmac.compare_digest(
+                    claims["nonce"], nonce
+                ):
+                    raise ValueError("invalid_nonce")
+            elif application_clients is not None:
+                if (
+                    claims.get("idtyp") != "app"
+                    or claims.get("scp")
+                    or claims.get("azp") not in application_clients
+                ):
+                    raise ValueError("invalid_application_identity")
+            elif (
+                not isinstance(claims.get("scp"), str)
+                or self.policy.manager_scope not in claims["scp"].split()
+            ):
+                raise ValueError("invalid_scope")
+        except Exception:
+            raise unauthorized() from None
+        roles = claims.get("roles")
+        if (
+            not isinstance(roles, list)
+            or not all(isinstance(role, str) for role in roles)
+            or (application_role or self.policy.manager_role) not in roles
+        ):
+            raise HTTPException(403, "permission_denied")
+        return Principal(actor, self.policy.tenant_id, claims["exp"], tuple(roles))
+
+    async def verify_access(self, token: str) -> Principal:
+        return await self._verify(token, audience=self.policy.api_audience, nonce=None)
+
+    async def verify_identity(self, token: str, *, nonce: str) -> Principal:
+        if not nonce:
+            raise unauthorized()
+        return await self._verify(token, audience=self.policy.client_id, nonce=nonce)
+
+
+class RuntimeIdentity:
+    """Bearer-only workload identity, distinct from manager API and browser audiences."""
+
+    def __init__(
+        self,
+        *,
+        verifier: TokenVerifier,
+        audience: str,
+        role: str,
+        allowed_client_ids: frozenset[str],
+    ) -> None:
+        audience = str(UUID(audience))
+        clients = frozenset(str(UUID(value)) for value in allowed_client_ids)
+        if (
+            not clients
+            or audience in {verifier.policy.client_id, verifier.policy.api_audience}
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]{0,127}", role)
+        ):
+            raise ValueError("distinct_runtime_identity_required")
+        self._verifier, self._audience = verifier, audience
+        self._role, self._clients = role, clients
+
+    async def require_runtime(self, request: Request) -> str:
+        values = request.headers.getlist("authorization")
+        if len(values) != 1 or not values[0].startswith("Bearer "):
+            raise unauthorized()
+        token = values[0][7:]
+        principal = await self._verifier._verify(
+            token,
+            audience=self._audience,
+            nonce=None,
+            application_clients=self._clients,
+            application_role=self._role,
+        )
+        return principal.actor_id
+
+
+@dataclass(frozen=True, slots=True)
+class SessionTicket:
+    cookie: str = field(repr=False)
+    csrf: str = field(repr=False)
+    expires_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class ServerSession:
+    principal: Principal
+    expires_at: float
+    csrf_digest: str = field(repr=False)
+
+
+class SessionStore:
+    def __init__(
+        self, *, policy: EntraPolicy, clock: Callable[[], float] = time.time, capacity: int = 1000
+    ) -> None:
+        if not 1 <= capacity <= 10000:
+            raise ValueError("invalid_session_capacity")
+        self.policy = policy
+        self.clock = clock
+        self.capacity = capacity
+        self._csrf_key = secrets.token_bytes(32)
+        self._sessions: dict[str, ServerSession] = {}
+
+    @staticmethod
+    def digest(value: str) -> str:
+        return hashlib.sha256(value.encode("ascii")).hexdigest()
+
+    def _purge(self) -> None:
+        now = self.clock()
+        self._sessions = {
+            key: value for key, value in self._sessions.items() if value.expires_at > now
+        }
+
+    def issue(self, principal: Principal) -> SessionTicket:
+        self._purge()
+        if (
+            principal.tenant_id != self.policy.tenant_id
+            or principal.expires_at <= self.clock()
+            or self.policy.manager_role not in principal.roles
+        ):
+            raise unauthorized()
+        if len(self._sessions) >= self.capacity:
+            raise HTTPException(503, "identity_capacity_unavailable")
+        cookie = secrets.token_urlsafe(32)
+        csrf = self._csrf(cookie)
+        expires = min(self.clock() + 900, principal.expires_at)
+        self._sessions[self.digest(cookie)] = ServerSession(principal, expires, self.digest(csrf))
+        return SessionTicket(cookie, csrf, expires)
+
+    def resolve(self, cookie: str) -> ServerSession:
+        self._purge()
+        if not OPAQUE.fullmatch(cookie):
+            raise unauthorized()
+        return self.resolve_digest(self.digest(cookie))
+
+    def resolve_digest(self, digest: str) -> ServerSession:
+        self._purge()
+        session = self._sessions.get(digest)
+        if session is None:
+            raise unauthorized()
+        return session
+
+    def _csrf(self, cookie: str) -> str:
+        value = hmac.new(
+            self._csrf_key, self.digest(cookie).encode("ascii"), hashlib.sha256
+        ).digest()
+        return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+    def csrf_for(self, cookie: str) -> str:
+        self.resolve(cookie)
+        return self._csrf(cookie)
+
+    def revoke(self, cookie: str) -> None:
+        if OPAQUE.fullmatch(cookie):
+            self._sessions.pop(self.digest(cookie), None)
+
+    def set_cookie(self, response: Response, ticket: SessionTicket) -> None:
+        response.set_cookie(
+            COOKIE,
+            ticket.cookie,
+            max_age=max(0, int(ticket.expires_at - self.clock())),
+            secure=True,
+            httponly=True,
+            samesite="strict",
+            path="/",
+        )
+
+
+class IdentityService:
+    cookie_name = COOKIE
+
+    def __init__(
+        self, *, policy: EntraPolicy, verifier: TokenVerifier, sessions: SessionStore
+    ) -> None:
+        if verifier.policy != policy or sessions.policy != policy:
+            raise ValueError("identity_policy_mismatch")
+        self.policy = policy
+        self.verifier = verifier
+        self.sessions = sessions
+
+    def browser_session(self, request: Request, *, mutation: bool) -> ServerSession:
+        origin = request.headers.get("origin")
+        if (origin is not None and origin != self.policy.origin) or request.headers.get(
+            "sec-fetch-site"
+        ) == "cross-site":
+            raise HTTPException(403, "csrf_validation_failed")
+        cookie_header = request.headers.get("cookie", "")
+        names = [part.partition("=")[0].strip() for part in cookie_header.split(";")]
+        if names.count(COOKIE) != 1:
+            raise unauthorized()
+        session = self.sessions.resolve(request.cookies.get(COOKIE, ""))
+        if mutation:
+            csrf = request.headers.get("x-csrf-token", "")
+            if (
+                origin != self.policy.origin
+                or not OPAQUE.fullmatch(csrf)
+                or not hmac.compare_digest(self.sessions.digest(csrf), session.csrf_digest)
+            ):
+                raise HTTPException(403, "csrf_validation_failed")
+        return session
+
+    async def require_manager(self, request: Request) -> str:
+        authorization = request.headers.getlist("authorization")
+        if authorization:
+            if len(authorization) != 1 or COOKIE in request.cookies:
+                raise unauthorized()
+            scheme, separator, token = authorization[0].partition(" ")
+            if scheme.lower() != "bearer" or not separator or not token or token.strip() != token:
+                raise unauthorized()
+            return (await self.verifier.verify_access(token)).actor_id
+        return self.browser_session(
+            request, mutation=request.method not in {"GET", "HEAD", "OPTIONS"}
+        ).principal.actor_id
+
+
+@dataclass(frozen=True, slots=True)
+class LoginFlow:
+    url: str = field(repr=False)
+    state: str = field(repr=False)
+    private: Any = field(repr=False)
+
+
+class OidcFlow(Protocol):
+    async def begin(self, state: str) -> LoginFlow: ...
+
+    async def finish(self, flow: LoginFlow, response: dict[str, str]) -> tuple[str, str]: ...
+
+
+def create_auth_router(
+    *, identity: IdentityService, oidc: OidcFlow, operation_budget: float = 5
+) -> APIRouter:
+    if not 0 < operation_budget <= 5:
+        raise ValueError("invalid_identity_operation_budget")
+    router = APIRouter()
+    pending: dict[str, tuple[float, LoginFlow]] = {}
+    inflight = 0
+    login_cookie = "__Host-caller-login"
+
+    def purge() -> None:
+        for key, (expires, _flow) in tuple(pending.items()):
+            if expires <= time.monotonic():
+                del pending[key]
+
+    @router.get("/auth/login")
+    async def login() -> Response:
+        nonlocal inflight
+        purge()
+        if len(pending) + inflight >= 100:
+            raise HTTPException(503, "identity_capacity_unavailable")
+        inflight += 1
+        state, cookie = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        try:
+            async with asyncio.timeout(operation_budget):
+                flow = await oidc.begin(state)
+            target = urlsplit(flow.url)
+            query = parse_qs(target.query)
+            if (
+                target.scheme != "https"
+                or target.netloc != "login.microsoftonline.com"
+                or target.path != f"/{identity.policy.tenant_id}/oauth2/v2.0/authorize"
+                or flow.state != state
+                or query.get("state") != [state]
+            ):
+                raise ValueError("invalid_authorization_redirect")
+        except Exception:
+            raise HTTPException(503, "identity_authority_unavailable") from None
+        finally:
+            inflight -= 1
+        pending[identity.sessions.digest(cookie)] = (time.monotonic() + 300, flow)
+        response = RedirectResponse(flow.url, status_code=303)
+        response.set_cookie(
+            login_cookie, cookie, secure=True, httponly=True, samesite="none", max_age=300, path="/"
+        )
+        response.headers.update({"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+        return response
+
+    @router.post("/auth/callback")
+    async def callback(request: Request) -> Response:
+        deadline = asyncio.get_running_loop().time() + operation_budget
+        purge()
+        cookie = request.cookies.get(login_cookie, "")
+        if not OPAQUE.fullmatch(cookie):
+            raise unauthorized()
+        item = pending.pop(identity.sessions.digest(cookie), None)
+        if item is None:
+            raise unauthorized()
+        if (
+            request.headers.get("content-type", "").split(";", 1)[0]
+            != "application/x-www-form-urlencoded"
+        ):
+            raise unauthorized()
+        body = bytearray()
+        try:
+            async with asyncio.timeout_at(deadline):
+                async for chunk in request.stream():
+                    body.extend(chunk)
+                    if len(body) > 16384:
+                        raise HTTPException(413, "identity_response_too_large")
+        except TimeoutError:
+            raise HTTPException(503, "identity_response_timeout") from None
+        try:
+            fields = parse_qs(
+                body.decode("utf-8"), keep_blank_values=True, strict_parsing=True, max_num_fields=8
+            )
+            if (
+                not {"code", "state"} <= fields.keys()
+                or any(len(values) != 1 for values in fields.values())
+                or not hmac.compare_digest(fields["state"][0], item[1].state)
+            ):
+                raise ValueError("invalid_oidc_response")
+            submitted = {
+                key: values[0]
+                for key, values in fields.items()
+                if key in {"code", "state", "session_state"}
+            }
+            async with asyncio.timeout_at(deadline):
+                token, verified_nonce = await oidc.finish(item[1], submitted)
+                principal = await identity.verifier.verify_identity(token, nonce=verified_nonce)
+            previous = request.cookies.get(COOKIE)
+            if previous:
+                identity.sessions.revoke(previous)
+            ticket = identity.sessions.issue(principal)
+        except HTTPException:
+            raise
+        except Exception:
+            raise unauthorized() from None
+        response = RedirectResponse("/configuration", status_code=303)
+        identity.sessions.set_cookie(response, ticket)
+        response.delete_cookie(login_cookie, secure=True, httponly=True, samesite="none", path="/")
+        response.headers.update({"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+        return response
+
+    @router.get("/auth/session")
+    async def session(request: Request) -> Response:
+        stored = identity.browser_session(request, mutation=False)
+        cookie = request.cookies[COOKIE]
+        csrf = identity.sessions.csrf_for(cookie)
+        response = JSONResponse({"actor_ref": stored.principal.actor_id, "csrf": csrf})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @router.post("/auth/logout")
+    async def logout(request: Request) -> Response:
+        identity.browser_session(request, mutation=True)
+        identity.sessions.revoke(request.cookies[COOKIE])
+        response = Response(status_code=204, headers={"Cache-Control": "no-store"})
+        response.delete_cookie(COOKIE, secure=True, httponly=True, samesite="strict", path="/")
+        return response
+
+    return router
+
+
+class ReflexEventGuard:
+    def __init__(self, *, identity: IdentityService) -> None:
+        self.identity = identity
+        self._owners: dict[str, str] = {}
+        self._connections: dict[str, tuple[str, str]] = {}
+        self._session_handles: dict[str, str] = {}
+
+    def connect(self, sid: str, environ: dict[str, Any]) -> dict[str, Any]:
+        scope = dict(environ.get("asgi.scope", {}))
+        scope["type"] = "http"
+        scope["method"] = "GET"
+        request = Request(scope)
+        if request.headers.get("origin") != self.identity.policy.origin:
+            raise HTTPException(403, "csrf_validation_failed")
+        session = self.identity.browser_session(request, mutation=False)
+        query = parse_qs(environ.get("QUERY_STRING", ""), max_num_fields=16)
+        tokens = query.get("token", [])
+        if len(tokens) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", tokens[0]):
+            raise unauthorized()
+        token_hash = self.identity.sessions.digest(tokens[0])
+        owner = self._owners.get(token_hash)
+        if owner is not None and owner != session.principal.actor_id:
+            raise unauthorized()
+        if (owner is None and len(self._owners) >= 5000) or len(self._connections) >= 2000:
+            raise HTTPException(503, "identity_capacity_unavailable")
+        self._owners[token_hash] = session.principal.actor_id
+        self._connections[sid] = (
+            self.identity.sessions.digest(request.cookies[COOKIE]),
+            token_hash,
+        )
+        self._session_handles[sid] = request.cookies[COOKIE]
+        allowed_headers = {b"origin", b"user-agent", b"accept-language"}
+        scope["headers"] = [
+            (name, value)
+            for name, value in scope.get("headers", [])
+            if name.lower() in allowed_headers
+        ]
+        cleaned = {key: value for key, value in environ.items() if not key.startswith("HTTP_")}
+        cleaned["asgi.scope"] = scope
+        return cleaned
+
+    def authorize(self, sid: str, token: str) -> str:
+        binding = self._connections.get(sid)
+        if binding is None or binding[1] != self.identity.sessions.digest(token):
+            raise unauthorized()
+        session = self.identity.sessions.resolve_digest(binding[0])
+        if self._owners.get(binding[1]) != session.principal.actor_id:
+            raise unauthorized()
+        return session.principal.actor_id
+
+    def disconnect(self, sid: str) -> None:
+        self._connections.pop(sid, None)
+        self._session_handles.pop(sid, None)
+
+    def request_headers(self, sid: str, token: str, *, mutation: bool) -> dict[str, str]:
+        self.authorize(sid, token)
+        cookie = self._session_handles[sid]
+        headers = {"Cookie": COOKIE + "=" + cookie, "Origin": self.identity.policy.origin}
+        if mutation:
+            headers["X-CSRF-Token"] = self.identity.sessions.csrf_for(cookie)
+        return headers
+
+
+class SecureEventNamespace(EventNamespace):
+    def __init__(self, *, delegate: "EventNamespace", guard: ReflexEventGuard) -> None:
+        super().__init__(namespace=delegate.namespace, app=delegate.app)
+        self.delegate = delegate
+        self.guard = guard
+
+    async def trigger_event(self, event: str, *args: Any) -> Any:
+        sid = args[0] if args else ""
+        if event == "disconnect":
+            self.guard.disconnect(sid)
+            return await self.delegate.trigger_event(event, *args)
+        try:
+            if event == "connect":
+                auth = args[2] if len(args) > 2 else None
+                bootstrap = (
+                    auth.get(constants.CompileVars.CONNECT_AUTH_EVENT)
+                    if isinstance(auth, dict)
+                    else None
+                )
+                if bootstrap is not None and not self.valid_event(bootstrap):
+                    return False
+                cleaned = self.guard.connect(sid, args[1])
+                return await self.delegate.trigger_event(
+                    event, sid, cleaned, args[2] if len(args) > 2 else None
+                )
+            self.guard.authorize(sid, self.delegate.sid_to_token.get(sid, ""))
+            if event == "event":
+                data = args[1] if len(args) > 1 else None
+                if not self.valid_event(data):
+                    return {"error": "invalid_event"}
+            return await self.delegate.trigger_event(event, *args)
+        except Exception:
+            if event == "connect":
+                self.guard.disconnect(sid)
+                return False
+            return {"error": "authorization_required"}
+
+    @staticmethod
+    def valid_event(data: object) -> bool:
+        return (
+            isinstance(data, dict)
+            and isinstance(data.get("name"), str)
+            and isinstance(data.get("payload", {}), dict)
+            and isinstance(data.get("router_data", {}), dict)
+        )
+
+
+class EventAuthorizationMiddleware(Middleware):
+    def __init__(self, *, guard: ReflexEventGuard) -> None:
+        self.guard = guard
+
+    async def preprocess(
+        self, app: "App", state: "BaseState", event: "Event"
+    ) -> "StateUpdate | None":
+        from reflex.state import StateUpdate
+
+        try:
+            sid = event.router_data.get(constants.RouteVar.SESSION_ID)
+            token = event.router_data.get(constants.RouteVar.CLIENT_TOKEN)
+            if sid is None:
+                sid = state.router.session.session_id
+            if token is None:
+                token = state.router.session.client_token
+            self.guard.authorize(sid, token)
+        except Exception:
+            return StateUpdate(delta={}, events=[], final=True)
+        return None
+
+    async def postprocess(
+        self, app: "App", state: "BaseState", event: "Event", update: "StateUpdate"
+    ) -> "StateUpdate":
+        return update
+
+
+def install_reflex_security(application: "App", *, guard: ReflexEventGuard) -> None:
+    from reflex.app import EventNamespace
+
+    if application.sio is None:
+        raise RuntimeError("reflex_transport_not_initialized")
+    delegates = [
+        namespace
+        for namespace in application.sio.namespace_handlers.values()
+        if isinstance(namespace, EventNamespace)
+    ]
+    if len(delegates) != 1:
+        raise RuntimeError("reflex_transport_unavailable")
+    application.sio.register_namespace(SecureEventNamespace(delegate=delegates[0], guard=guard))
+    application.add_middleware(EventAuthorizationMiddleware(guard=guard), index=0)
+
+
+class ProtectedReflexBoundary:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["method"] not in {"GET", "HEAD", "OPTIONS"}:
+            allowed = {"/auth/callback", "/auth/logout", "/v1/configuration", "/_event", "/_event/"}
+            if scope["path"] not in allowed:
+                response = JSONResponse(
+                    {"error": "unreviewed_ingress_prohibited"},
+                    status_code=403,
+                    headers={"Cache-Control": "no-store"},
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)

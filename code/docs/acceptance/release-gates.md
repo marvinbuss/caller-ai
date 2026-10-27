@@ -1,0 +1,83 @@
+# Release Gates
+
+**Release blocked.** The current full regression profile reports runtime **384 tests, zero
+failures/errors/skips**, management **403 tests with 24 editor-export setup errors**, and tools
+**129 tests, zero failures/errors/skips** on 2026-10-27. Overall local status is failed.
+The runner correctly keeps live status pending and release status blocked.
+
+The user explicitly authorized remaining local-only implementations with injected doubles.
+The user later separately approved sanitized source commit/push/draft-PR review. Neither scope
+permits provider selection, cloud/backend authentication, calls, deployment, image publication
+or live qualification. Source publication does not waive failed or missing release evidence.
+
+| Remaining gate | Required evidence |
+|----------------|-------------------|
+| Native editor export | Current complete management run again has 24 root-prerender setup errors; earlier green runs are historical |
+| New public build inputs | Python URLs are checksum-verified and Bun is frozen-valid, but fresh public downloads, image builds and advisory checks are pending |
+| T042 qualified telephony | Approved supported scenario/provider, lifecycle/licensing/region and verified bidirectional codec/control API; no fabricated wire protocol |
+| T028/T029/T031 native platforms/remote CI | Actual second-host platform and observed CI assertion failure/restoration; Windows Linux containers are not native Ubuntu-host evidence |
+| T097 live monitoring | Qualified exporter mapping/query/on-call receipt and recovery for both services; disabled local rules are not delivery |
+| T099 actual environment | Approved provisioned/pre-provisioned resources and real identity/probe adapters; eleven offline unavailable checks are not qualification |
+| T117 actual protected plan/publication | Reviewed identity, immutable artifacts, protected repository controls and qualified adapters; read-only blocked workflow is not publication |
+| T118 live acceptance | Approved real phone/model/Cosmos/load/drain/cost/diagnosis measurements; missing evidence is blocked, never skipped/passed |
+| Privacy approvals | Accountable disclosure/residency/retention/provider decisions; no invented legal default or certification |
+| SC-008 | Explicitly deferred participant study, not passed; automated management/accessibility remains required |
+
+```mermaid
+flowchart TD
+    Local[Full runtime, management and tools regression] --> Counts[Nonempty JUnit counts and real exit status]
+    Counts --> Failed[Current editor errors keep local gate failed]
+    External[Qualified provider, environment, monitoring and live evidence missing] --> Blocked[Release blocked]
+    Failed --> Review[Still requires all external reviewed gates]
+    Review --> Blocked
+```
+
+## Commands and Trust Boundary
+
+```powershell
+uv run --project code/tools --locked --no-sync python code/tools/scripts/verify_release.py --profile local
+uv run --project code/tools --locked --no-sync python code/tools/scripts/verify_release.py --profile live
+python code/tools/scripts/release_checks.py --preflight
+```
+
+Local runs full test directories, owns child trees and parses bounded temporary JUnit results.
+Missing, empty, malformed, failed, errored, skipped or nonzero results fail. Raw failure bodies
+and candidate content are not emitted in the summary; temporary reports are deleted. There is
+no automatic retry, selected-test exemption or media-error waiver. Passing this profile would
+prove regressions only, not current static/advisory/image/remote/live approval.
+
+The live profile refuses execution and exits 2. Protected preflight also exits 2 with no plan
+applied or images published. It loads no execution/identity adapter. Real release ports must
+authenticate fresh protected scope, bind exact commit/digests/environment, complete reviewed
+plan work, recheck authority and idempotently reconcile publication. Unknown submission remains
+uncertain, never a blind retry. The in-process typed port results are trusted abstractions,
+not unforgeable credentials or proof that an external service is configured.
+
+The manual `release-review` workflow is read-only, full-SHA pinned, has no PR trigger/secrets/
+identity-token grant/apply and invokes only the blocked helper. Its environment name does not
+configure GitHub reviewers; those external controls and real adapters still need review.
+
+See [requirement coverage](requirements.md), [local handoff](final.md),
+[live environment status](live-environment.md), [security](../security.md) and
+[capacity/cost](../capacity.md). No task marker, image existence, virtual latency or manifest
+can replace missing evidence or grant merge/release approval.
+
+Current strict advisory/image rerun passes Python 69/92/60 packages, frontend 294 coordinates
+and three actual rebuilt images with zero HIGH/CRITICAL findings. Current actual image smoke
+also passes offline non-root startup and three shell widths; these preceding image results
+are not another audit execution. Feed isolation changes Docker build inputs; fresh public
+build/audit results are pending and earlier image results do not qualify those changes.
+
+## Local Failure and Recovery History
+
+The 2026-10-27 baseline reproduced 379 management passes/24 editor-export errors. Unattended
+editor build and diagram processes now receive closed stdin rather than the interactive
+terminal; their launch regressions fail before the change and pass afterward. Standalone
+management and the combined runner then both pass all 403 cases, and all 33 documents/27
+diagrams render again. The earlier renderer-18 timeout/interruption and editor failures remain
+recorded; stdin is not established as the cause of every historical timeout. No SSR, timeout,
+assertion, dependency or suite-selection waiver exists. Future recurrence still fails locally.
+The later feed-isolation complete run recurred with 24 root-prerender setup errors while
+runtime 384 and tools 129 cases pass. The guard caught private URLs regenerated by the local
+frontend compiler, then verified lock relocation restored publishable state. GitHub inspection
+is currently rate-limited (HTTP 403); no observed CI/platform success or task closure is claimed.

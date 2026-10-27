@@ -1,0 +1,20 @@
+name: Protected Release Review
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: caller-release-review
+  cancel-in-progress: false
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    environment: release-review
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: 3.12.15
+      - run: python code/tools/scripts/release_checks.py --preflight

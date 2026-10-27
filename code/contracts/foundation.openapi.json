@@ -1,0 +1,130 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Caller AI Foundation Health Contract",
+    "version": "1.0.0",
+    "description": "Shared health and readiness interface for both application foundations. Local readiness does not certify live calling or configuration workflows."
+  },
+  "servers": [
+    { "url": "http://127.0.0.1:8000", "description": "Call runtime, development or container mapping" },
+    { "url": "http://127.0.0.1:8001", "description": "Management backend, development" },
+    { "url": "http://127.0.0.1:3000", "description": "Management unified production container mapping" }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Check process liveness without contacting external dependencies",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Process is responsive; no assertion about live feature availability",
+            "headers": {
+              "X-Correlation-ID": { "$ref": "#/components/headers/CorrelationId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Health" },
+                "example": { "status": "ok", "service": "caller-runtime", "mode": "local", "version": "0.1.0" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "getReadiness",
+        "summary": "Check readiness for the explicitly selected mode",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Selected mode is ready; status must equal ready",
+            "headers": {
+              "X-Correlation-ID": { "$ref": "#/components/headers/CorrelationId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Readiness" },
+                "example": {
+                  "status": "ready",
+                  "service": "management",
+                  "mode": "local",
+                  "version": "0.1.0",
+                  "capabilities": { "live_calls": false, "management_configuration": false },
+                  "reason_codes": []
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Selected mode cannot serve; status must equal not_ready; diagnostics contain safe reason codes only",
+            "headers": {
+              "X-Correlation-ID": { "$ref": "#/components/headers/CorrelationId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Readiness" },
+                "example": {
+                  "status": "not_ready",
+                  "service": "caller-runtime",
+                  "mode": "live",
+                  "version": "0.1.0",
+                  "capabilities": { "live_calls": false, "management_configuration": false },
+                  "reason_codes": ["configuration_invalid"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "headers": {
+      "CorrelationId": {
+        "description": "Generated or sanitized opaque identifier; never a credential or raw caller identity",
+        "schema": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-]+$" }
+      }
+    },
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "service", "mode", "version"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ok"] },
+          "service": { "type": "string", "enum": ["caller-runtime", "management"] },
+          "mode": { "type": "string", "enum": ["local", "live"] },
+          "version": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "Readiness": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "service", "mode", "version", "capabilities", "reason_codes"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ready", "not_ready"] },
+          "service": { "type": "string", "enum": ["caller-runtime", "management"] },
+          "mode": { "type": "string", "enum": ["local", "live"] },
+          "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "capabilities": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["live_calls", "management_configuration"],
+            "properties": {
+              "live_calls": { "type": "boolean" },
+              "management_configuration": { "type": "boolean" }
+            }
+          },
+          "reason_codes": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 3,
+            "items": { "type": "string", "enum": ["configuration_invalid", "dependency_unavailable", "mode_invalid"] }
+          }
+        }
+      }
+    }
+  }
+}
