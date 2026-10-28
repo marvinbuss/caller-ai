@@ -3,11 +3,11 @@
 ## Status
 
 **Current local T123 increment is partial; required CI passes.** Observed
-[run 40652020707](https://github.com/marvinbuss/caller-ai/actions/runs/40652020707) on 1ea0e7c
-passes every Windows/Ubuntu/image step: 403 runtime/413 management/165 tooling cases per
+[run 40656926575](https://github.com/marvinbuss/caller-ai/actions/runs/40656926575) on 271bc49
+passes every Windows/Ubuntu/image step: 414 runtime/413 management/165 tooling cases per
 native platform, 0/1/0 assertion/cleanup, all 33 documents/28 diagrams and strict package/
-image audits. Shared local reservations and owner drain phase have nineteen new cases;
-persistent/global-owner leases and recovery remain missing. Completion stays 113/129 tasks,
+image audits. Shared local reservations, drain phase and lease coordination have thirty new
+cases; persistent authority, cross-process fencing and durable recovery remain missing. Completion stays 113/129 tasks,
 with T123 unchecked and all external gates intact. Earlier host failures and parked
 investigations remain recorded without root-cause claims. See [US6 evidence](us6.md).
 

@@ -1,9 +1,9 @@
 # Release Gates
 
-**Current increment CI passes; release remains blocked.** Observed run 40652020707 on
-1ea0e7c passes every native Windows/Ubuntu and Linux image step, with 403/413/165 tests per
+**Current increment CI passes; release remains blocked.** Observed run 40656926575 on
+271bc49 passes every native Windows/Ubuntu and Linux image step, with 414/413/165 tests per
 native platform, all assertion/render/package gates and actual image smoke/three-image
-audits. T123 remains partial: same-object quota/drain authority is not persistent owner/lease
+audits. T123 remains partial: same-object quota/drain/lease authority is not persistent owner/lease
 coordination, recovery or live capacity qualification. No merge/release approval follows;
 earlier failures and parked investigations remain recorded. See [scoped US6 evidence](us6.md).
 

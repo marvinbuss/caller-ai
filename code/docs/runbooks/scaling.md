@@ -217,6 +217,12 @@ clock/renewal checks are not persistent Cosmos, cross-process fencing or live re
 All repository/type/Terraform/secret/publication gates and 165 tooling cases pass; the changed
 lease sequence actually renders locally without changing browser or timeout controls.
 
+Observed run 40656926575 on 271bc49 subsequently passes every native Windows/Ubuntu and
+Linux image step: 414/413/165 tests per native platform, all assertion/render/package gates
+and actual image smoke/three-image audits. These results verify the local lease increment
+only; persistent authority, cross-process fencing, physical coordination and durable recovery
+remain unqualified. Existing failure history and parked investigations are preserved.
+
 Observed run 40652020707 on 1ea0e7c subsequently passes every native Windows/Ubuntu and
 Linux image step: 403/413/165 tests per native platform, all assertion/render/package gates
 and actual image smoke/three-image audits. These results qualify the local increment's

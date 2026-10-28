@@ -1,5 +1,23 @@
 # US6 Local Scaling Acceptance
 
+## Current Hosted Lease Verification: 2026-10-28
+
+Observed [run 40656926575](https://github.com/marvinbuss/caller-ai/actions/runs/40656926575)
+on `271bc497bfff7e9a3e9dccd796a098549826474f` passes every native Windows, native Ubuntu
+and Linux image step, with no failed or skipped steps. Each native platform reports
+414 runtime/413 management/165 tooling passes with zero failures/errors/skips, exact
+baseline 0/broken 1/restored 0 with fixture cleanup, and 33 documents/28 actual diagram renders.
+Sandboxed Chrome versions are Windows 156.0.8078.48 and Ubuntu 156.0.8078.47. Strict Python
+audits cover Windows 69/92/60 and Linux 68/90/59 packages; frontend 294-package audits have
+zero findings on both platforms. Actual image smoke passes offline/non-root startup and
+360/768/1440 browser checks; three actual image audits report zero HIGH/CRITICAL findings.
+
+This verifies the shared local quota/drain/lease increment's regressions, not persistent
+Cosmos authority, cross-process fencing, physical coordination or durable recovery. T123
+remains partial and 113/129 tasks are checked. Earlier failures and parked investigations
+remain recorded without root-cause repair claims. These results apply to the exact source
+revision above; no later uncommitted edit is qualified by this run.
+
 ## T123 Shared Local Lease Increment: 2026-10-28
 
 Two red-first cases reproduce reconstructed controllers reviving an expired shared owner
