@@ -1098,3 +1098,32 @@ waived assertion or live operation is used; evidence applies only to the exact s
 - [ ] T127 HIGH F8: Complete `.github/workflows/release.yml` and concrete authority/plan/publication adapters in `code/tools/scripts/release_checks.py` so an explicitly approved protected invocation validates real reviewer/repository/environment controls, authenticates least-privileged Azure-compatible identity, reviews the sensitive remote-state Terraform plan and idempotently publishes exact immutable image digests under freshly rechecked authority. Test protected-scope denial, stale evidence, ambiguous publication and reconciliation; retain full-SHA pins, unprivileged PR checks and the blocked default, and do not infer Terraform apply/deployment permission from image publication per plan: protected delivery, Constitution II/VIII/IX, and existing T117 (partial).
 - [ ] T128 HIGH F9: Implement executable opt-in qualified live profiles behind `code/tools/scripts/verify_release.py`, reusing the planned call/configuration/revision/capacity/drain/privacy test modules instead of only profile metadata and unconditional live refusal. Require fresh authorized T099 evidence and applicable T117 prerequisites before dispatch, assert actual provider/model/Cosmos and integrated policy behavior, collect bounded noncontent measurements, and fail missing/empty/skipped/partial/nonzero results rather than silently promoting synthetic fixtures. Default local execution must remain credential-free and never invoke these profiles per FR-001-FR-028, SC-001-SC-007, SC-009-SC-014, SC-018-SC-019, all six stories' live acceptance scenarios, plan: staged verification, Constitution IX, and existing T046/T063/T089/T100/T110/T112/T118 (partial).
 - [ ] T129 HIGH F10: After T120-T128 and separately authorized live access, execute and review the deferred acceptance obligations: 200 eligible journeys, measured 100-to-200-call sustain/scale/drain, interruption/closure/failure limits, twenty revision/revocation changes, real restart durability, privacy/cleanup and both-service alert correlation, plus ten operator diagnosis cases within five minutes. Record actual model cost/Cosmos RU/quota budgets in `code/docs/capacity.md` and immutable scoped results, accountable privacy/environment approvals and release decisions in `code/docs/acceptance/live-environment.md`, `release-gates.md` and `final.md`; keep any unavailable/failed obligation blocked and SC-008 deferred, never claim production readiness from doubles or task markers per SC-001-SC-007, SC-010-SC-014, SC-018-SC-019, plan: live qualification/release, Constitution I/II/VI/VII/VIII/IX, and existing T116/T118/T119 (partial).
+
+## Future Phases: Deferred Backlog
+
+**Authoritative execution disposition, 2026-10-28**: at the user's explicit direction,
+all fifteen remaining unchecked tasks are deferred to future phases. No remaining task is
+scheduled for implementation in the current phase. This disposition supersedes earlier
+requests to continue or complete that backlog; resume only after an explicit request to
+reopen a named task or future phase, with its original prerequisites and approvals satisfied.
+
+Deferral means postponed, not implemented, canceled, accepted or waived. All original task
+IDs, descriptions, dependencies, checkbox states and historical evidence above are retained.
+Progress stays **114/129 complete, 15 deferred**; T123 remains complete, T124 remains partial,
+and SC-008 remains separately deferred. Full-feature, live and release acceptance are not
+granted by closing the current work phase.
+
+| Future phase | Deferred tasks | Re-entry requirements |
+|--------------|----------------|-----------------------|
+| 11: Supported integrations and composition | T042, T120, T121, T122 | Explicit reopening, supported provider/scenario approval where applicable, guarded composition contracts and unchanged credential-free defaults |
+| 12: Operations, enforcement and telemetry | T097, T124, T125 | Explicit reopening, cluster-enforcement design approval, remaining adapters/producer implementation and relevant monitoring/qualification evidence |
+| 13: Environment and protected delivery | T099, T117, T126, T127 | Explicit reopening, approved environment and least-privileged identities, accountable privacy/resource reviews and separately authorized protected operations |
+| 14: Live acceptance and final release | T118, T119, T128, T129 | Explicit reopening, completed upstream requirements, fresh T099/T117 evidence, authorized real measurements and reviewed release decisions |
+
+These are planning groups, not new implementation tasks or replacement dependency rules.
+Original prerequisites remain authoritative; engineering and environment work may need to
+be interleaved when those prerequisites require it. Existing test/security gates stay in
+force. Telephony, cluster enforcement and live environment work remain deferred; no cloud
+authentication, provisioning, deployment, image publication, real calls or release is
+authorized. Deferred work must not be automatically resumed by a generic implementation
+invocation without explicit reopening scope.

@@ -233,3 +233,22 @@ SC-008's participant manager study is deferred; automated management and accessi
 No constitutional violations or exceptions. Two deployed services reflect distinct ownership;
 the tooling environment is development-only. AKS is a later hosting choice justified by explicit
 long-lived-call drain control, not a requirement to provision a cluster for local setup.
+
+## Deferred Delivery Phases
+
+On 2026-10-28 the user explicitly deferred every remaining unchecked task to future phases.
+The current work phase is paused with **114/129 tasks complete and fifteen deferred**, not
+with the full feature or release accepted. T123 remains complete; T124's missing enforcement
+and integration remain unfinished. Existing completed work and verification evidence are
+preserved without weakening the constitution, specification or reviewer decisions.
+
+The authoritative [future-phase index](tasks.md#future-phases-deferred-backlog) groups the
+remaining work into phases 11-14: supported integrations/composition; operations/enforcement/
+telemetry; environment/protected delivery; and live acceptance/final release. These groups
+do not replace original task prerequisites or create approval shortcuts. Resume only on
+explicit reopening of a named task or phase, with the original dependencies and applicable
+provider, cluster, environment, privacy and protected-operation approvals satisfied.
+
+No remaining implementation, cloud authentication, provisioning, deployment, image
+publication, real phone/model call or live/release qualification is authorized by this
+deferral. Credential-free fail-closed defaults and separate local/live evidence remain.

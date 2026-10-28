@@ -2,6 +2,14 @@
 
 ## Status
 
+**Remaining backlog deferred to future phases by the user, 2026-10-28.** The current work
+phase is paused at 114/129 completed tasks, with all fifteen unchecked tasks retained as
+deferred rather than marked complete or removed. T123 remains complete; T124 remains partial.
+Resume only on explicit reopening of a named task or phase with its original prerequisites
+and approvals. See the [future-phase index](../../../specs/001-call-center-agents/tasks.md#future-phases-deferred-backlog).
+This is not full-feature/live/release acceptance. Telephony, cluster enforcement and live
+environment work remain deferred; existing fail-closed defaults and approval gates stay intact.
+
 **Current ledger increment passes native/image CI; T124 and full release remain incomplete.**
 Observed [run 40733054020](https://github.com/marvinbuss/caller-ai/actions/runs/40733054020)
 on cec715c passes every Windows/Ubuntu/image step. Each native platform reports 545 runtime/
