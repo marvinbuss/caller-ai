@@ -1,6 +1,14 @@
 # Release Gates
 
-**Current cleanup-recovery increment is locally verified; native/image CI and release remain gated.**
+**Current recovery discovery is locally verified; native/image CI and release remain gated.**
+All 15 new owner-scoped read-only snapshot contracts, the complete 490-case backend and
+strict typing pass. Known cleanup bindings are exposed as immutable bounded metadata, never
+installed as active ownership or treated as physical closure proof. Missing metadata and
+model-only charges remain conservative. Previous recovery CI could not be read, so no hosted
+success is inferred. T123 and all sixteen open markers stay unchanged (113/129); production
+recovery composition and actual Cosmos/environment/live qualification remain missing.
+
+**Earlier explicit cleanup-recovery increment.**
 All 27 new contracts, the complete 475-case backend and strict runtime typing pass. Explicit
 trusted cleanup reconciles original durable bindings without inferring physical outcomes,
 rebuilding socket ownership, renewing expired leases or reclaiming unknown work. Physical

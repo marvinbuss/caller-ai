@@ -102,6 +102,21 @@ release; this adapter supplies no connection reattachment or automatic uncertain
 
 ### Trusted Cleanup After Reconstruction
 
+`CapacityService.recovery_bindings(owner_id)` lets a trusted caller inspect one registered
+owner's retained charges after controller restart loses local maps or tokens. It returns an
+immutable tuple of `CapacityRecoveryBinding` values with session ID, physical owner, connection
+epoch and optional model token. Cosmos uses one Strong authority point read, not a session
+scan or cross-partition transaction; the local stand-in uses its existing lock. Service
+validation rejects mutable/untyped, foreign, malformed, duplicate or >20,000-record replies.
+Only known bounded metadata is projected, never provider payloads or call content.
+
+Inspection does not populate active/model caches, change authority/ETags/phase, renew leases
+or free charges. Expired-owner bindings, reservations whose session row is missing and
+model-only charges remain visible for investigation, not automatically safe to release.
+An unavailable authority or invalid clock fails closed without a cached ownership fallback.
+Each returned binding still requires independent physical/provider/model verification;
+this method is not authentication, a cleanup approval or an observation of actual connections.
+
 `CapacityService.reconcile_closed_session` accepts the original session ID, registered
 physical owner and connection epoch after a trusted lifecycle/recovery caller independently
 verifies physical call and baseline-model closure. It also requires existing Ended metadata;
@@ -119,10 +134,11 @@ only a confirmed idempotent release clears it. Cancellation does not infer a cle
 An expired owner may finish verified one-way cleanup, not renew/revive its lease or reattach
 a socket. Ordinary cache-based release methods keep their conservative existing behavior.
 
-No automatic scan, unknown-token discovery, synthesized missing session, forced reclaim or
-provider/cluster client is added. Real outcome verification and production recovery wiring
-still need separate implementation/qualification. The 27 new offline service contracts do
-not complete T123 or authorize operating a live environment.
+No automatic scan, physical-work discovery, synthesized missing session, forced reclaim or
+provider/cluster client is added. Owner-scoped metadata discovery has 15 new offline cases;
+the earlier explicit cleanup methods have 27. Real outcome verification and production
+recovery wiring still need separate implementation/qualification; neither checkpoint
+completes T123 or authorizes operating a live environment.
 
 These are 34 offline storage-contract cases, not real Cosmos/process-crash evidence. T123
 remains partial until physical coordination/reconciliation and relevant live qualification

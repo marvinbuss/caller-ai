@@ -1,6 +1,36 @@
 # US6 Local Scaling Acceptance
 
-## Current Explicit Cleanup-Recovery Increment: 2026-10-28
+## Current Read-Only Recovery Discovery: 2026-10-28
+
+A red-first restart case exposes the missing path for discovering persisted cleanup bindings
+when controller-local maps/tokens are lost. `CapacityService.recovery_bindings` now returns
+immutable `CapacityRecoveryBinding` metadata for one registered owner, using an explicit
+repository projection rather than reconstructing active ownership or freeing reservations.
+
+All 15 new discovery contracts pass: expired-owner retained charges, local/Cosmos parity,
+owner isolation, frozen/detached records, missing session rows, model-only charges, malformed/
+untyped/duplicate/oversized/foreign snapshots, unavailable authority, backward clocks and
+cancellation. The complete backend passes 490 cases with zero failures/errors/skips and
+only the expected blocked-egress warning; strict typing covers 33 sources and diagnostics
+are clean. Cosmos inspection performs one Strong authority point read, without session-row
+reads or writes. The local adapter uses its existing authority lock.
+
+Each binding contains only session ID, physical owner, connection epoch and optional exact
+model reservation. The tuple is bounded to 20,000 records, revalidated by the service and
+never installed in local active/model maps. Inspection leaves charges, owner phase, leases,
+ETags and postponed drain unchanged; missing metadata and model-only reservations stay
+visible but are not automatically reconciled. These are internal trusted metadata interfaces,
+not an authentication mechanism, physical observation or proof of closure/disposal.
+
+T123 stays partial: actual outcome verification, production recovery composition and real
+Cosmos/environment/live qualification are still missing. All sixteen open markers remain
+unchecked (113/129); defaults, routes, dependencies, infrastructure and every existing budget
+are unchanged. Previous recovery CI could not be read, so no hosted outcome is claimed.
+All eight repository/type/Terraform/secret/publication gates and 175 tooling cases pass.
+All 33 documents/28 diagram sources validate, and the changed owner-scoped discovery/recovery
+sequence actually renders with unchanged direct-Node/offline/sandbox and nonempty SVG checks.
+
+## Earlier Explicit Cleanup-Recovery Increment: 2026-10-28
 
 Two red-first cases reproduce the missing service path for independently verified cleanup
 after controller reconstruction: persisted call/model charges keep drain postponed while
@@ -486,7 +516,10 @@ sequenceDiagram
     else No shared reservations remain
         Store-->>Capacity: Commit drained
     end
-    opt Controller reconstructed with known cleanup bindings
+    opt Controller reconstructed with registered owner
+        Recovery->>Capacity: Read retained owner-scoped bindings
+        Capacity->>Store: One authority read or local locked snapshot
+        Store-->>Recovery: Immutable cleanup metadata, no ownership grant
         Recovery->>Recovery: Independently verify call closure or exact model disposal
         Recovery->>Capacity: Original session, owner, connection epoch and token
         Capacity->>Store: Verify durable binding and terminal call metadata

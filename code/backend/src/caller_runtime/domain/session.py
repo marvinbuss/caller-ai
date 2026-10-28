@@ -113,6 +113,17 @@ class CallSession(BaseModel):
         return type(self).model_validate(values)
 
 
+class CapacityRecoveryBinding(BaseModel):
+    """Immutable cleanup metadata; not physical ownership or proof of disposal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    session_id: OpaqueId
+    physical_owner_id: OpaqueId
+    connection_epoch: int = Field(strict=True, ge=1)
+    model_reservation: Annotated[str, Field(strict=True, pattern=r"^[a-f0-9]{32}$")] | None = None
+
+
 @dataclass(slots=True, repr=False)
 class VolatileCallContext:
     """Call-local content only; never put this object in a durable repository."""

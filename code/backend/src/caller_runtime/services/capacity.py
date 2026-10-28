@@ -12,7 +12,7 @@ from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from caller_runtime.adapters.session_repository import metadata_model
-from caller_runtime.domain.session import CallSession, LifecycleState
+from caller_runtime.domain.session import CallSession, CapacityRecoveryBinding, LifecycleState
 from caller_runtime.domain.visibility import CommunityVisibility
 from caller_runtime.metrics import RuntimeMetrics
 
@@ -39,6 +39,10 @@ class SharedCapacityRepository(CapacityRepository, Protocol):
     async def capacity_owner_state(
         self, owner_id: str
     ) -> Literal["serving", "draining", "drained"]: ...
+
+    async def capacity_recovery_bindings(
+        self, owner_id: str
+    ) -> tuple[CapacityRecoveryBinding, ...]: ...
 
     async def begin_capacity_drain(
         self, owner_id: str
@@ -254,6 +258,34 @@ class CapacityService:
                 self._active.pop(session_id, None)
 
                 self._publish_capacity()
+
+    async def recovery_bindings(self, owner_id: str) -> tuple[CapacityRecoveryBinding, ...]:
+        """Read retained metadata for trusted inspection, never recover physical ownership."""
+        if not isinstance(owner_id, str):
+            raise ValueError("invalid_capacity_owner")
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                if owner_id not in self._owners:
+                    raise PermissionError("capacity_recovery_not_owned")
+                bindings = await self._repository.capacity_recovery_bindings(owner_id)
+                if (
+                    not isinstance(bindings, tuple)
+                    or len(bindings) > 20000
+                    or any(not isinstance(binding, CapacityRecoveryBinding) for binding in bindings)
+                ):
+                    raise RuntimeError("invalid_capacity_recovery_snapshot")
+                try:
+                    snapshot = tuple(
+                        CapacityRecoveryBinding.model_validate(binding.model_dump())
+                        for binding in bindings
+                    )
+                except ValueError:
+                    raise RuntimeError("invalid_capacity_recovery_snapshot") from None
+                if any(binding.physical_owner_id != owner_id for binding in snapshot) or len(
+                    {(binding.session_id, binding.model_reservation) for binding in snapshot}
+                ) != len(snapshot):
+                    raise RuntimeError("invalid_capacity_recovery_snapshot")
+                return snapshot
 
     async def _recovery_session(
         self, session_id: str, *, physical_owner_id: str, connection_epoch: int

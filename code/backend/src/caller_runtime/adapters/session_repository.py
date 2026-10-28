@@ -13,7 +13,12 @@ from azure.core.exceptions import AzureError, HttpResponseError
 from azure.cosmos.exceptions import CosmosBatchOperationError
 
 from caller_runtime.domain.handover import HandoverRecord
-from caller_runtime.domain.session import TRANSITIONS, CallSession, LifecycleState
+from caller_runtime.domain.session import (
+    TRANSITIONS,
+    CallSession,
+    CapacityRecoveryBinding,
+    LifecycleState,
+)
 
 BatchOperation = tuple[str, tuple[Any, ...]] | tuple[str, tuple[Any, ...], dict[str, Any]]
 
@@ -236,6 +241,39 @@ class LocalSessionRepository:
             if owner_id not in self._capacity_owners:
                 raise SessionConflict("capacity_owner_unknown")
             return self._capacity_owners[owner_id]
+
+    async def capacity_recovery_bindings(
+        self, owner_id: str
+    ) -> tuple[CapacityRecoveryBinding, ...]:
+        async with self._lock:
+            self._capacity_now()
+            if owner_id not in self._capacity_owners:
+                raise SessionConflict("capacity_owner_unknown")
+            bindings = [
+                CapacityRecoveryBinding(
+                    session_id=session_id,
+                    physical_owner_id=owner,
+                    connection_epoch=epoch,
+                )
+                for session_id, (owner, epoch) in self._capacity_calls.items()
+                if owner == owner_id
+            ]
+            bindings.extend(
+                CapacityRecoveryBinding(
+                    session_id=session_id,
+                    physical_owner_id=owner,
+                    connection_epoch=epoch,
+                    model_reservation=token,
+                )
+                for token, (session_id, owner, epoch) in self._capacity_models.items()
+                if owner == owner_id
+            )
+            return tuple(
+                sorted(
+                    bindings,
+                    key=lambda binding: (binding.session_id, binding.model_reservation or ""),
+                )
+            )
 
     async def serving_capacity_owners(self, owner_ids: tuple[str, ...]) -> tuple[str, ...]:
         if (

@@ -19,7 +19,12 @@ from caller_runtime.adapters.session_repository import (
     SessionConflict,
     metadata_model,
 )
-from caller_runtime.domain.session import CallSession, LifecycleState, OpaqueId
+from caller_runtime.domain.session import (
+    CallSession,
+    CapacityRecoveryBinding,
+    LifecycleState,
+    OpaqueId,
+)
 
 AUTHORITY_ID: Final = "runtime-capacity-authority-v1"
 MAXIMUM_AUTHORITY_BYTES = 512 * 1024
@@ -379,6 +384,38 @@ class CosmosCapacityRepository(CosmosSessionRepository):
         async with asyncio.timeout(self._operation_budget):
             authority, _etag, _instant = await self._read_authority()
             return self._owner(authority, owner_id).state
+
+    async def capacity_recovery_bindings(
+        self, owner_id: str
+    ) -> tuple[CapacityRecoveryBinding, ...]:
+        async with asyncio.timeout(self._operation_budget):
+            authority, _etag, _instant = await self._read_authority()
+            self._owner(authority, owner_id)
+            bindings = [
+                CapacityRecoveryBinding(
+                    session_id=session_id,
+                    physical_owner_id=call.owner_id,
+                    connection_epoch=call.connection_epoch,
+                )
+                for session_id, call in authority.calls.items()
+                if call.owner_id == owner_id
+            ]
+            bindings.extend(
+                CapacityRecoveryBinding(
+                    session_id=model.session_id,
+                    physical_owner_id=model.owner_id,
+                    connection_epoch=model.connection_epoch,
+                    model_reservation=token,
+                )
+                for token, model in authority.models.items()
+                if model.owner_id == owner_id
+            )
+            return tuple(
+                sorted(
+                    bindings,
+                    key=lambda binding: (binding.session_id, binding.model_reservation or ""),
+                )
+            )
 
     async def begin_capacity_drain(self, owner_id: str) -> OwnerState:
         async def begin(authority: CapacityAuthority, instant: datetime) -> OwnerState:

@@ -277,6 +277,229 @@ def recovery_service(store, clock, configuration, limits):
 
 
 @pytest.mark.anyio
+async def test_reconstructed_service_discovers_retained_cleanup_bindings_without_reclaim(
+    cosmos_capacity, community_configuration
+) -> None:
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID, CosmosCapacityRepository
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    token = "a" * 32
+    assert await store.reserve_model_capacity(
+        document["sessionId"], physical_owner_id="owner-fixture", reservation=token
+    )
+    await store.begin_capacity_drain("owner-fixture")
+    clock.advance(31)
+    service = recovery_service(
+        CosmosCapacityRepository(container, utc_now=clock.utc_now),
+        clock,
+        community_configuration,
+        limits,
+    )
+    await service.register_owner("owner-fixture")
+    original = copy.deepcopy(container.records)
+    bindings = await service.recovery_bindings("owner-fixture")
+    assert len(bindings) == 2
+    assert {
+        (
+            binding.session_id,
+            binding.physical_owner_id,
+            binding.connection_epoch,
+            binding.model_reservation,
+        )
+        for binding in bindings
+    } == {
+        (document["sessionId"], "owner-fixture", 1, None),
+        (document["sessionId"], "owner-fixture", 1, token),
+    }
+    assert isinstance(bindings, tuple)
+    assert await service.active_count() == 0
+    assert not service._extra_models
+    assert container.records == original
+    assert len(container.records[AUTHORITY_ID]["calls"]) == 1
+    assert len(container.records[AUTHORITY_ID]["models"]) == 1
+    assert await service.finish_drain("owner-fixture") == "postponed"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("storage", ["local", "cosmos"])
+async def test_recovery_snapshots_are_owner_scoped_immutable_and_detached(
+    cosmos_capacity, community_configuration, storage
+) -> None:
+    from caller_runtime.adapters.session_repository import LocalSessionRepository
+
+    store, _container, clock, document, limits = cosmos_capacity
+    if storage == "local":
+        store = LocalSessionRepository(utc_now=clock.utc_now)
+        await store.register_capacity_owner("owner-fixture", lease_seconds=30)
+    await store.register_capacity_owner("foreign-owner", lease_seconds=30)
+    foreign = {
+        **document,
+        "id": "foreign-session",
+        "sessionId": "foreign-session",
+        "physicalOwnerId": "foreign-owner",
+    }
+    await reserve_stored_capacity(store, document, limits)
+    await reserve_stored_capacity(store, foreign, limits)
+    assert await store.reserve_model_capacity(
+        document["sessionId"], physical_owner_id="owner-fixture", reservation="a" * 32
+    )
+    service = recovery_service(store, clock, community_configuration, limits)
+    await service.register_owner("owner-fixture")
+    snapshot = await service.recovery_bindings("owner-fixture")
+    assert len(snapshot) == 2
+    assert all(binding.session_id == document["sessionId"] for binding in snapshot)
+    assert [binding.model_reservation for binding in snapshot] == [None, "a" * 32]
+    assert set(snapshot[0].model_dump()) == {
+        "session_id",
+        "physical_owner_id",
+        "connection_epoch",
+        "model_reservation",
+    }
+    with pytest.raises(ValueError):
+        snapshot[0].physical_owner_id = "foreign-owner"
+    with pytest.raises(PermissionError, match="capacity_recovery_not_owned"):
+        await service.recovery_bindings("foreign-owner")
+    await store.release_model_capacity(
+        "a" * 32, session_id=document["sessionId"], physical_owner_id="owner-fixture"
+    )
+    assert len(await service.recovery_bindings("owner-fixture")) == 1
+    assert len(snapshot) == 2 and snapshot[1].model_reservation == "a" * 32
+    assert await service.active_count() == 0 and not service._extra_models
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("session_status", ["missing_metadata", "baseline_released"])
+async def test_recovery_discovery_keeps_unknown_or_model_only_work_visible(
+    cosmos_capacity, community_configuration, session_status
+) -> None:
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID
+    from caller_runtime.adapters.session_repository import metadata_model
+    from caller_runtime.domain.session import LifecycleState
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    assert await store.reserve_model_capacity(
+        document["sessionId"], physical_owner_id="owner-fixture", reservation="a" * 32
+    )
+    if session_status == "missing_metadata":
+        del container.records[document["sessionId"]]
+    else:
+        current = metadata_model(await store.read(document["sessionId"]))
+        await store.replace(
+            document["sessionId"],
+            current.transition(
+                LifecycleState.ENDED, at=clock.utc_now(), terminal_reason="completed"
+            ).model_dump(by_alias=True),
+        )
+        await store.release_capacity(document["sessionId"], physical_owner_id="owner-fixture")
+    service = recovery_service(store, clock, community_configuration, limits)
+    await service.register_owner("owner-fixture")
+    original = copy.deepcopy(container.records)
+    container.calls.clear()
+    snapshot = await service.recovery_bindings("owner-fixture")
+    assert len(snapshot) == (2 if session_status == "missing_metadata" else 1)
+    assert snapshot[-1].model_reservation == "a" * 32
+    assert container.records == original
+    assert len(container.calls) == 1 and container.calls[0][0:2] == ("read", AUTHORITY_ID)
+    assert container.calls[0][2]["consistency_level"] == "Strong"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "mutable",
+        "foreign_owner",
+        "invalid_token",
+        "duplicate",
+        "oversized",
+        "untyped",
+    ],
+)
+async def test_recovery_service_rejects_malformed_repository_snapshots(
+    cosmos_capacity, community_configuration, monkeypatch, malformation
+) -> None:
+    from caller_runtime.domain.session import CapacityRecoveryBinding
+
+    store, container, clock, document, limits = cosmos_capacity
+    service = recovery_service(store, clock, community_configuration, limits)
+    await service.register_owner("owner-fixture")
+    binding = CapacityRecoveryBinding(
+        session_id=document["sessionId"], physical_owner_id="owner-fixture", connection_epoch=1
+    )
+    malformed = {
+        "mutable": [binding],
+        "foreign_owner": (binding.model_copy(update={"physical_owner_id": "foreign-owner"}),),
+        "invalid_token": (binding.model_copy(update={"model_reservation": "invalid-token"}),),
+        "duplicate": (binding, binding),
+        "oversized": (binding,) * 20001,
+        "untyped": (binding.model_dump(),),
+    }[malformation]
+
+    async def invalid_snapshot(owner_id):
+        return malformed
+
+    monkeypatch.setattr(store, "capacity_recovery_bindings", invalid_snapshot)
+    original = copy.deepcopy(container.records)
+    with pytest.raises(RuntimeError, match="invalid_capacity_recovery_snapshot") as failure:
+        await service.recovery_bindings("owner-fixture")
+    assert document["sessionId"] not in str(failure.value)
+    assert "invalid-token" not in str(failure.value)
+    assert container.records == original
+    assert not service._active and not service._extra_models
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure_mode", ["missing", "unavailable", "backward_clock"])
+async def test_recovery_discovery_fails_closed_when_authority_cannot_be_read(
+    cosmos_capacity, community_configuration, failure_mode
+) -> None:
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    service = recovery_service(store, clock, community_configuration, limits)
+    await service.register_owner("owner-fixture")
+    if failure_mode == "missing":
+        del container.records[AUTHORITY_ID]
+    elif failure_mode == "unavailable":
+        container.failure = 503
+    else:
+        clock.advance(-1)
+    original = copy.deepcopy(container.records)
+    with pytest.raises(RuntimeError):
+        await service.recovery_bindings("owner-fixture")
+    assert container.records == original
+    assert not service._active and not service._extra_models
+
+
+@pytest.mark.anyio
+async def test_recovery_discovery_cancellation_retains_all_state(
+    cosmos_capacity, community_configuration, monkeypatch
+) -> None:
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    service = recovery_service(store, clock, community_configuration, limits)
+    await service.register_owner("owner-fixture")
+    started, never = asyncio.Event(), asyncio.Event()
+    original = copy.deepcopy(container.records)
+
+    async def blocked_snapshot(owner_id):
+        started.set()
+        await never.wait()
+
+    monkeypatch.setattr(store, "capacity_recovery_bindings", blocked_snapshot)
+    task = asyncio.create_task(service.recovery_bindings("owner-fixture"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert container.records == original
+    assert not service._active and not service._extra_models
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("recovery_kind", ["call", "model"])
 async def test_reconstructed_capacity_service_reconciles_verified_owned_cleanup(
     cosmos_capacity, community_configuration, recovery_kind

@@ -2,7 +2,15 @@
 
 ## Status
 
-**Current explicit cleanup-recovery increment is locally verified; native/image CI is pending.**
+**Current read-only recovery discovery is locally verified; hosted qualification remains pending.**
+A red-first restart case now passes through an owner-scoped immutable binding snapshot.
+All 15 new contracts, the complete 490-case backend and strict runtime typing pass. Discovery
+does not reclaim capacity, renew leases, rebuild socket ownership or prove physical cleanup.
+The previous recovery CI read was unavailable; no hosted result is inferred. T123 is partial
+and completion stays 113/129, with production recovery and actual live gates still open.
+See [current US6 evidence](us6.md).
+
+**Earlier explicit cleanup-recovery increment.**
 Two red-first restart cases now pass through explicit session/owner/epoch-bound call cleanup
 and exact-token model disposal reconciliation. All 27 new contracts, the complete 475-case
 backend and strict runtime typing pass. Trusted callers still independently verify physical
