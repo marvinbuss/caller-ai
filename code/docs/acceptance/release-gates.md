@@ -1,9 +1,17 @@
 # Release Gates
 
-**Current increment CI passes; release remains blocked.** Observed run 40656926575 on
+**Current Cosmos-authority increment is locally verified; release remains blocked.** The
+injected persistent adapter passes 34 new contracts and the full 448-case backend, strict
+runtime typing, protocol compatibility and touched lint. Changed-source native/image CI is
+pending; all repository gates/165 tools pass and the changed sequence actually renders.
+Physical coordination, uncertain-work reconciliation and actual Cosmos/environment
+qualification remain open. T123 is partial and 113/129 tasks are checked. Storage doubles
+are not live/release evidence; defaults remain credential-free and fail closed.
+
+**Earlier shared-local lease CI passes.** Observed run 40656926575 on
 271bc49 passes every native Windows/Ubuntu and Linux image step, with 414/413/165 tests per
 native platform, all assertion/render/package gates and actual image smoke/three-image
-audits. T123 remains partial: same-object quota/drain/lease authority is not persistent owner/lease
+audits. That revision's same-object quota/drain/lease authority is not persistent owner/lease
 coordination, recovery or live capacity qualification. No merge/release approval follows;
 earlier failures and parked investigations remain recorded. See [scoped US6 evidence](us6.md).
 

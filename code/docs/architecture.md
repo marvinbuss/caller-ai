@@ -214,6 +214,30 @@ categories without raw exception text. Twenty-three local/container-double cases
 conflicts including a server-side race after pre-read. These results do not establish actual
 Cosmos consistency, durability, lease recovery or production media-owner migration.
 
+`CosmosCapacityRepository` adds an explicitly injected persistent-authority adapter over the
+same runtime-owned `call-sessions` container. Its reserved item has both `id` and `sessionId`
+equal to `runtime-capacity-authority-v1`; no container or infrastructure is created. The item
+contains schema version, fixed aggregate/per-owner limits, current model quota, UTC high-water
+timestamp, bounded owner phases/leases, call owner/epoch/lease/identity-hash bindings and
+model-token bindings. It contains no call content and has `ttl=-1` so normal metadata retention
+cannot silently erase charged work. Ordinary calls cannot use its reserved session identity.
+
+Every mutation Strong-reads that complete <=512 KiB authority and conditionally replaces it
+with `IfNotModified` and automatic write retries disabled. At most four 412 conflicts are
+retried inside one original budget of at most ten seconds; unavailable or uncertain writes
+are never replayed as confirmed failure or rolled back locally. Explicit trusted bootstrap
+is separate from normal operations, which never recreate missing state or reset quotas.
+
+Session lifecycle/handover documents remain in their per-call partitions. Central capacity
+leases, not those documents' copied lease fields, are authoritative: adapter reads overlay
+the bound lease without inventing a cross-partition transaction or changing a lifecycle ETag.
+Heartbeat validates every held call identity before one conditional update of all capacity
+leases. Release still requires a trusted closure/disposal caller; terminal metadata and lease
+expiry alone retain charges. Single-item contention/size limits fail closed, not open.
+The 34 injected-storage contracts do not qualify real Cosmos consistency/RU capacity, crash
+recovery of physical connections, cross-process clock trust or a live deployment. See the
+[scaling runbook](runbooks/scaling.md) and [current US6 evidence](acceptance/us6.md).
+
 The local `CallLifecycle` composes injected metadata/agent/phone ports and a copied,
 prevalidated graph. It selects protected roles, preserves admission identity/revision/owner,
 and denies tools until the later authorized capability boundary exists. Per-call locks and

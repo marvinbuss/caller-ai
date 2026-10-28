@@ -39,7 +39,10 @@ transient handover overlap and routing/connection limits, not CPU alone. `active
 verified active phone calls. T123 now shares atomic call/model reservation accounting when
 controllers explicitly use the same `LocalSessionRepository` authority object. Fixed limits
 must agree; current model-quota updates affect every controller using that object. This is
-not cross-process quota consensus, persistent Cosmos authority or restart ownership. The
+not cross-process quota consensus, persistent Cosmos authority or restart ownership. An
+explicitly injected `CosmosCapacityRepository` now provides a separate persistent-authority
+adapter, contract-tested with independent adapters and an ETag-capable container double;
+its deployment/storage/clock guarantees are not yet live-qualified. The
 same local authority now also holds owner serving/draining/drained phase: it atomically denies
 new reservations after drain and postpones completion while any shared call/model reservation
 remains. Owner expiry/renewal now uses the same local authority's explicit UTC clock and
@@ -72,6 +75,34 @@ The model-overlap primitive is tested locally but not wired into a qualified liv
 composition. Real callers, quotas and costs remain T099/live T100/T116 obligations.
 
 ## Admission and Scale-Out
+
+### Explicit Persistent Authority
+
+Use the adapter only with an explicitly supplied runtime-owned container and trusted UTC
+clock. It constructs no identity/client and is not mounted by either default app. Its reserved
+`runtime-capacity-authority-v1` item uses that same value for `id` and partition `sessionId`.
+Strong-consistency account/client behavior must be qualified before live use. Central state is
+bounded to 512 KiB and 1024 owners; four ETag-conflict attempts share the original operation
+budget of at most ten seconds. These bounds are not measured RU/throughput capacity.
+
+`initialize_capacity_authority` is a trusted one-time empty-installation/bootstrap operation,
+not an outage repair. It accepts explicit fixed limits and an initial model quota. Existing
+authority cannot be reset by reconstruction or repeated initialization, and current quota
+changes remain shared. Normal admission/heartbeat/drain operations never initialize missing
+state. The item has `ttl=-1`; do not manually delete it, clear reservations or change retention
+to reclaim capacity. A missing/malformed item requires reviewed recovery, not a local fallback.
+
+Owner registration cannot renew expiry or reset drain phase. Heartbeat validates every held
+session binding before atomically renewing central owner/call leases. Session lifecycle and
+handover rows remain per-call; their copied lease does not extend central authority. Consumers
+of capacity-backed sessions must use this adapter's effective lease, not a raw repository
+lease or controller cache. Unknown closure/disposal remains charged across adapter restart.
+Reconcile actual physical/provider/model closure under qualified authority before trusted
+release; this adapter supplies no connection reattachment or automatic uncertain-work cleanup.
+
+These are 34 offline storage-contract cases, not real Cosmos/process-crash evidence. T123
+remains partial until physical coordination/reconciliation and relevant live qualification
+are complete. No new cloud access, provider choice, deployment, route or call is enabled.
 
 Before any live action, obtain separate environment/deployment authorization and actual T099
 qualification, reviewed image/infra/resource ownership, privacy inputs, provider support and

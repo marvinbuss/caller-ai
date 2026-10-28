@@ -129,6 +129,486 @@ def repository(request):
 
 
 @pytest.mark.anyio
+async def test_cosmos_capacity_survives_adapter_reconstruction_and_concurrent_writers(
+    monkeypatch,
+) -> None:
+    from caller_runtime.adapters.capacity_repository import CosmosCapacityRepository
+
+    container = ContainerDouble()
+    now = datetime(2026, 10, 23, tzinfo=UTC)
+    first = CosmosCapacityRepository(container, utc_now=lambda: now)
+    await first.initialize_capacity_authority(
+        maximum_sessions=1, sessions_per_owner=1, model_session_quota=1
+    )
+    await first.register_capacity_owner("owner-fixture", lease_seconds=30)
+    second = CosmosCapacityRepository(container, utc_now=lambda: now)
+    read_item = container.read_item
+    released = asyncio.Event()
+    snapshots = []
+
+    async def competing_read(item, partition_key, **keywords):
+        snapshot = await read_item(item, partition_key, **keywords)
+        if len(snapshots) < 2:
+            snapshots.append(snapshot)
+            if len(snapshots) == 2:
+                released.set()
+            await released.wait()
+        return snapshot
+
+    monkeypatch.setattr(container, "read_item", competing_read)
+    document = metadata()
+    other = {**document, "id": "second-session", "sessionId": "second-session"}
+    limits = {"maximum_sessions": 1, "sessions_per_owner": 1, "model_session_quota": 1}
+    results = await asyncio.wait_for(
+        asyncio.gather(
+            first.reserve_capacity(document, **limits), second.reserve_capacity(other, **limits)
+        ),
+        timeout=2,
+    )
+    assert results.count("reserved") == results.count("unavailable") == 1
+    reconstructed = CosmosCapacityRepository(container, utc_now=lambda: now)
+    assert (
+        await reconstructed.reserve_capacity(
+            {**document, "id": "third-session", "sessionId": "third-session"}, **limits
+        )
+        == "unavailable"
+    )
+    writes = [call for call in container.calls if call[0] == "replace"]
+    assert writes and all(
+        call[2]["match_condition"] == MatchConditions.IfNotModified for call in writes
+    )
+
+
+@pytest.mark.anyio
+async def test_cosmos_capacity_composes_admission_heartbeat_and_model_drain(
+    capacity_case, community_configuration
+) -> None:
+    from caller_runtime.adapters.capacity_repository import CosmosCapacityRepository
+    from caller_runtime.adapters.session_repository import metadata_model
+    from caller_runtime.services.capacity import CapacityService
+
+    _service, _local_repository, clock = capacity_case
+    container = ContainerDouble()
+    stores = [CosmosCapacityRepository(container, utc_now=clock.utc_now) for _ in range(2)]
+    await stores[0].initialize_capacity_authority(
+        maximum_sessions=1, sessions_per_owner=1, model_session_quota=2
+    )
+    services = [
+        CapacityService(
+            repository=store,
+            configuration=community_configuration,
+            maximum_sessions=1,
+            sessions_per_owner=1,
+            model_session_quota=2,
+            utc_now=clock.utc_now,
+            monotonic=clock.monotonic,
+        )
+        for store in stores
+    ]
+    for service in services:
+        await service.register_owner("owner-fixture")
+    result = await services[0].admit(
+        session_id="composed-session", provider_call_ref="composed-provider"
+    )
+    assert result.outcome == "admitted"
+    assert (
+        await services[1].admit(
+            session_id="composed-session", provider_call_ref="composed-provider"
+        )
+    ).outcome == "duplicate"
+    token = await services[0].reserve_model_session("composed-session")
+    assert token is not None
+    assert await services[1].begin_drain("owner-fixture") == "draining"
+    assert await services[1].finish_drain("owner-fixture") == "postponed"
+    clock.advance(20)
+    await services[0].heartbeat("owner-fixture")
+    reconstructed = CosmosCapacityRepository(container, utc_now=clock.utc_now)
+    session = await reconstructed.read("composed-session")
+    assert session is not None
+    assert metadata_model(session).lease_until == clock.utc_now() + timedelta(seconds=60)
+    await services[0].release("composed-session")
+    assert await services[1].finish_drain("owner-fixture") == "postponed"
+    await services[0].release_model_session(token)
+    assert await services[1].finish_drain("owner-fixture") == "drained"
+    assert (
+        await reconstructed.register_capacity_owner("owner-fixture", lease_seconds=60) == "drained"
+    )
+    assert (
+        await services[1].admit(
+            session_id="post-drain-session", provider_call_ref="post-drain-provider"
+        )
+    ).outcome == "unavailable"
+
+
+@pytest.fixture
+async def cosmos_capacity(capacity_case):
+    from caller_runtime.adapters.capacity_repository import CosmosCapacityRepository
+
+    _service, _repository, clock = capacity_case
+    container = ContainerDouble()
+    store = CosmosCapacityRepository(container, utc_now=clock.utc_now)
+    limits = {"maximum_sessions": 2, "sessions_per_owner": 2, "model_session_quota": 3}
+    assert await store.initialize_capacity_authority(**limits)
+    await store.register_capacity_owner("owner-fixture", lease_seconds=30)
+    document = {
+        **metadata(),
+        "startedAt": clock.utc_now().isoformat(),
+        "leaseUntil": (clock.utc_now() + timedelta(seconds=30)).isoformat(),
+    }
+    return store, container, clock, document, limits
+
+
+async def reserve_stored_capacity(store, document, limits):
+    assert await store.reserve_capacity(document, **limits) == "reserved"
+    assert await store.create(document)
+
+
+@pytest.mark.anyio
+async def test_cosmos_capacity_model_quota_is_shared_and_reconstruction_cannot_reset_it(
+    cosmos_capacity,
+) -> None:
+    from caller_runtime.adapters.capacity_repository import CosmosCapacityRepository
+
+    store, container, clock, document, limits = cosmos_capacity
+    other = {**document, "id": "second-session", "sessionId": "second-session"}
+    await reserve_stored_capacity(store, document, limits)
+    await reserve_stored_capacity(store, other, limits)
+    remote = CosmosCapacityRepository(container, utc_now=clock.utc_now)
+    tokens = ["a" * 32, "b" * 32]
+    results = await asyncio.gather(
+        *(
+            adapter.reserve_model_capacity(
+                session["sessionId"], physical_owner_id="owner-fixture", reservation=token
+            )
+            for adapter, session, token in zip(
+                (store, remote), (document, other), tokens, strict=True
+            )
+        )
+    )
+    assert results.count(True) == results.count(False) == 1
+    await remote.set_model_capacity_quota(0)
+    reconstructed = CosmosCapacityRepository(container, utc_now=clock.utc_now)
+    assert await reconstructed.initialize_capacity_authority(**limits) is False
+    winner = results.index(True)
+    assert await reconstructed.reserve_model_capacity(
+        (document, other)[winner]["sessionId"],
+        physical_owner_id="owner-fixture",
+        reservation=tokens[winner],
+    )
+    assert (
+        await reconstructed.reserve_model_capacity(
+            document["sessionId"], physical_owner_id="owner-fixture", reservation="c" * 32
+        )
+        is False
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mutation", ["call", "model", "drain"])
+@pytest.mark.parametrize("lost_reply", ["unavailable", "canceled"])
+async def test_cosmos_capacity_ambiguous_commits_keep_their_charge_or_fence(
+    cosmos_capacity, monkeypatch, mutation, lost_reply
+) -> None:
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID, CosmosCapacityRepository
+
+    store, container, clock, document, limits = cosmos_capacity
+    if mutation != "call":
+        await reserve_stored_capacity(store, document, limits)
+    replace_item = container.replace_item
+
+    async def committed_without_reply(*args, **keywords):
+        await replace_item(*args, **keywords)
+        if lost_reply == "canceled":
+            raise asyncio.CancelledError
+        raise CosmosHttpResponseError(message="sensitive-store-details", status_code=503)
+
+    monkeypatch.setattr(container, "replace_item", committed_without_reply)
+    operation = (
+        store.reserve_capacity(document, **limits)
+        if mutation == "call"
+        else store.reserve_model_capacity(
+            document["sessionId"], physical_owner_id="owner-fixture", reservation="a" * 32
+        )
+        if mutation == "model"
+        else store.begin_capacity_drain("owner-fixture")
+    )
+    expected_error = asyncio.CancelledError if lost_reply == "canceled" else RuntimeError
+    with pytest.raises(expected_error) as failure:
+        await operation
+    assert "sensitive-store-details" not in str(failure.value)
+    monkeypatch.setattr(container, "replace_item", replace_item)
+    reconstructed = CosmosCapacityRepository(container, utc_now=clock.utc_now)
+    if mutation == "call":
+        assert await reconstructed.reserve_capacity(document, **limits) == "duplicate"
+        assert len(container.records[AUTHORITY_ID]["calls"]) == 1
+    elif mutation == "model":
+        assert await reconstructed.reserve_model_capacity(
+            document["sessionId"], physical_owner_id="owner-fixture", reservation="a" * 32
+        )
+        assert len(container.records[AUTHORITY_ID]["models"]) == 1
+    else:
+        assert await reconstructed.capacity_owner_state("owner-fixture") == "draining"
+        assert await reconstructed.finish_capacity_drain("owner-fixture") == "postponed"
+        other = {**document, "id": "second-session", "sessionId": "second-session"}
+        assert await reconstructed.reserve_capacity(other, **limits) == "unavailable"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "failure_mode",
+    [
+        "missing",
+        "unavailable",
+        "etag",
+        "identity",
+        "missing_calls",
+        "schema",
+        "content",
+        "ttl",
+        "model_binding",
+        "owner_phase",
+        "owner_phase_missing",
+    ],
+)
+async def test_cosmos_capacity_authority_loss_or_malformed_state_never_falls_back(
+    cosmos_capacity, failure_mode
+) -> None:
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID, CosmosCapacityRepository
+
+    _store, container, clock, document, limits = cosmos_capacity
+    authority = container.records[AUTHORITY_ID]
+    if failure_mode == "missing":
+        del container.records[AUTHORITY_ID]
+    elif failure_mode == "unavailable":
+        container.failure = 503
+    elif failure_mode == "etag":
+        del authority["_etag"]
+    elif failure_mode == "identity":
+        del authority["id"]
+    elif failure_mode == "missing_calls":
+        del authority["calls"]
+    elif failure_mode == "schema":
+        authority["schema_version"] = True
+    elif failure_mode == "content":
+        authority["transcript"] = "synthetic-content-must-be-rejected"
+    elif failure_mode == "ttl":
+        authority["ttl"] = 30
+    elif failure_mode == "model_binding":
+        authority["models"]["a" * 32] = {
+            "session_id": "unknown-session",
+            "owner_id": "unknown-owner",
+            "connection_epoch": 1,
+        }
+    elif failure_mode == "owner_phase_missing":
+        del authority["owners"]["owner-fixture"]["state"]
+    else:
+        authority["owners"]["owner-fixture"]["state"] = "unknown"
+    creates = sum(call[0] == "create" for call in container.calls)
+    reconstructed = CosmosCapacityRepository(container, utc_now=clock.utc_now)
+    with pytest.raises(RuntimeError, match="capacity_store_(unavailable|response_invalid)"):
+        await reconstructed.reserve_capacity(document, **limits)
+    assert sum(call[0] == "create" for call in container.calls) == creates
+
+
+@pytest.mark.anyio
+async def test_cosmos_capacity_expiry_never_renews_or_reclaims_uncertain_calls(cosmos_capacity):
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID, CosmosCapacityRepository
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    deadline = container.records[AUTHORITY_ID]["owners"]["owner-fixture"]["lease_until"]
+    clock.advance(31)
+    reconstructed = CosmosCapacityRepository(container, utc_now=clock.utc_now)
+    assert (
+        await reconstructed.register_capacity_owner("owner-fixture", lease_seconds=30) == "serving"
+    )
+    assert container.records[AUTHORITY_ID]["owners"]["owner-fixture"]["lease_until"] == deadline
+    with pytest.raises(PermissionError, match="owner_lease_lost"):
+        await reconstructed.renew_capacity_owner("owner-fixture", lease_seconds=30)
+    assert await reconstructed.serving_capacity_owners(("owner-fixture",)) == ()
+    with pytest.raises(Exception, match="model_capacity_not_owned"):
+        await reconstructed.reserve_model_capacity(
+            document["sessionId"], physical_owner_id="owner-fixture", reservation="a" * 32
+        )
+    assert len(container.records[AUTHORITY_ID]["calls"]) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("invalid_session", ["missing", "mismatched"])
+async def test_cosmos_capacity_heartbeat_validates_all_calls_before_atomic_renewal(
+    cosmos_capacity, invalid_session
+) -> None:
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID
+    from caller_runtime.adapters.session_repository import SessionConflict
+
+    store, container, clock, document, limits = cosmos_capacity
+    other = {**document, "id": "second-session", "sessionId": "second-session"}
+    await reserve_stored_capacity(store, document, limits)
+    await reserve_stored_capacity(store, other, limits)
+    original = copy.deepcopy(container.records[AUTHORITY_ID])
+    if invalid_session == "missing":
+        del container.records["second-session"]
+    else:
+        container.records["second-session"]["physicalOwnerId"] = "foreign-owner"
+    clock.advance(10)
+    with pytest.raises((RuntimeError, SessionConflict)):
+        await store.renew_capacity_owner("owner-fixture", lease_seconds=30)
+    assert container.records[AUTHORITY_ID] == original
+
+
+@pytest.mark.anyio
+async def test_cosmos_capacity_model_token_cannot_cross_session_or_owner(cosmos_capacity):
+    from caller_runtime.adapters.session_repository import SessionConflict
+
+    store, _container, _clock, document, limits = cosmos_capacity
+    other = {**document, "id": "second-session", "sessionId": "second-session"}
+    await reserve_stored_capacity(store, document, limits)
+    await reserve_stored_capacity(store, other, limits)
+    assert await store.reserve_model_capacity(
+        document["sessionId"], physical_owner_id="owner-fixture", reservation="a" * 32
+    )
+    with pytest.raises(SessionConflict, match="model_capacity_not_owned"):
+        await store.reserve_model_capacity(
+            other["sessionId"], physical_owner_id="owner-fixture", reservation="a" * 32
+        )
+    for session_id, owner_id in (
+        (other["sessionId"], "owner-fixture"),
+        (document["sessionId"], "foreign-owner"),
+    ):
+        with pytest.raises(SessionConflict, match="model_capacity_not_owned"):
+            await store.release_model_capacity(
+                "a" * 32, session_id=session_id, physical_owner_id=owner_id
+            )
+    await store.release_model_capacity(
+        "a" * 32, session_id=document["sessionId"], physical_owner_id="owner-fixture"
+    )
+    await store.release_model_capacity(
+        "a" * 32, session_id=document["sessionId"], physical_owner_id="owner-fixture"
+    )
+
+
+@pytest.mark.anyio
+async def test_cosmos_capacity_metadata_cannot_extend_the_authoritative_lease(cosmos_capacity):
+    from caller_runtime.adapters.session_repository import CosmosSessionRepository, metadata_model
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    raw = CosmosSessionRepository(container)
+    current = await raw.read(document["sessionId"])
+    await raw.replace(
+        document["sessionId"],
+        {
+            **current,
+            "leaseUntil": (clock.utc_now() + timedelta(days=1)).isoformat(),
+        },
+    )
+    bounded = await store.read(document["sessionId"])
+    assert metadata_model(bounded).lease_until == clock.utc_now() + timedelta(seconds=30)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("clock_error", ["naive", "non_utc", "backward"])
+async def test_cosmos_capacity_rejects_invalid_or_persistently_backward_clock(
+    cosmos_capacity, clock_error
+) -> None:
+    from datetime import timezone
+
+    from caller_runtime.adapters.capacity_repository import CosmosCapacityRepository
+
+    _store, container, clock, _document, _limits = cosmos_capacity
+    instant = clock.utc_now()
+    invalid = {
+        "naive": instant.replace(tzinfo=None),
+        "non_utc": instant.astimezone(timezone(timedelta(hours=1))),
+        "backward": instant - timedelta(seconds=1),
+    }[clock_error]
+    store = CosmosCapacityRepository(container, utc_now=lambda: invalid)
+    with pytest.raises(RuntimeError, match="capacity_clock_unavailable"):
+        await store.serving_capacity_owners(("owner-fixture",))
+
+
+@pytest.mark.anyio
+async def test_cosmos_capacity_authority_has_no_ttl_and_all_reads_require_strong(cosmos_capacity):
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID
+
+    store, container, _clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    assert container.records[AUTHORITY_ID]["ttl"] == -1
+    reads = [call for call in container.calls if call[0] == "read" and call[1] == AUTHORITY_ID]
+    assert reads and all(call[2]["consistency_level"] == "Strong" for call in reads)
+    writes = [call for call in container.calls if call[0] == "replace" and call[1] == AUTHORITY_ID]
+    assert writes and all(call[2]["retry_write"] == 0 for call in writes)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("closure", ["unconfirmed", "foreign_owner", "verified"])
+async def test_cosmos_capacity_only_verified_owned_closure_releases_reservation(
+    cosmos_capacity, closure
+) -> None:
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID, CosmosCapacityRepository
+    from caller_runtime.adapters.session_repository import SessionConflict, metadata_model
+    from caller_runtime.domain.session import LifecycleState
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    reconstructed = CosmosCapacityRepository(container, utc_now=clock.utc_now)
+    if closure != "unconfirmed":
+        current = metadata_model(await reconstructed.read(document["sessionId"]))
+        terminal = current.transition(
+            LifecycleState.ENDED, at=clock.utc_now(), terminal_reason="completed"
+        )
+        await reconstructed.replace(document["sessionId"], terminal.model_dump(by_alias=True))
+        assert await reconstructed.reserve_capacity(document, **limits) == "duplicate"
+    owner = "foreign-owner" if closure == "foreign_owner" else "owner-fixture"
+    if closure == "verified":
+        await reconstructed.release_capacity(document["sessionId"], physical_owner_id=owner)
+        await reconstructed.release_capacity(document["sessionId"], physical_owner_id=owner)
+        assert not container.records[AUTHORITY_ID]["calls"]
+    else:
+        with pytest.raises(SessionConflict, match="capacity_closure_not_confirmed"):
+            await reconstructed.release_capacity(document["sessionId"], physical_owner_id=owner)
+        assert len(container.records[AUTHORITY_ID]["calls"]) == 1
+
+
+@pytest.mark.anyio
+async def test_cosmos_capacity_conflict_retries_are_bounded_without_local_fallback(cosmos_capacity):
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID
+
+    store, container, _clock, document, limits = cosmos_capacity
+    original = copy.deepcopy(container.records[AUTHORITY_ID])
+    container.calls.clear()
+    container.conflict_on_replace = True
+    with pytest.raises(RuntimeError, match="capacity_store_unavailable"):
+        await store.reserve_capacity(document, **limits)
+    writes = [call for call in container.calls if call[0] == "replace"]
+    assert len(writes) == 4
+    assert container.records[AUTHORITY_ID] == original
+
+
+@pytest.mark.anyio
+async def test_cosmos_capacity_cancellation_during_read_commits_nothing(
+    cosmos_capacity, monkeypatch
+):
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID
+
+    store, container, _clock, document, limits = cosmos_capacity
+    original = copy.deepcopy(container.records[AUTHORITY_ID])
+    started, never = asyncio.Event(), asyncio.Event()
+
+    async def blocked_read(*args, **keywords):
+        started.set()
+        await never.wait()
+
+    monkeypatch.setattr(container, "read_item", blocked_read)
+    task = asyncio.create_task(store.reserve_capacity(document, **limits))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert container.records[AUTHORITY_ID] == original
+
+
+@pytest.mark.anyio
 async def test_conditional_creation_and_detached_reads(repository) -> None:
     store, container = repository
     document = metadata()

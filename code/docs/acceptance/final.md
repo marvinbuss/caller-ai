@@ -2,12 +2,22 @@
 
 ## Status
 
-**Current local T123 increment is partial; required CI passes.** Observed
+**Current T123 Cosmos-adapter increment is locally verified; changed-source CI is pending.**
+An explicitly injected persistent authority now uses one bounded, Strong-read/ETag-protected
+runtime-owned item for quota, drain and owner/call leases. All 34 new contract cases and the
+full 448-case backend pass; strict runtime typing, protocol compatibility and touched lint
+pass. All repository gates and 165 tooling cases pass; the changed sequence actually renders.
+This is storage-double evidence, not actual Cosmos/process-crash or live qualification.
+Physical coordination/reconciliation remain unfinished. Completion stays 113/129 with T123
+unchecked. See [current US6 evidence](us6.md).
+
+**Earlier shared-local lease CI passes.** Observed
 [run 40656926575](https://github.com/marvinbuss/caller-ai/actions/runs/40656926575) on 271bc49
 passes every Windows/Ubuntu/image step: 414 runtime/413 management/165 tooling cases per
 native platform, 0/1/0 assertion/cleanup, all 33 documents/28 diagrams and strict package/
 image audits. Shared local reservations, drain phase and lease coordination have thirty new
-cases; persistent authority, cross-process fencing and durable recovery remain missing. Completion stays 113/129 tasks,
+cases; at that revision persistent authority, cross-process fencing and durable recovery
+remained missing. Completion stays 113/129 tasks,
 with T123 unchecked and all external gates intact. Earlier host failures and parked
 investigations remain recorded without root-cause claims. See [US6 evidence](us6.md).
 

@@ -1,6 +1,34 @@
 # US6 Local Scaling Acceptance
 
-## Current Hosted Lease Verification: 2026-10-28
+## Current Injected Cosmos Authority Increment: 2026-10-28
+
+`CosmosCapacityRepository` now implements `SharedCapacityRepository` against an explicitly
+injected runtime-owned container. Separate adapters use a reserved authority item rather than
+shared Python dictionaries or locks. A red-first competing-writer/reconstruction case and a
+red-first service-composition case now pass. Four schema/retention failures and one omitted-
+owner-phase failure were also reproduced and repaired without weakening assertions.
+
+All 34 new persistent-authority contracts pass. They cover independent conditional writers,
+global model overlap and quota reduction, controller reconstruction, lost HTTP/cancellation
+replies after commit, missing/unavailable/malformed authority, immutable owner expiry,
+all-or-nothing renewal with invalid held sessions, foreign model tokens, effective lease
+clamping, invalid/backward clocks, terminal-but-charged calls, trusted closure release,
+bounded contention, cancellation during a read, Strong reads and authority TTL exclusion.
+The combined repository/capacity slice passes 118 cases; the full backend passes 448 with
+zero failures/errors/skips and only the expected blocked-egress warning. Strict runtime
+typing covers 33 sources, explicit protocol compatibility and touched-file lint pass.
+All eight repository/type/Terraform/secret/publication gates and 165 tooling cases pass.
+All 33 documents/28 diagram sources validate; the changed persistent-authority sequence
+actually renders with prepared Chromium, valid SVG bounds and unchanged sandbox/budgets.
+
+These are injected-storage contract results, not actual Cosmos service durability, separate-
+process crash experiments, production clock/fencing guarantees or live call measurements.
+No new native Ubuntu, management-browser, image or live result is claimed. Physical owner
+coordination, uncertainty reconciliation and qualified deployment remain missing; T123 and
+all sixteen open markers stay unchecked (113/129). The default apps, routes, dependencies,
+infrastructure and all application/test/browser budgets are unchanged.
+
+## Earlier Hosted Lease Verification: 2026-10-28
 
 Observed [run 40656926575](https://github.com/marvinbuss/caller-ai/actions/runs/40656926575)
 on `271bc497bfff7e9a3e9dccd796a098549826474f` passes every native Windows, native Ubuntu
@@ -268,8 +296,9 @@ Duplicate sessions cannot claim another owner or consume another confirmed reser
 ```mermaid
 sequenceDiagram
     participant Admission as Trusted admission caller
-    participant Capacity as Local control coordinator
-    participant Store as Runtime session and shared local quota authority
+    participant Capacity as Explicit control coordinator
+    participant Store as Selected runtime repository
+    participant Authority as Injected Cosmos capacity partition
     participant Model as Explicit model adapter
     participant Operator as Authorized local drain caller
     Operator->>Capacity: Register owner with fixed lease period
@@ -277,6 +306,11 @@ sequenceDiagram
     Admission->>Capacity: Opaque session and provider references
     Capacity->>Capacity: Bound pending work and check serving owner
     Capacity->>Store: Atomically reserve shared call and baseline model slots
+    opt Cosmos adapter explicitly injected
+        Store->>Authority: Strong read of complete bounded state and ETag
+        Store->>Authority: Conditional replacement, at most four conflict attempts
+        Authority-->>Store: Commit or conflict, unknown replies retain charges
+    end
     alt Reservation accepted
         Capacity->>Store: Create metadata with lease capped at owner expiry
         alt Creation confirmed
@@ -299,12 +333,12 @@ sequenceDiagram
     Operator->>Capacity: Heartbeat registered owner
     Capacity->>Store: Validate unexpired owner and every held session
     alt All leases and bindings are valid
-        Store-->>Capacity: Atomically renew owner and nonterminal sessions
+        Store-->>Capacity: Atomically renew owner and nonterminal capacity leases
     else Expired lease or unknown authority
         Store-->>Capacity: Reject renewal without partial lease updates
     end
     Operator->>Capacity: Begin drain for registered owner
-    Capacity->>Store: Commit shared local draining phase
+    Capacity->>Store: Commit shared draining phase
     Note over Admission,Store: Later new call reservations are denied
     Operator->>Capacity: Complete drain
     Capacity->>Store: Check all shared call and model reservations
