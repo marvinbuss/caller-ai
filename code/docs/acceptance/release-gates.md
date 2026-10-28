@@ -17,7 +17,17 @@ pass. It is not a deletion fence or removal adapter and is not wired into defaul
 execution. Actual independent-actor enforcement, authenticated cluster/controller integration
 and real qualification remain missing; T124 and all fifteen open markers are unchanged.
 
-**Observed ledger CI: required Ubuntu preparation failed.**
+**Current ledger native/image verification passes; release remains gated.**
+[Run 40733054020](https://github.com/marvinbuss/caller-ai/actions/runs/40733054020) on cec715c
+passes every Windows/Ubuntu/image step. Both native platforms pass 545/413/203 tests,
+assertion/cleanup, CLI preparation, all 33 documents/29 actual diagram indices and strict
+package audits; actual image smoke/three-image audits pass. This removes that current
+verification blocker, not T124's missing enforcement/controller/cluster implementation or
+the provider/environment/live gates. T123 stays checked and all fifteen open markers remain
+unchanged (114/129). The earlier failure remains without independent root-cause certification;
+no retries, deadline/sandbox changes, assertion waivers or live actions were used.
+
+**Earlier required Ubuntu preparation failure.**
 [Run 40718864989](https://github.com/marvinbuss/caller-ai/actions/runs/40718864989) on 1b157b9
 passes Windows/images and both native 545/413/203 tests plus assertion/cleanup. Windows
 completes CLI preparation, all 33 documents/29 diagrams and strict package audits; actual

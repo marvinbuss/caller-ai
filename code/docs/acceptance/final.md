@@ -2,7 +2,16 @@
 
 ## Status
 
-**Current ledger regressions pass; the required Ubuntu preparation gate fails.** Observed
+**Current ledger increment passes native/image CI; T124 and full release remain incomplete.**
+Observed [run 40733054020](https://github.com/marvinbuss/caller-ai/actions/runs/40733054020)
+on cec715c passes every Windows/Ubuntu/image step. Each native platform reports 545 runtime/
+413 management/203 tooling passes, assertion/cleanup, all 33 documents/29 actual diagram
+indices and strict package audits. Actual image smoke/three-image audits pass. This closes
+the current verification blocker, not independent cluster enforcement or actual live
+qualification. Completion remains 114/129; T123 is complete and all fifteen open markers
+remain unchanged. Earlier failure causes are not certified by a later successful run.
+
+**Earlier Ubuntu preparation failure.** Observed
 [run 40718864989](https://github.com/marvinbuss/caller-ai/actions/runs/40718864989) on 1b157b9
 passes Windows/images. Both native platforms pass 545 runtime/413 management/203 tooling
 tests and assertion/cleanup. Windows completes CLI preparation, all 33 documents/29 diagrams

@@ -15,6 +15,25 @@ Read [monitoring](monitoring.md) and [platform security](platform-security.md) f
 
 ## Current Hosted Ledger Verification
 
+Observed [run 40733054020](https://github.com/marvinbuss/caller-ai/actions/runs/40733054020)
+on `cec715c2a39e725bd3bd5337a6a4d929538a6aea` passes every native Windows, native Ubuntu
+and Linux image step, with no failed or skipped steps. Both native platforms report
+545 runtime/413 management/203 tooling passes, zero test failures/errors/skips, exact
+baseline 0/broken 1/restored 0 and fixture cleanup. Both prepare CLI 12.0.0 and pass all
+29 diagram indices across 33 documents. Sandboxed Chrome versions are Windows 156.0.8078.48
+and Ubuntu 156.0.8078.47. Python audits cover Windows 69/92/60 and Linux 68/90/59 packages;
+both frontend 294-package audits have zero findings. Actual image smoke passes offline/
+non-root startup and 360/768/1440 browser checks; three image audits report zero HIGH/CRITICAL.
+
+This closes the current ledger increment's native/image verification checkpoint, not T124's
+missing independent-deletion enforcement, controller/cluster wiring or actual environment/live
+qualification. T124 remains unchecked and completion stays 114/129; T123 and all fifteen
+open markers are unchanged. The earlier preparation failure below remains historical, not
+certified explained by this success. No job retry, deadline/sandbox change, waived assertion
+or live action is used. Results apply to the exact source above, not automatically to later edits.
+
+### Earlier Ubuntu Preparation Failure
+
 Observed [run 40718864989](https://github.com/marvinbuss/caller-ai/actions/runs/40718864989)
 on `1b157b935f44ac7954ae8b9b0a2314e88289c0c5` passes native Windows and Linux images.
 Windows and Ubuntu each report 545 runtime/413 management/203 tooling passes with zero test
