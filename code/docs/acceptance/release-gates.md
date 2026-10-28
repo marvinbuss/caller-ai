@@ -17,6 +17,17 @@ pass. It is not a deletion fence or removal adapter and is not wired into defaul
 execution. Actual independent-actor enforcement, authenticated cluster/controller integration
 and real qualification remain missing; T124 and all fifteen open markers are unchanged.
 
+**Observed ledger CI: required Ubuntu preparation failed.**
+[Run 40718864989](https://github.com/marvinbuss/caller-ai/actions/runs/40718864989) on 1b157b9
+passes Windows/images and both native 545/413/203 tests plus assertion/cleanup. Windows
+completes CLI preparation, all 33 documents/29 diagrams and strict package audits; actual
+image smoke/three-image audits pass. Ubuntu fails CLI preparation with
+`diagram_renderer_timeout:launcher_or_package` before any diagram starts; its later audit
+does not run. This is a failed verification gate, not evidence of a ledger bug or a proven
+historical root cause. No CI retry, deadline/sandbox change, waived assertion or live action
+is performed. Stop at this checkpoint and retain the merge/release block. T123 stays checked,
+T124 partial and completion 114/129, with all fifteen other open markers unchanged.
+
 | Open tasks | Remaining work or required authorization |
 |------------|------------------------------------------|
 | T042, T120 | Supported provider/scenario approval and qualified wire adapter; telephony remains deferred |

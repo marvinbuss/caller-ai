@@ -13,6 +13,28 @@ execution path is enabled, no workload manifest is changed, and no cloud package
 port's assertion of protection is not evidence that Kubernetes or Azure prevents deletion.
 Read [monitoring](monitoring.md) and [platform security](platform-security.md) for other gates.
 
+## Current Hosted Ledger Verification
+
+Observed [run 40718864989](https://github.com/marvinbuss/caller-ai/actions/runs/40718864989)
+on `1b157b935f44ac7954ae8b9b0a2314e88289c0c5` passes native Windows and Linux images.
+Windows and Ubuntu each report 545 runtime/413 management/203 tooling passes with zero test
+failures/errors/skips, exact baseline 0/broken 1/restored 0 and fixture cleanup. Windows
+prepares CLI 12.0.0, renders all 29 diagram indices across 33 documents with sandboxed Chrome
+156.0.8078.48 and passes Python 69/92/60-package plus frontend 294-package audits with zero
+findings. Actual image smoke passes offline/non-root startup and 360/768/1440 browser checks;
+three actual image audits report zero HIGH/CRITICAL findings.
+
+Ubuntu fails the required documentation step with
+`diagram_renderer_timeout:launcher_or_package` during CLI preparation, before any diagram
+starts; its later dependency audit does not run. This is not a ledger/application test
+failure or Mermaid diagram render. The exact preparation root cause is not reproduced by
+this run's fixed diagnostics, so no ledger repair, CI rerun, deadline/sandbox change or
+assertion waiver is invented. Implementation stops at this verification checkpoint; the
+failed gate and merge/release block stay visible. T124 remains partial and completion stays
+114/129; T123's earlier completed/hosted checkpoint and all fifteen open markers are preserved.
+These are regression results for the exact source above, not actual cluster enforcement,
+Cosmos/environment/live qualification or authorization to perform any live action.
+
 ## Workflow and Safety Boundary
 
 ### Durable Operation Metadata

@@ -2,7 +2,16 @@
 
 ## Status
 
-**Current T124 ledger increment is locally verified; native/image CI and full completion remain pending.**
+**Current ledger regressions pass; the required Ubuntu preparation gate fails.** Observed
+[run 40718864989](https://github.com/marvinbuss/caller-ai/actions/runs/40718864989) on 1b157b9
+passes Windows/images. Both native platforms pass 545 runtime/413 management/203 tooling
+tests and assertion/cleanup. Windows completes CLI preparation, all 33 documents/29 diagrams
+and package audits; actual image smoke/three-image audits pass. Ubuntu times out during CLI
+preparation with `diagram_renderer_timeout:launcher_or_package`, before diagram zero; its
+later audit does not run. No source fix or root cause is fabricated from that signature,
+and no retry, deadline/sandbox change or assertion waiver is used. Implementation stops at
+this verification checkpoint, with merge/release still blocked.
+
 An explicitly injected Cosmos removal ledger now persists full request/UID bindings, fence
 references and conservative submission phases across adapter reconstruction. All 33 new
 ledger contracts, the full 545-case backend and strict typing of 34 runtime sources pass.
