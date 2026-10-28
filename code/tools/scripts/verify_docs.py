@@ -128,6 +128,8 @@ def main() -> None:
         raise RuntimeError("node_npx_required_for_mermaid_validation")
     values = environment()
     values["PUPPETEER_SKIP_DOWNLOAD"] = "true"
+    values["NPM_CONFIG_FETCH_TIMEOUT"] = "30000"
+    values["NPM_CONFIG_FETCH_RETRIES"] = "0"
     browser = subprocess.run(
         [
             "uv",

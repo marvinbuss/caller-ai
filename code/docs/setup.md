@@ -289,6 +289,8 @@ rendering. Only that explicit preparation may resolve packages through the appro
 every diagram runs with npm `--offline`, so registry access cannot consume its render deadline.
 Preparation and each render retain the existing 300-second child-process cap; the CI job cap,
 30-second Windows/10-second Linux browser probes and application limits are unchanged.
+Owned npm requests have a 30-second fetch timeout and zero retries, so default package-fetch
+timeouts/backoff cannot silently consume that entire outer preparation budget.
 Missing cached packages or a wrong CLI version fail rather than falling back online.
 
 Fixed JSON events identify preparation and each diagram index starting/passing. Timeout errors

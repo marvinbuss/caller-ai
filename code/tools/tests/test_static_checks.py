@@ -856,6 +856,8 @@ def test_diagram_rendering_prepares_once_then_forbids_package_network(
         commands.append(arguments)
         if arguments[-1] == "--version":
             assert "--offline" not in arguments
+            assert values["NPM_CONFIG_FETCH_TIMEOUT"] == "30000"
+            assert values["NPM_CONFIG_FETCH_RETRIES"] == "0"
             log.write_text(reported + "\n", encoding="utf-8")
             return
         assert "--offline" in arguments

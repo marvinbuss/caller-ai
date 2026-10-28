@@ -8,6 +8,11 @@ events distinguish future preparation/render failures without raw logs or upload
 hosted stall remains unproven, not declared fixed because a later run passed. No application,
 identity, infrastructure, browser sandbox, CI-job budget or live/release authority changed.
 
+Cold-cache testing reproduces package preparation consuming 300 seconds before Mermaid
+starts. A 30-second owned npm fetch timeout with zero retries now bounds that inner work;
+fresh-cache preparation and all 28 offline diagrams pass. Hosted status is unavailable due
+to GitHub API rate limiting, so current native/image success remains unclaimed.
+
 **Earlier required Windows documentation failure.** Observed
 [run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195) on 2239345
 passes Ubuntu and Linux images. Both native platforms pass 448 runtime/413 management/165

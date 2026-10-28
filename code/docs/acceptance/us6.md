@@ -21,6 +21,16 @@ package networking from renders, not a proven explanation for every historical s
 Changed-source native/image verification remains pending; T123 and all sixteen open markers
 remain unchecked (113/129), with physical recovery and live qualification still missing.
 
+A fresh isolated npm-cache check subsequently reproduces the 300-second timeout specifically
+in package preparation, before Mermaid starts, with an empty child log. An empty-cache
+offline negative control exits immediately with `ENOTCACHED`, distinguishing online package
+work from the launcher itself. Red-first fetch-configuration contracts now require a
+30-second npm request timeout and zero retries. With those bounds, a second fresh-cache
+preparation and all 28 offline renders pass; only HTTP 200 statuses are observed and the
+temporary cache is removed. This is a reproduced preparation failure and verified bounded
+repair, not independent proof of the old hosted stall's exact cause. Reading repair CI run
+40676222968 is blocked by GitHub API rate limiting; its outcome is not claimed or retried.
+
 ## Earlier Hosted Cosmos-Adapter Verification: 2026-10-28
 
 Observed [run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195)

@@ -10,6 +10,11 @@ renders pass. The original hosted stall did not reproduce; its cause is not cert
 Existing run 40672760425 on 18195a2 passed before this repair, confirming intermittency rather
 than proving a root fix. Application behavior is unchanged; 113/129 tasks remain checked.
 
+A cold npm cache then reproduces a 300-second package-preparation stall before Mermaid
+starts. Owned npm fetches now use a 30-second timeout with zero retries; a second fresh-cache
+preparation and all 28 offline renders pass. The original hosted cause remains uncertified.
+GitHub API rate limiting prevents reading the repair run; no hosted success is claimed.
+
 **Earlier required Windows documentation failure.** Observed
 [run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195) on 2239345
 passes Ubuntu and Linux images. Both native platforms pass 448 runtime/413 management/165
