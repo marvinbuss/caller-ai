@@ -1,6 +1,32 @@
 # US6 Local Scaling Acceptance
 
-## Current Renderer Investigation and Repair: 2026-10-28
+## Current Direct Windows Launcher Follow-Up: 2026-10-28
+
+Observed [run 40680073899](https://github.com/marvinbuss/caller-ai/actions/runs/40680073899)
+on `fb72c8195025e69c8bbd762f29d44752af848b86` passes Ubuntu and Linux images. Windows and
+Ubuntu each report 448 runtime/413 management/171 tooling passes and exact 0/1/0 fixture
+cleanup. Ubuntu prepares CLI 12.0.0 and renders all 28 diagrams across 33 documents with
+Chrome 155.0.8059.39; Python 68/90/59-package and frontend 294-package audits have zero
+findings. Actual image smoke passes offline/non-root startup and 360/768/1440 browser checks;
+three image audits report zero HIGH/CRITICAL findings.
+
+Windows emits only `diagram_renderer_prepare_started`, then fails with
+`diagram_renderer_timeout:launcher_or_package`; no diagram starts and its later audit does
+not run. The inner npm fetch bounds did not resolve this hosted preparation failure. It is
+not a 300-second Mermaid/browser render failure, and no green result is inferred.
+
+The next local change bypasses the owned Windows batch wrapper: `node.exe` receives the
+adjacent npm `npx-cli.js` and arguments directly, with no `.cmd` fallback. Four red-first
+contracts cover paths with spaces, missing Node/script denial and unchanged Linux behavior.
+All 20 focused renderer contracts pass. Actual direct-Node preparation from a fresh isolated
+cache and all 28 offline renders pass; the temporary cache is removed. No registry values
+are emitted. This verifies the new launch path, not the intermittent hosted cause. Native
+verification for this change remains pending. Sandbox, browser/render/fetch/job/application
+limits, application code, dependencies and all sixteen open markers are unchanged (113/129).
+Final local validation passes all eight repository/type/Terraform/secret/publication gates,
+all 175 tooling cases and all 33 documents/28 actual direct-launch diagram renders.
+
+## Earlier Renderer Investigation and Repair: 2026-10-28
 
 The user explicitly reopened the Windows timeout investigation. All 28 diagrams render on
 the local prepared browser, so the historical hosted timeout is not reproduced. Existing

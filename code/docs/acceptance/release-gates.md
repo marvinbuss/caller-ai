@@ -1,6 +1,15 @@
 # Release Gates
 
-**Current renderer repair is locally verified; changed-source CI and release remain gated.**
+**Current direct Windows launcher is locally verified; native CI and release remain gated.**
+Run 40680073899 on fb72c81 passes Ubuntu/images and both native 448/413/171 tests plus
+assertion/cleanup. Windows still fails during CLI preparation, before diagram zero; its
+later audit does not run. The owned Windows child now directly launches Node with npm's
+adjacent script instead of `npx.cmd`, with no batch fallback and unchanged Linux behavior.
+Twenty focused contracts and fresh-cache preparation/all 28 offline renders pass locally.
+The hosted cause is not certified, no gate is waived, and all sandbox/budget protections
+remain unchanged. Current changed-source native verification is pending.
+
+**Earlier renderer repair checkpoint.**
 At the user's explicit request, timeout diagnosis is reopened. Pinned CLI preparation runs
 once; every actual render is offline, version-checked and bounded by the unchanged 300-second
 cap. Sixteen focused renderer contracts and all 28 real local diagrams pass. Safe stage/index
@@ -10,8 +19,8 @@ identity, infrastructure, browser sandbox, CI-job budget or live/release authori
 
 Cold-cache testing reproduces package preparation consuming 300 seconds before Mermaid
 starts. A 30-second owned npm fetch timeout with zero retries now bounds that inner work;
-fresh-cache preparation and all 28 offline diagrams pass. Hosted status is unavailable due
-to GitHub API rate limiting, so current native/image success remains unclaimed.
+fresh-cache preparation and all 28 offline diagrams pass. At that checkpoint hosted status
+was unavailable due to GitHub API rate limiting; the later scoped outcome is recorded above.
 
 **Earlier required Windows documentation failure.** Observed
 [run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195) on 2239345
@@ -91,7 +100,8 @@ or live qualification. Source publication does not waive failed or missing relea
 flowchart TD
     Local[Full runtime, management and tools regression] --> Counts[Nonempty JUnit counts and real exit status]
     Counts --> Passed[Current local regression passes]
-    Passed --> Prepare[Pinned Mermaid preparation and version check]
+    Passed --> Launcher[Direct Node on Windows, native npx on Linux]
+    Launcher --> Prepare[Pinned Mermaid preparation and version check]
     Prepare --> Diagrams[Offline rendering with unchanged sandbox and deadlines]
     Diagrams --> Verified[Every diagram has valid nonempty SVG]
     External[Qualified provider, environment, monitoring and live evidence missing] --> Blocked[Release blocked]

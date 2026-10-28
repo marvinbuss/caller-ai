@@ -1,7 +1,6 @@
 """Validate local Markdown links and actually render every Mermaid diagram."""
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -15,6 +14,22 @@ import psutil
 from ci import ROOT, build_failure_category, environment
 from markdown_it import MarkdownIt
 from smoke import stop
+
+
+def renderer_launcher() -> list[str]:
+    windows = sys.platform == "win32"
+    launcher = shutil.which("npx.cmd" if windows else "npx")
+    if not launcher:
+        raise RuntimeError("node_npx_required_for_mermaid_validation")
+    if not windows:
+        return [launcher]
+    node = shutil.which("node.exe")
+    if not node:
+        raise RuntimeError("node_npx_required_for_mermaid_validation")
+    script = Path(launcher).parent / "node_modules/npm/bin/npx-cli.js"
+    if not script.is_file():
+        raise RuntimeError("node_npx_script_unavailable")
+    return [node, str(script)]
 
 
 def renderer_browser(prepared: str, values: dict[str, str]) -> tuple[str, str]:
@@ -123,9 +138,7 @@ def main() -> None:
     diagrams = validate_documents(paths, ROOT)
     if not diagrams:
         raise RuntimeError("no_architecture_diagrams_found")
-    launcher = shutil.which("npx.cmd" if os.name == "nt" else "npx")
-    if not launcher:
-        raise RuntimeError("node_npx_required_for_mermaid_validation")
+    launcher = renderer_launcher()
     values = environment()
     values["PUPPETEER_SKIP_DOWNLOAD"] = "true"
     values["NPM_CONFIG_FETCH_TIMEOUT"] = "30000"
@@ -157,7 +170,6 @@ def main() -> None:
     output = ROOT / "code/tools/test-results/diagrams"
     output.mkdir(parents=True, exist_ok=True)
     renderer = [
-        launcher,
         "--yes",
         "--registry",
         values["NPM_CONFIG_REGISTRY"],
@@ -168,7 +180,7 @@ def main() -> None:
     ]
     preparation_log = output / "renderer-prepare.log"
     print(json.dumps({"event": "diagram_renderer_prepare_started"}), flush=True)
-    run_renderer([*renderer, "--version"], values, preparation_log)
+    run_renderer([*launcher, *renderer, "--version"], values, preparation_log)
     with preparation_log.open("rb") as diagnostic:
         prepared_version = diagnostic.read(65536).decode("utf-8", errors="replace")
     if not re.search(r"(?m)^12\.0\.0\r?$", prepared_version):
@@ -187,9 +199,9 @@ def main() -> None:
             )
             run_renderer(
                 [
-                    renderer[0],
+                    *launcher,
                     "--offline",
-                    *renderer[1:],
+                    *renderer,
                     "-i",
                     str(diagram),
                     "-o",

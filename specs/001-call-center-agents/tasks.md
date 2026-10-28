@@ -935,6 +935,22 @@ The original hosted cause is not certified; GitHub API rate limiting blocks repa
 render/preparation/browser/job/application budgets and sandbox protections remain unchanged.
 All sixteen task markers remain open (113/129).
 
+**Direct Windows renderer launcher follow-up (2026-10-28)**: actual run 40680073899 on
+`fb72c8195025e69c8bbd762f29d44752af848b86` passes Ubuntu/images and 448 runtime/413
+management/171 tools plus assertion/cleanup on both native platforms. Windows emits only
+preparation-started then `diagram_renderer_timeout:launcher_or_package`, with no diagram
+started and later audit not run. Ubuntu completes CLI 12.0.0/all 28 diagrams/audits; actual
+image smoke and three-image audits pass. The npm fetch bounds did not fix that hosted
+failure. The owned Windows launch now bypasses `npx.cmd` by directly running Node with the
+adjacent npm script; missing components fail closed, Linux remains unchanged and argument
+ordering preserves offline flags after the full launcher prefix. Four red-first contracts
+and all 20 focused renderer cases pass; real fresh-cache preparation/all 28 offline renders
+pass with temporary cache removed. This verifies the launch change, not the old hosted
+cause. Native verification is pending; all budgets, sandbox, app/dependency/infra/workflow
+scope and sixteen open markers remain unchanged (113/129). No live permission is granted.
+Final local validation passes all eight repository/type/Terraform/secret/publication gates,
+all 175 tooling cases and all 33 documents/28 actual direct-launch diagram renders.
+
 - [ ] T120 [US1] CRITICAL F1: Implement the qualified provider adapter in `code/backend/src/caller_runtime/adapters/telephony.py` after explicit supported-scenario approval, reusing `api/provider_webhooks.py` and `api/media.py` contracts; pin and test real callback/media authentication, codec/framing, answer, bidirectional send, playback clear and acknowledged hangup, preserving the no-network fake and disabled default/live admission until T099. Stop rather than invent unsupported wire operations per FR-001, FR-004, FR-012, US1/AC1-4, plan: qualified telephony, and existing T035/T042 (missing).
 - [ ] T121 [US1] CRITICAL F2: Implement an explicitly gated runtime composition in `code/backend/src/caller_runtime/main.py` and `settings.py`, plus concrete `AgentPort`/`AudioPort` integration across `adapters/agents_sdk.py`, `api/media.py`, `domain/call_lifecycle.py` and `services/configuration_activation.py`; connect approved provider media to fresh Azure realtime SDK sessions, pinned revisions, current-authority tools, owner/epoch fencing, independent bounded read/model/write work, interruption, Goodbye, terminal cleanup and safe audit. Test the composed boundary with controlled transports, including interruption while model work is pending and no post-terminal output; retain credential-free defaults and reject unqualified live composition per FR-001, FR-002, FR-004, FR-009-FR-012, FR-018-FR-024, US1/AC1-5, plan: runtime orchestration, and existing T038-T044/T085-T086/T108 (missing).
 - [ ] T122 [US2] CRITICAL F3: Add a guarded non-test management composition in `code/management/management_app/management_app.py` and `settings.py` that reuses `adapters/entra_oidc.py`, `security.py`, management-owned Cosmos repositories, bootstrap/audit services, authenticated configuration/runtime/capability routers and `EditorServices`; supply approved credential-reference resolution and public read-only transports without constructing clients in default local mode or allowing an environment flag to bypass qualification. Test authenticated HTTP and Reflex editing, denied access, conflict preservation, complete publication and runtime contract consumption through the composed app; qualify actual restart durability separately per FR-003, FR-013-FR-017, FR-019-FR-025, FR-033-FR-034, US2/AC1-7, plan: management ownership/identity, and existing T054-T058/T062/T081-T084/T106/T109 (missing).

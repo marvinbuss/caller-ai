@@ -2,7 +2,16 @@
 
 ## Status
 
-**Current renderer launch-path repair is locally verified; changed-source CI is pending.**
+**Current direct Windows launcher is locally verified; changed-source CI is pending.**
+Run 40680073899 on fb72c81 passes Ubuntu/images, but Windows times out during CLI preparation
+before any diagram starts. Both native platforms pass 448 runtime/413 management/171 tools
+cases and assertion/cleanup. Node now directly runs npm's adjacent `npx-cli.js` on Windows,
+avoiding the owned `.cmd` boundary; Linux is unchanged. Twenty focused contracts and a real
+fresh-cache preparation/all 28 offline renders pass. The original hosted cause remains
+uncertified; the failed gate is not waived. All budgets/sandbox protections remain unchanged.
+Completion stays 113/129 with T123 and all live/release obligations open. See [US6 evidence](us6.md).
+
+**Earlier renderer launch-path repair.**
 The user explicitly reopened timeout diagnosis. One exact-version Mermaid preparation now
 precedes offline-only rendering; bounded stage/index diagnostics retain process cleanup,
 sandboxing and all existing limits. Sixteen focused contracts and all 28 real local diagram
@@ -13,7 +22,8 @@ than proving a root fix. Application behavior is unchanged; 113/129 tasks remain
 A cold npm cache then reproduces a 300-second package-preparation stall before Mermaid
 starts. Owned npm fetches now use a 30-second timeout with zero retries; a second fresh-cache
 preparation and all 28 offline renders pass. The original hosted cause remains uncertified.
-GitHub API rate limiting prevents reading the repair run; no hosted success is claimed.
+At that checkpoint GitHub API rate limiting prevented reading the repair run; no hosted
+success was claimed. The later scoped result and current follow-up are recorded above.
 
 **Earlier required Windows documentation failure.** Observed
 [run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195) on 2239345

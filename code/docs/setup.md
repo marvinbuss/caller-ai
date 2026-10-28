@@ -287,6 +287,12 @@ categories remain failed gates, not permission to retry indefinitely or weaken a
 The renderer prepares pinned Mermaid CLI 12.0.0 once and verifies its reported version before
 rendering. Only that explicit preparation may resolve packages through the approved registry;
 every diagram runs with npm `--offline`, so registry access cannot consume its render deadline.
+On Windows the owned child starts `node.exe` with npm's adjacent `npx-cli.js` as a separate
+argument instead of implicitly executing `npx.cmd` through a command interpreter. Both Node
+and that script must exist; missing components fail without a batch fallback. Linux retains
+its native `npx` launcher. Offline flags follow the complete executable/script prefix, and
+installation paths containing spaces remain individual arguments. This removes the owned
+batch-launch boundary but does not certify the historical stall's root cause.
 Preparation and each render retain the existing 300-second child-process cap; the CI job cap,
 30-second Windows/10-second Linux browser probes and application limits are unchanged.
 Owned npm requests have a 30-second fetch timeout and zero retries, so default package-fetch

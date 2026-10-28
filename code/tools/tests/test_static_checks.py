@@ -815,6 +815,51 @@ def test_diagram_renderer_timeout_cleans_owned_process(
     assert stopped == [process]
 
 
+@pytest.mark.parametrize(
+    "platform,node_available,script_available,error",
+    [
+        ("win32", True, True, None),
+        ("win32", False, True, "node_npx_required_for_mermaid_validation"),
+        ("win32", True, False, "node_npx_script_unavailable"),
+        ("linux", True, False, None),
+    ],
+)
+def test_renderer_launcher_bypasses_windows_batch_wrapper(
+    tmp_path: Path, monkeypatch, platform, node_available, script_available, error
+) -> None:
+    import importlib.util
+
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    specification = importlib.util.spec_from_file_location(
+        "caller_docs", SCRIPTS / "verify_docs.py"
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    installation = tmp_path / "Node installation with spaces"
+    installation.mkdir()
+    wrapper = installation / "npx.cmd"
+    node = installation / "node.exe"
+    script = installation / "node_modules/npm/bin/npx-cli.js"
+    if script_available:
+        script.parent.mkdir(parents=True)
+        script.touch()
+    monkeypatch.setattr(module.sys, "platform", platform)
+    commands = {
+        "npx.cmd": str(wrapper),
+        "node.exe": str(node) if node_available else None,
+        "npx": "/usr/bin/npx",
+    }
+    monkeypatch.setattr(module.shutil, "which", commands.get)
+    if error:
+        with pytest.raises(RuntimeError, match=error):
+            module.renderer_launcher()
+    else:
+        selected = module.renderer_launcher()
+        assert selected == ([str(node), str(script)] if platform == "win32" else ["/usr/bin/npx"])
+        assert not any(argument.endswith(".cmd") for argument in selected)
+
+
 @pytest.mark.parametrize("reported", ["12.0.0", "12.0.1", ""])
 def test_diagram_rendering_prepares_once_then_forbids_package_network(
     tmp_path: Path, monkeypatch, reported
@@ -835,7 +880,7 @@ def test_diagram_rendering_prepares_once_then_forbids_package_network(
     monkeypatch.setattr(
         module, "environment", lambda: {"NPM_CONFIG_REGISTRY": "https://registry.example.invalid/"}
     )
-    monkeypatch.setattr(module.shutil, "which", lambda command: "npx")
+    monkeypatch.setattr(module, "renderer_launcher", lambda: ["test-node", "test-npx.js"])
     monkeypatch.setattr(
         module.subprocess,
         "run",
@@ -854,6 +899,7 @@ def test_diagram_rendering_prepares_once_then_forbids_package_network(
 
     def execute(arguments, values, log):
         commands.append(arguments)
+        assert arguments[:2] == ["test-node", "test-npx.js"]
         if arguments[-1] == "--version":
             assert "--offline" not in arguments
             assert values["NPM_CONFIG_FETCH_TIMEOUT"] == "30000"
