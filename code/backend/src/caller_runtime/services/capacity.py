@@ -1,4 +1,4 @@
-"""Explicit local admission controller; not a distributed quota or socket migration service."""
+"""Shared-authority admission and conservative recovery; never socket migration."""
 
 from __future__ import annotations
 
@@ -12,7 +12,12 @@ from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from caller_runtime.adapters.session_repository import metadata_model
-from caller_runtime.domain.session import CallSession, CapacityRecoveryBinding, LifecycleState
+from caller_runtime.domain.session import (
+    CallSession,
+    CapacityRecoveryBinding,
+    LifecycleState,
+    PhysicalConnectionClaim,
+)
 from caller_runtime.domain.visibility import CommunityVisibility
 from caller_runtime.metrics import RuntimeMetrics
 
@@ -71,6 +76,33 @@ class SharedCapacityRepository(CapacityRepository, Protocol):
 
     async def set_model_capacity_quota(self, quota: int) -> None: ...
 
+    async def connection_claims(self, owner_id: str) -> tuple[PhysicalConnectionClaim, ...]: ...
+
+    async def close_connection_claim(self, claim: PhysicalConnectionClaim) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupObservation:
+    binding: CapacityRecoveryBinding | PhysicalConnectionClaim
+    outcome: Literal["closed", "open", "unknown"]
+    observed_at: datetime
+
+
+class CleanupObserver(Protocol):
+    async def observe(
+        self,
+        binding: CapacityRecoveryBinding | PhysicalConnectionClaim,
+        session: CallSession,
+        *,
+        deadline: float,
+    ) -> CleanupObservation: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryResult:
+    confirmed: int
+    pending: int
+
 
 @dataclass(frozen=True, slots=True)
 class AdmissionResult:
@@ -85,7 +117,7 @@ class OwnerCapacity:
 
 
 class CapacityService:
-    """Repository-authorized local reservations; persistent live authority remains gated."""
+    """Shared repository reservations and observation-gated recovery; live startup is separate."""
 
     def __init__(
         self,
@@ -286,6 +318,93 @@ class CapacityService:
                 ) != len(snapshot):
                     raise RuntimeError("invalid_capacity_recovery_snapshot")
                 return snapshot
+
+    async def recover_owner(self, owner_id: str, *, observer: CleanupObserver) -> RecoveryResult:
+        """One trusted observation/reconciliation pass; never infer or recreate physical work."""
+        confirmed = pending = 0
+        started = self._utc_now()
+        if (
+            not isinstance(started, datetime)
+            or started.tzinfo is None
+            or started.utcoffset() != timedelta(0)
+        ):
+            raise RuntimeError("capacity_clock_unavailable")
+        deadline = asyncio.get_running_loop().time() + self._budget
+        async with asyncio.timeout_at(deadline):
+            bindings = await self.recovery_bindings(owner_id)
+            connections = await self._repository.connection_claims(owner_id)
+            if (
+                not isinstance(connections, tuple)
+                or len(connections) > 10000
+                or any(
+                    not isinstance(claim, PhysicalConnectionClaim)
+                    or claim.physical_owner_id != owner_id
+                    for claim in connections
+                )
+            ):
+                raise RuntimeError("invalid_connection_recovery_snapshot")
+            work: tuple[PhysicalConnectionClaim | CapacityRecoveryBinding, ...] = (
+                *[claim for claim in connections if not claim.closed],
+                *bindings,
+            )
+            for binding in work:
+                try:
+                    current = await self._recovery_session(
+                        binding.session_id,
+                        physical_owner_id=owner_id,
+                        connection_epoch=binding.connection_epoch,
+                    )
+                    if (
+                        isinstance(binding, CapacityRecoveryBinding)
+                        and binding.model_reservation is None
+                    ):
+                        if any(
+                            not claim.closed and claim.session_id == binding.session_id
+                            for claim in await self._repository.connection_claims(owner_id)
+                        ):
+                            pending += 1
+                            continue
+                    observation = await observer.observe(binding, current, deadline=deadline)
+                    now = self._utc_now()
+                    if (
+                        not isinstance(observation, CleanupObservation)
+                        or observation.binding != binding
+                        or observation.outcome != "closed"
+                        or not isinstance(observation.observed_at, datetime)
+                        or observation.observed_at.tzinfo is None
+                        or observation.observed_at.utcoffset() != timedelta(0)
+                        or now.tzinfo is None
+                        or now.utcoffset() != timedelta(0)
+                        or not started <= observation.observed_at <= now
+                    ):
+                        pending += 1
+                        continue
+                    if isinstance(binding, PhysicalConnectionClaim):
+                        await self._repository.close_connection_claim(binding)
+                    elif binding.model_reservation is not None:
+                        await self.reconcile_disposed_model(
+                            binding.model_reservation,
+                            session_id=binding.session_id,
+                            physical_owner_id=owner_id,
+                            connection_epoch=binding.connection_epoch,
+                        )
+                    else:
+                        if current.state != LifecycleState.ENDED:
+                            ended = current.transition(
+                                LifecycleState.ENDED, at=now, terminal_reason="owner_lost"
+                            )
+                            await self._repository.replace(
+                                binding.session_id, ended.model_dump(by_alias=True)
+                            )
+                        await self.reconcile_closed_session(
+                            binding.session_id,
+                            physical_owner_id=owner_id,
+                            connection_epoch=binding.connection_epoch,
+                        )
+                    confirmed += 1
+                except Exception:
+                    pending += 1
+        return RecoveryResult(confirmed, pending)
 
     async def _recovery_session(
         self, session_id: str, *, physical_owner_id: str, connection_epoch: int

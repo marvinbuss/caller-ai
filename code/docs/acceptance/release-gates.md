@@ -1,6 +1,14 @@
 # Release Gates
 
-**Current recovery discovery is locally verified; native/image CI and release remain gated.**
+**T123 implementation complete; native/image verification and release remain gated.** Shared
+admission/model quota, physical-owner claims and conservative observer-gated recovery now
+satisfy T123's engineering contract tests, including independent process contention. All
+512 backend tests, strict runtime types, eight repository gates and 175 tooling tests pass.
+Completion is 114/129; the other fifteen open markers and live/environment/production rollout
+obligations are unchanged. Changed-source CI is pending. This is not actual Cosmos/provider
+qualification, a live capacity measurement or release permission. See [T123 evidence](us6.md).
+
+**Earlier recovery discovery checkpoint.**
 All 15 new owner-scoped read-only snapshot contracts, the complete 490-case backend and
 strict typing pass. Known cleanup bindings are exposed as immutable bounded metadata, never
 installed as active ownership or treated as physical closure proof. Missing metadata and

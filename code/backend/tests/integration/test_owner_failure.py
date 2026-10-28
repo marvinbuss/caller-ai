@@ -97,6 +97,32 @@ async def owner_router(repository):
     return OwnerRouting(repository=repository, operation_budget=0.1)
 
 
+async def test_independent_routers_cannot_attach_the_same_physical_session_twice(
+    owner_metadata, owned_connection
+):
+    repository = LocalSessionRepository()
+    assert await repository.create(owner_metadata)
+    first, second = await owner_router(repository), await owner_router(repository)
+    results = await asyncio.gather(
+        first.attach(
+            owner_metadata["sessionId"],
+            physical_owner_id="owner-one",
+            connection_epoch=1,
+            connection=owned_connection,
+        ),
+        second.attach(
+            owner_metadata["sessionId"],
+            physical_owner_id="owner-one",
+            connection_epoch=1,
+            connection=owned_connection,
+        ),
+        return_exceptions=True,
+    )
+    assert sum(result is None for result in results) == 1
+    assert sum(isinstance(result, PermissionError) for result in results) == 1
+    assert await second.has_connections("owner-one")
+
+
 @pytest.mark.parametrize("failure", ["lease-lost", "processing-failed"])
 async def test_lost_owner_becomes_terminal_within_original_budget(
     owner_metadata, owned_connection, failure

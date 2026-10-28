@@ -1,6 +1,45 @@
 # US6 Local Scaling Acceptance
 
-## Current Read-Only Recovery Discovery: 2026-10-28
+## T123 Complete: 2026-10-28
+
+T123's shared-authority, physical-owner fencing and conservative recovery implementation is
+complete under controlled/injected ports. The final increment fixes two red-first gaps:
+independent routers could both attach the same durable session, and no observation-gated
+pass reconciled retained physical/call/model work after controller reconstruction.
+
+| T123 requirement | Implemented behavior and executed evidence |
+|------------------|-------------------------------------------|
+| Shared call and overlapping-model limits | Strong-read/ETag conditional authority, fixed per-owner/aggregate limits and current quota; two spawned OS processes contend for call/model slots and exactly one obtains the last slot |
+| Duplicate admission and physical ownership | Conditional session creation plus shared exact owner/epoch/opaque connection claims; independent local/Cosmos routers cannot attach twice |
+| Stale leases and output fencing | Each output checks session/agent/connection epochs, nonterminal lease and current shared claim; expired/missing/unavailable/changed authority produces no output |
+| Drain across reconstruction | Shared open connection claims remain occupied even after terminal metadata and call-reservation release; acknowledged closure is required before retirement |
+| Conservative restart recovery | Known bindings are rediscovered without socket adoption; one injected trusted observer pass handles physical, baseline and overlap work under the original deadline |
+| Release only after verification | Exact binding and fresh UTC closed observation required; open/unknown/foreign/stale/future/naive/error observations retain unconfirmed work, and an open connection blocks baseline release |
+| Uncertainty and authority loss | Lost/canceled attachment claims cannot be reassigned, missing authority never resets, release acknowledgment is idempotently reconciled, and legacy authority schema fails closed |
+| Original budget and no socket migration | One at-most-ten-second recovery deadline, cancellation propagation, no lease revival or socket reattachment; blocked-observer and existing owner/drain contracts pass |
+
+The final increment adds 22 cases, including real spawned-process contention against one
+authenticated loopback test CAS authority. The complete backend passes **512 cases** with
+zero failures/errors/skips and only the expected blocked-egress warning. Strict runtime
+typing passes all 33 sources; all eight repository/type/Terraform/secret/publication gates
+and **175 tooling cases** pass. Earlier red/green quota, lease, discovery and reconciliation
+evidence below remains part of the task's regression coverage.
+All 33 documents/28 diagram sources validate; the completed shared-ownership/recovery
+sequence actually renders through the unchanged sandboxed direct-Node/offline SVG checks.
+
+The stable authority item ID remains `runtime-capacity-authority-v1`, but its document schema
+is now **2**, including bounded physical connection claims. Schema 1/missing connection state
+is rejected, never initialized away; existing unqualified state needs separately reviewed
+migration/inventory, not a reset. No new container, identity/client, default route, dependency,
+workflow, infrastructure, browser setting or existing operation budget is added or changed.
+
+This completion does not qualify real Cosmos consistency/RU/clock behavior, a real provider
+observer, deployment or live capacity/latency. Those remain T099/T118/T129 and relevant
+production composition/rollout obligations. Changed-source native/image CI is pending; local
+tests are not presented as hosted/live evidence. Completion is **114/129**, with all other
+fifteen pending tasks unchanged and SC-008 still deferred.
+
+## Earlier Read-Only Recovery Discovery: 2026-10-28
 
 A red-first restart case exposes the missing path for discovering persisted cleanup bindings
 when controller-local maps/tokens are lost. `CapacityService.recovery_bindings` now returns
@@ -469,7 +508,8 @@ sequenceDiagram
     participant Authority as Injected Cosmos capacity partition
     participant Model as Explicit model adapter
     participant Operator as Authorized local drain caller
-    participant Recovery as Trusted cleanup caller
+    participant Recovery as Injected trusted cleanup observer
+    participant Owner as Physical-owner router
     Operator->>Capacity: Register owner with fixed lease period
     Capacity->>Store: Register once using authority UTC clock
     Admission->>Capacity: Opaque session and provider references
@@ -493,6 +533,11 @@ sequenceDiagram
         Store-->>Capacity: Bounded denial without session creation
         Capacity-->>Admission: Duplicate or unavailable
     end
+    opt Confirmed admitted session attaches
+        Owner->>Store: Atomically claim exact session, owner, epoch and opaque claim ID
+        Store-->>Owner: First exact claim or bounded denial
+        Note over Owner,Store: Fresh lease and shared claim checked before every output
+    end
     Model->>Capacity: Reserve transient receiver model slot
     Capacity->>Store: Atomically reserve owner-bound overlap token
     Capacity-->>Model: Token or quota unavailable
@@ -510,25 +555,24 @@ sequenceDiagram
     Capacity->>Store: Commit shared draining phase
     Note over Admission,Store: Later new call reservations are denied
     Operator->>Capacity: Complete drain
-    Capacity->>Store: Check all shared call and model reservations
-    alt Reservation or model disposal remains unresolved
+    Capacity->>Store: Check all call, model and open connection claims
+    alt Reservation, model or physical closure remains unresolved
         Store-->>Capacity: Postponed, keep draining
     else No shared reservations remain
         Store-->>Capacity: Commit drained
     end
     opt Controller reconstructed with registered owner
-        Recovery->>Capacity: Read retained owner-scoped bindings
-        Capacity->>Store: One authority read or local locked snapshot
-        Store-->>Recovery: Immutable cleanup metadata, no ownership grant
-        Recovery->>Recovery: Independently verify call closure or exact model disposal
-        Recovery->>Capacity: Original session, owner, connection epoch and token
-        Capacity->>Store: Verify durable binding and terminal call metadata
-        alt Binding and required terminal state match
-            Capacity->>Store: Idempotent matching capacity release
+        Operator->>Capacity: recover_owner with explicit observer and original deadline
+        Capacity->>Store: Read retained owner-scoped bindings and connection claims
+        Store-->>Capacity: Immutable metadata, no socket ownership grant
+        Capacity->>Recovery: Observe exact binding and current session metadata
+        Recovery-->>Capacity: Fresh bound closed, open or unknown outcome
+        alt Closed observation and all required connection closure checks match
+            Capacity->>Store: Close claim or conditionally terminate and release matching work
             Store-->>Capacity: Confirm conditional release
-            Capacity-->>Recovery: Reconciled without acquiring socket ownership
-        else Unknown authority or mismatched binding
-            Capacity-->>Recovery: Bounded failure, retain conservative bookkeeping
+            Capacity-->>Operator: Confirmed count without acquiring socket ownership
+        else Unknown authority, open outcome or invalid observation
+            Capacity-->>Operator: Pending count, retain unconfirmed work
         end
     end
 ```

@@ -24,6 +24,7 @@ from caller_runtime.domain.session import (
     CapacityRecoveryBinding,
     LifecycleState,
     OpaqueId,
+    PhysicalConnectionClaim,
 )
 
 AUTHORITY_ID: Final = "runtime-capacity-authority-v1"
@@ -70,7 +71,7 @@ class CapacityAuthority(CapacityMetadata):
     session_id: Literal["runtime-capacity-authority-v1"] = Field(
         default=AUTHORITY_ID, alias="sessionId"
     )
-    schema_version: int = Field(default=1, strict=True, ge=1, le=1)
+    schema_version: int = Field(default=2, strict=True, ge=2, le=2)
     ttl: int = Field(default=-1, strict=True, ge=-1, le=-1)
     maximum_sessions: CapacityLimit
     sessions_per_owner: CapacityLimit
@@ -79,6 +80,9 @@ class CapacityAuthority(CapacityMetadata):
     owners: dict[OwnerId, CapacityOwner] = Field(default_factory=dict, max_length=1024)
     calls: dict[OpaqueId, CapacityCall] = Field(default_factory=dict, max_length=10000)
     models: dict[ModelToken, CapacityModel] = Field(default_factory=dict, max_length=10000)
+    connections: dict[OpaqueId, PhysicalConnectionClaim] = Field(
+        default_factory=dict, max_length=10000
+    )
 
 
 class CosmosCapacityRepository(CosmosSessionRepository):
@@ -153,6 +157,18 @@ class CosmosCapacityRepository(CosmosSessionRepository):
                     or call.connection_epoch != model.connection_epoch
                 ):
                     raise ValueError("invalid_model_capacity_binding")
+            for session_id, claim in authority.connections.items():
+                if (
+                    claim.session_id != session_id
+                    or claim.physical_owner_id not in authority.owners
+                ):
+                    raise ValueError("invalid_physical_connection_binding")
+                call = authority.calls.get(session_id)
+                if call is not None and (
+                    call.owner_id != claim.physical_owner_id
+                    or call.connection_epoch != claim.connection_epoch
+                ):
+                    raise ValueError("invalid_physical_connection_binding")
             return authority, etag
         except (ValueError, TypeError):
             raise RuntimeError("capacity_store_response_invalid") from None
@@ -385,6 +401,85 @@ class CosmosCapacityRepository(CosmosSessionRepository):
             authority, _etag, _instant = await self._read_authority()
             return self._owner(authority, owner_id).state
 
+    async def claim_connection(self, claim: PhysicalConnectionClaim) -> bool:
+        async def reserve(authority: CapacityAuthority, instant: datetime) -> bool:
+            if claim.closed or claim.session_id not in authority.calls:
+                return False
+            document = await super(CosmosCapacityRepository, self).read(claim.session_id)
+            if document is None:
+                return False
+            current = metadata_model(document)
+            call = self._binding(authority, current)
+            owner = self._owner(authority, call.owner_id)
+            completed = self._instant()
+            if (
+                completed < instant
+                or current.state == LifecycleState.ENDED
+                or call.owner_id != claim.physical_owner_id
+                or call.connection_epoch != claim.connection_epoch
+                or owner.state == "drained"
+                or min(owner.lease_until, call.lease_until) <= completed
+            ):
+                return False
+            existing = authority.connections.get(claim.session_id)
+            if existing is not None:
+                return existing == claim and not existing.closed
+            if len(authority.connections) >= 10000:
+                raise RuntimeError("connection_registry_full")
+            authority.connections[claim.session_id] = claim
+            return True
+
+        return await self._change(reserve)
+
+    async def connection_claims(self, owner_id: str) -> tuple[PhysicalConnectionClaim, ...]:
+        async with asyncio.timeout(self._operation_budget):
+            authority, _etag, _instant = await self._read_authority()
+            self._owner(authority, owner_id)
+            return tuple(
+                claim.model_copy()
+                for claim in authority.connections.values()
+                if claim.physical_owner_id == owner_id
+            )
+
+    async def connection_claim_current(self, claim: PhysicalConnectionClaim) -> bool:
+        async with asyncio.timeout(self._operation_budget):
+            authority, _etag, instant = await self._read_authority()
+            owner = self._owner(authority, claim.physical_owner_id)
+            call = authority.calls.get(claim.session_id)
+            return (
+                not claim.closed
+                and authority.connections.get(claim.session_id) == claim
+                and call is not None
+                and min(owner.lease_until, call.lease_until) > instant
+            )
+
+    async def close_connection_claim(self, claim: PhysicalConnectionClaim) -> None:
+        async def close(authority: CapacityAuthority, instant: datetime) -> None:
+            existing = authority.connections.get(claim.session_id)
+            if existing is None:
+                return
+            if existing.model_copy(update={"closed": False}) != claim.model_copy(
+                update={"closed": False}
+            ):
+                raise SessionConflict("physical_connection_not_owned")
+            document = await super(CosmosCapacityRepository, self).read(claim.session_id)
+            if document is None:
+                raise RuntimeError("session_authority_unknown")
+            current = metadata_model(document)
+            if (
+                current.physical_owner_id != claim.physical_owner_id
+                or current.connection_epoch != claim.connection_epoch
+            ):
+                raise SessionConflict("physical_connection_not_owned")
+            if current.state == LifecycleState.ENDED:
+                del authority.connections[claim.session_id]
+            else:
+                authority.connections[claim.session_id] = existing.model_copy(
+                    update={"closed": True}
+                )
+
+        await self._change(close)
+
     async def capacity_recovery_bindings(
         self, owner_id: str
     ) -> tuple[CapacityRecoveryBinding, ...]:
@@ -433,8 +528,13 @@ class CosmosCapacityRepository(CosmosSessionRepository):
             owner = self._owner(authority, owner_id)
             if owner.state == "serving":
                 raise PermissionError("drain_not_started")
-            if any(call.owner_id == owner_id for call in authority.calls.values()) or any(
-                model.owner_id == owner_id for model in authority.models.values()
+            if (
+                any(call.owner_id == owner_id for call in authority.calls.values())
+                or any(model.owner_id == owner_id for model in authority.models.values())
+                or any(
+                    claim.physical_owner_id == owner_id and not claim.closed
+                    for claim in authority.connections.values()
+                )
             ):
                 return "postponed"
             owner.state = "drained"
@@ -522,6 +622,9 @@ class CosmosCapacityRepository(CosmosSessionRepository):
             if current.state != LifecycleState.ENDED or call.owner_id != physical_owner_id:
                 raise SessionConflict("capacity_closure_not_confirmed")
             del authority.calls[session_id]
+            claim = authority.connections.get(session_id)
+            if claim is not None and claim.closed:
+                del authority.connections[session_id]
 
         await self._change(release)
 

@@ -113,6 +113,18 @@ class CallSession(BaseModel):
         return type(self).model_validate(values)
 
 
+class PhysicalConnectionClaim(BaseModel):
+    """Durable physical-binding metadata, never a socket or caller content."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    session_id: OpaqueId
+    physical_owner_id: OpaqueId
+    connection_epoch: int = Field(strict=True, ge=1)
+    claim_id: Annotated[str, Field(strict=True, pattern=r"^[a-f0-9]{32}$")]
+    closed: bool = Field(default=False, strict=True)
+
+
 class CapacityRecoveryBinding(BaseModel):
     """Immutable cleanup metadata; not physical ownership or proof of disposal."""
 

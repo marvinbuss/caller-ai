@@ -102,6 +102,35 @@ release; this adapter supplies no connection reattachment or automatic uncertain
 
 ### Trusted Cleanup After Reconstruction
 
+T123's shared admission/physical-owner/recovery engineering is complete; real environment,
+provider observation, live performance and protected rollout qualification remain separate.
+See the requirement-by-requirement [T123 completion evidence](../acceptance/us6.md).
+
+The stable authority item now requires document schema 2 with shared connection claims.
+Schema 1 or absent connection state fails closed. Never delete/reset old authority or infer
+zero physical work from a legacy document; reviewed inventory/migration and deployment remain
+separate authorized operations. No migration, cloud client or production activation occurs here.
+
+Use the shared `OwnerRouting` repository contract, not `CosmosSessionRepository` alone. Exact
+session/owner/epoch/opaque claims prevent duplicate attachment across routers. Shared open
+claims postpone drain even after terminal metadata/call-budget release. Output requires a
+fresh claim and lease; uncertain attachment remains fenced/occupied rather than reassigned.
+
+`recover_owner(owner_id, observer=...)` is the composed recovery entry point. Register the
+original owner without extending its lease, then inject a trusted qualified observer. One
+pass reads retained bindings and connection claims and gives each observation the original
+at-most-ten-second deadline. A closed observation must echo the exact binding and contain a
+UTC time between pass start and the current clock. Physical claims are reconciled first;
+baseline work cannot be released while its connection is open. Only after confirmed physical/
+baseline closure may the pass conditionally mark terminal and release the original charge.
+Exact transient-model disposal may be reconciled independently. Invalid, stale, future,
+foreign, open, unknown or failed observations remain pending; cancellation propagates.
+
+The observer is an injected trust boundary, not a self-submitted boolean or release credential.
+No default provider implementation is enabled. Missing metadata stays pending, uncertain
+releases are idempotently reconciled, and no socket/lease is adopted. A recovery report counts
+confirmed/pending metadata work, not measured live calls or qualified real-world durability.
+
 `CapacityService.recovery_bindings(owner_id)` lets a trusted caller inspect one registered
 owner's retained charges after controller restart loses local maps or tokens. It returns an
 immutable tuple of `CapacityRecoveryBinding` values with session ID, physical owner, connection
@@ -137,12 +166,13 @@ a socket. Ordinary cache-based release methods keep their conservative existing 
 No automatic scan, physical-work discovery, synthesized missing session, forced reclaim or
 provider/cluster client is added. Owner-scoped metadata discovery has 15 new offline cases;
 the earlier explicit cleanup methods have 27. Real outcome verification and production
-recovery wiring still need separate implementation/qualification; neither checkpoint
-completes T123 or authorizes operating a live environment.
+recovery wiring still need separate production implementation/qualification; those earlier
+checkpoints alone did not complete T123 or authorize operating a live environment.
 
-These are 34 offline storage-contract cases, not real Cosmos/process-crash evidence. T123
-remains partial until physical coordination/reconciliation and relevant live qualification
-are complete. No new cloud access, provider choice, deployment, route or call is enabled.
+Those earlier 34 storage-contract cases were not real Cosmos/process-crash evidence. Current
+T123 completion adds shared connection fencing, observation-gated recovery and independent-
+process contention tests; actual live qualification remains pending. No new cloud access,
+provider choice, deployment, route or call is enabled.
 
 Observed run 40669135195 on 2239345 subsequently verifies 448 runtime/413 management/165
 tooling passes and assertion/cleanup on Windows and Ubuntu, with Ubuntu diagrams/audits and

@@ -18,6 +18,7 @@ from caller_runtime.domain.session import (
     CallSession,
     CapacityRecoveryBinding,
     LifecycleState,
+    PhysicalConnectionClaim,
 )
 
 BatchOperation = tuple[str, tuple[Any, ...]] | tuple[str, tuple[Any, ...], dict[str, Any]]
@@ -146,6 +147,7 @@ class LocalSessionRepository:
         self._records: dict[str, dict[str, Any]] = {}
         self._handovers: dict[tuple[str, str], dict[str, Any]] = {}
         self._capacity_calls: dict[str, tuple[str, int]] = {}
+        self._connection_claims: dict[str, PhysicalConnectionClaim] = {}
         self._capacity_models: dict[str, tuple[str, str, int]] = {}
         self._capacity_owners: dict[str, Literal["serving", "draining", "drained"]] = {}
         self._capacity_owner_leases: dict[str, datetime] = {}
@@ -242,6 +244,80 @@ class LocalSessionRepository:
                 raise SessionConflict("capacity_owner_unknown")
             return self._capacity_owners[owner_id]
 
+    async def claim_connection(self, claim: PhysicalConnectionClaim) -> bool:
+        async with self._lock:
+            instant = self._capacity_now()
+            document = self._records.get(claim.session_id)
+            current = metadata_model(document) if document is not None else None
+            if (
+                claim.closed
+                or current is None
+                or current.state == LifecycleState.ENDED
+                or current.physical_owner_id != claim.physical_owner_id
+                or current.connection_epoch != claim.connection_epoch
+                or current.lease_until <= instant
+                or self._capacity_owner_leases.get(claim.physical_owner_id, current.lease_until)
+                <= instant
+            ):
+                return False
+            existing = self._connection_claims.get(claim.session_id)
+            if existing is not None:
+                return existing == claim and not existing.closed
+            if len(self._connection_claims) >= 10000:
+                raise RuntimeError("connection_registry_full")
+            self._connection_claims[claim.session_id] = claim
+            return True
+
+    async def connection_claims(self, owner_id: str) -> tuple[PhysicalConnectionClaim, ...]:
+        async with self._lock:
+            return tuple(
+                claim.model_copy()
+                for claim in self._connection_claims.values()
+                if claim.physical_owner_id == owner_id
+            )
+
+    async def connection_claim_current(self, claim: PhysicalConnectionClaim) -> bool:
+        async with self._lock:
+            instant = self._capacity_now()
+            document = self._records.get(claim.session_id)
+            current = metadata_model(document) if document is not None else None
+            return (
+                not claim.closed
+                and self._connection_claims.get(claim.session_id) == claim
+                and current is not None
+                and current.state != LifecycleState.ENDED
+                and min(
+                    current.lease_until,
+                    self._capacity_owner_leases.get(claim.physical_owner_id, current.lease_until),
+                )
+                > instant
+            )
+
+    async def close_connection_claim(self, claim: PhysicalConnectionClaim) -> None:
+        async with self._lock:
+            existing = self._connection_claims.get(claim.session_id)
+            if existing is None:
+                return
+            if existing.model_copy(update={"closed": False}) != claim.model_copy(
+                update={"closed": False}
+            ):
+                raise SessionConflict("physical_connection_not_owned")
+            document = self._records.get(claim.session_id)
+            current = metadata_model(document) if document is not None else None
+            if current is None:
+                raise RuntimeError("session_authority_unknown")
+            if (
+                current.physical_owner_id != claim.physical_owner_id
+                or current.connection_epoch != claim.connection_epoch
+            ):
+                raise SessionConflict("physical_connection_not_owned")
+            if current.state == LifecycleState.ENDED:
+                del self._connection_claims[claim.session_id]
+            else:
+                self._connection_claims[claim.session_id] = existing.model_copy(
+                    update={"closed": True}
+                )
+
     async def capacity_recovery_bindings(
         self, owner_id: str
     ) -> tuple[CapacityRecoveryBinding, ...]:
@@ -317,8 +393,15 @@ class LocalSessionRepository:
                 raise SessionConflict("capacity_owner_unknown")
             if state == "serving":
                 raise PermissionError("drain_not_started")
-            if any(owner == owner_id for owner, _epoch in self._capacity_calls.values()) or any(
-                owner == owner_id for _session, owner, _epoch in self._capacity_models.values()
+            if (
+                any(owner == owner_id for owner, _epoch in self._capacity_calls.values())
+                or any(
+                    owner == owner_id for _session, owner, _epoch in self._capacity_models.values()
+                )
+                or any(
+                    claim.physical_owner_id == owner_id and not claim.closed
+                    for claim in self._connection_claims.values()
+                )
             ):
                 return "postponed"
             self._capacity_owners[owner_id] = "drained"
@@ -389,6 +472,9 @@ class LocalSessionRepository:
             ):
                 raise SessionConflict("capacity_closure_not_confirmed")
             del self._capacity_calls[session_id]
+            claim = self._connection_claims.get(session_id)
+            if claim is not None and claim.closed:
+                del self._connection_claims[session_id]
 
     async def reserve_model_capacity(
         self, session_id: str, *, physical_owner_id: str, reservation: str

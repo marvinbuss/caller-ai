@@ -219,7 +219,12 @@ same runtime-owned `call-sessions` container. Its reserved item has both `id` an
 equal to `runtime-capacity-authority-v1`; no container or infrastructure is created. The item
 contains schema version, fixed aggregate/per-owner limits, current model quota, UTC high-water
 timestamp, bounded owner phases/leases, call owner/epoch/lease/identity-hash bindings and
-model-token bindings. It contains no call content and has `ttl=-1` so normal metadata retention
+model-token bindings. Schema **2** also holds bounded `PhysicalConnectionClaim` metadata:
+session, physical owner, connection epoch, opaque claim ID and acknowledged-closed state.
+The item ID is unchanged; schema 1 or missing connection state fails closed, never resets
+through normal startup. Any old-state migration requires reviewed connection inventory and
+preserved reservations; no automatic migration or infrastructure action is supplied.
+It contains no call content and has `ttl=-1` so normal metadata retention
 cannot silently erase charged work. Ordinary calls cannot use its reserved session identity.
 
 Every mutation Strong-reads that complete <=512 KiB authority and conditionally replaces it
@@ -237,6 +242,20 @@ expiry alone retain charges. Single-item contention/size limits fail closed, not
 The 34 injected-storage contracts do not qualify real Cosmos consistency/RU capacity, crash
 recovery of physical connections, cross-process clock trust or a live deployment. See the
 [scaling runbook](runbooks/scaling.md) and [current US6 evidence](acceptance/us6.md).
+
+`OwnerRouting` requires the shared physical-connection repository, not a plain metadata-only
+store. It acquires an exact claim before enabling a local binding, denies independent duplicate
+attachment, and checks current shared claim/lease before output. Uncertain attachment remains
+fenced and occupied; terminal call metadata does not erase an unacknowledged connection.
+Acknowledged closure is persisted and observed by other routers and drain controllers.
+
+`CapacityService.recover_owner` composes one bounded recovery pass with an explicitly injected
+`CleanupObserver`. The observer receives exact immutable binding/current session metadata and
+the original deadline; only a matching fresh UTC closed observation permits claim closure,
+terminal transition or matching reservation release. Open/unknown/error/invalid observations
+remain pending. An open connection blocks baseline cleanup. No socket is recovered or migrated,
+no expired lease renewed and no missing state synthesized. Real observer identity/protocol
+and Cosmos/live behavior remain separately qualified; the default apps construct none.
 
 The local `CallLifecycle` composes injected metadata/agent/phone ports and a copied,
 prevalidated graph. It selects protected roles, preserves admission identity/revision/owner,

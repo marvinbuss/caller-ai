@@ -2,8 +2,11 @@
 
 import asyncio
 import copy
+import multiprocessing
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from multiprocessing.managers import BaseManager
 
 import pytest
 from azure.core import MatchConditions
@@ -126,6 +129,159 @@ def repository(request):
         LocalSessionRepository() if request.param == "local" else CosmosSessionRepository(container)
     )
     return instance, container
+
+
+class ProcessAuthority:
+    def __init__(self):
+        self.records = {}
+        self.version = 0
+        self.lock = threading.Lock()
+
+    def apply(self, operation, item, body, etag):
+        with self.lock:
+            current = self.records.get(item)
+            if operation == "read":
+                return (200, copy.deepcopy(current)) if current else (404, {})
+            if operation == "create" and current:
+                return 409, {}
+            if operation == "replace" and (current is None or current["_etag"] != etag):
+                return 412, {}
+            self.version += 1
+            self.records[item] = {**copy.deepcopy(body), "_etag": f'"process-{self.version}"'}
+            return 200, copy.deepcopy(self.records[item])
+
+
+class ProcessAuthorityManager(BaseManager):
+    pass
+
+
+ProcessAuthorityManager.register("Authority", ProcessAuthority)
+
+
+class AsyncProcessContainer:
+    def __init__(self, authority):
+        self.authority = authority
+
+    async def perform(self, operation, item, body=None, etag=None):
+        status, response = await asyncio.to_thread(
+            self.authority.apply, operation, item, body, etag
+        )
+        if status != 200:
+            raise CosmosHttpResponseError(status_code=status)
+        return response
+
+    async def create_item(self, body, **keywords):
+        return await self.perform("create", body["id"], body)
+
+    async def read_item(self, item, partition_key, **keywords):
+        return await self.perform("read", item)
+
+    async def replace_item(self, item, body, *, etag, match_condition, **keywords):
+        assert match_condition == MatchConditions.IfNotModified
+        return await self.perform("replace", item, body, etag)
+
+
+def capacity_process_worker(authority, configuration, instant, start, results, index, profile):
+    from caller_runtime.adapters.capacity_repository import CosmosCapacityRepository
+    from caller_runtime.services.capacity import CapacityService
+
+    async def execute():
+        clock = datetime.fromisoformat(instant)
+        repository = CosmosCapacityRepository(
+            AsyncProcessContainer(authority), utc_now=lambda: clock
+        )
+        service = CapacityService(
+            repository=repository,
+            configuration=configuration,
+            sessions_per_owner=1,
+            maximum_sessions=1 if profile == "calls" else 2,
+            model_session_quota=1 if profile == "calls" else 3,
+            utc_now=lambda: clock,
+        )
+        await service.register_owner(f"replica-{index}")
+        session_id = f"process-session-{index}"
+        if profile == "models":
+            assert (
+                await service.admit(
+                    session_id=session_id, provider_call_ref=f"process-provider-{index}"
+                )
+            ).outcome == "admitted"
+        results.put(("ready", index))
+        assert await asyncio.to_thread(start.wait, 30)
+        if profile == "calls":
+            outcome = (
+                await service.admit(
+                    session_id=session_id, provider_call_ref=f"process-provider-{index}"
+                )
+            ).outcome
+        else:
+            outcome = (
+                "reserved" if await service.reserve_model_session(session_id) else "unavailable"
+            )
+        results.put(("result", outcome))
+
+    asyncio.run(execute())
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("profile", ["calls", "models"])
+async def test_t123_independent_processes_share_atomic_capacity_authority(
+    community_configuration, profile
+):
+    from caller_runtime.adapters.capacity_repository import CosmosCapacityRepository
+
+    context = multiprocessing.get_context("spawn")
+    with ProcessAuthorityManager(address=("127.0.0.1", 0), ctx=context) as manager:
+        authority = manager.Authority()
+        clock = datetime(2026, 10, 26, tzinfo=UTC)
+        store = CosmosCapacityRepository(AsyncProcessContainer(authority), utc_now=lambda: clock)
+        await store.initialize_capacity_authority(
+            maximum_sessions=1 if profile == "calls" else 2,
+            sessions_per_owner=1,
+            model_session_quota=1 if profile == "calls" else 3,
+        )
+        start, results = context.Event(), context.Queue()
+        workers = [
+            context.Process(
+                target=capacity_process_worker,
+                args=(
+                    authority,
+                    community_configuration,
+                    clock.isoformat(),
+                    start,
+                    results,
+                    index,
+                    profile,
+                ),
+            )
+            for index in range(2)
+        ]
+        try:
+            for worker in workers:
+                worker.start()
+            assert {await asyncio.to_thread(results.get, True, 30) for _ in workers} == {
+                ("ready", 0),
+                ("ready", 1),
+            }
+            start.set()
+            outcomes = [await asyncio.to_thread(results.get, True, 15) for _ in workers]
+            assert sorted(value for event, value in outcomes if event == "result") == sorted(
+                [
+                    "admitted" if profile == "calls" else "reserved",
+                    "unavailable",
+                ]
+            )
+        finally:
+            start.set()
+            for worker in workers:
+                if worker.pid is not None:
+                    worker.join(timeout=5)
+                    if worker.is_alive():
+                        worker.terminate()
+                        worker.join(timeout=5)
+            results.close()
+            results.join_thread()
+        assert all(worker.exitcode == 0 for worker in workers)
 
 
 @pytest.mark.anyio
@@ -263,6 +419,75 @@ async def reserve_stored_capacity(store, document, limits):
     assert await store.create(document)
 
 
+@pytest.mark.anyio
+async def test_cosmos_connection_claims_fence_routers_and_survive_terminal_metadata(
+    cosmos_capacity,
+) -> None:
+    from caller_runtime.adapters.capacity_repository import CosmosCapacityRepository
+    from caller_runtime.adapters.session_repository import metadata_model
+    from caller_runtime.domain.session import LifecycleState
+    from caller_runtime.services.owner_routing import OwnerRouting
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+
+    class Connection:
+        async def send_audio(self, payload):
+            return None
+
+        async def explain_unavailable(self):
+            return None
+
+        async def hangup(self):
+            return True
+
+    routers = [
+        OwnerRouting(
+            repository=CosmosCapacityRepository(container, utc_now=clock.utc_now),
+            utc_now=clock.utc_now,
+        )
+        for _ in range(2)
+    ]
+    results = await asyncio.gather(
+        *(
+            router.attach(
+                document["sessionId"],
+                physical_owner_id="owner-fixture",
+                connection_epoch=1,
+                connection=Connection(),
+            )
+            for router in routers
+        ),
+        return_exceptions=True,
+    )
+    assert sum(result is None for result in results) == 1
+    assert sum(isinstance(result, PermissionError) for result in results) == 1
+    winner = routers[results.index(None)]
+    await store.begin_capacity_drain("owner-fixture")
+    current = metadata_model(await store.read(document["sessionId"]))
+    await store.replace(
+        document["sessionId"],
+        current.transition(
+            LifecycleState.ENDED, at=clock.utc_now(), terminal_reason="completed"
+        ).model_dump(by_alias=True),
+    )
+    await store.release_capacity(document["sessionId"], physical_owner_id="owner-fixture")
+    reconstructed = OwnerRouting(
+        repository=CosmosCapacityRepository(container, utc_now=clock.utc_now),
+        utc_now=clock.utc_now,
+    )
+    assert await reconstructed.has_connections("owner-fixture")
+    assert await store.finish_capacity_drain("owner-fixture") == "postponed"
+    await winner.detach(
+        document["sessionId"],
+        physical_owner_id="owner-fixture",
+        connection_epoch=1,
+        hangup_acknowledged=True,
+    )
+    assert not await reconstructed.has_connections("owner-fixture")
+    assert await store.finish_capacity_drain("owner-fixture") == "drained"
+
+
 def recovery_service(store, clock, configuration, limits):
     from caller_runtime.services.capacity import CapacityService
 
@@ -274,6 +499,67 @@ def recovery_service(store, clock, configuration, limits):
         utc_now=clock.utc_now,
         monotonic=clock.monotonic,
     )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("outcome", ["closed", "unknown"])
+async def test_t123_recovery_observes_physical_outcomes_before_releasing_any_charge(
+    cosmos_capacity, community_configuration, outcome
+) -> None:
+    from caller_runtime.adapters.capacity_repository import CosmosCapacityRepository
+    from caller_runtime.services.capacity import CleanupObservation
+    from caller_runtime.services.owner_routing import OwnerRouting
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    assert await store.reserve_model_capacity(
+        document["sessionId"], physical_owner_id="owner-fixture", reservation="a" * 32
+    )
+
+    class Connection:
+        async def send_audio(self, payload):
+            return None
+
+        async def explain_unavailable(self):
+            return None
+
+        async def hangup(self):
+            return False
+
+    routing = OwnerRouting(repository=store, utc_now=clock.utc_now)
+    await routing.attach(
+        document["sessionId"],
+        physical_owner_id="owner-fixture",
+        connection_epoch=1,
+        connection=Connection(),
+    )
+    await store.begin_capacity_drain("owner-fixture")
+    clock.advance(31)
+    fresh_store = CosmosCapacityRepository(container, utc_now=clock.utc_now)
+    service = recovery_service(fresh_store, clock, community_configuration, limits)
+    await service.register_owner("owner-fixture")
+    observed = []
+
+    class Observer:
+        async def observe(self, binding, session, *, deadline):
+            assert deadline > asyncio.get_running_loop().time()
+            assert session.provider_call_ref == document["providerCallRef"]
+            observed.append(binding)
+            return CleanupObservation(binding=binding, outcome=outcome, observed_at=clock.utc_now())
+
+    report = await service.recover_owner("owner-fixture", observer=Observer())
+    assert await service.active_count() == 0
+    if outcome == "closed":
+        assert report.confirmed == 3 and report.pending == 0
+        assert await service.finish_drain("owner-fixture") == "drained"
+        assert not await service.recovery_bindings("owner-fixture")
+        assert not await fresh_store.connection_claims("owner-fixture")
+        assert (await fresh_store.read(document["sessionId"]))["state"] == "Ended"
+    else:
+        assert report.confirmed == 0 and report.pending > 0
+        assert len(await service.recovery_bindings("owner-fixture")) == 2
+        assert await service.finish_drain("owner-fixture") == "postponed"
+        assert (await fresh_store.read(document["sessionId"]))["state"] != "Ended"
 
 
 @pytest.mark.anyio
@@ -319,6 +605,171 @@ async def test_reconstructed_service_discovers_retained_cleanup_bindings_without
     assert len(container.records[AUTHORITY_ID]["calls"]) == 1
     assert len(container.records[AUTHORITY_ID]["models"]) == 1
     assert await service.finish_drain("owner-fixture") == "postponed"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("invalid", ["foreign", "stale", "future", "naive", "exception", "open"])
+async def test_t123_recovery_never_promotes_invalid_observations(
+    cosmos_capacity, community_configuration, invalid
+) -> None:
+    from caller_runtime.services.capacity import CleanupObservation
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    service = recovery_service(store, clock, community_configuration, limits)
+    await service.register_owner("owner-fixture")
+    original = copy.deepcopy(container.records)
+
+    class Observer:
+        async def observe(self, binding, session, *, deadline):
+            if invalid == "exception":
+                raise RuntimeError("sensitive-observer-detail")
+            at = clock.utc_now()
+            if invalid == "foreign":
+                binding = binding.model_copy(update={"physical_owner_id": "foreign-owner"})
+            elif invalid == "stale":
+                at -= timedelta(seconds=1)
+            elif invalid == "future":
+                at += timedelta(seconds=1)
+            elif invalid == "naive":
+                at = at.replace(tzinfo=None)
+            return CleanupObservation(binding, "open" if invalid == "open" else "closed", at)
+
+    report = await service.recover_owner("owner-fixture", observer=Observer())
+    assert report.confirmed == 0 and report.pending == 1
+    assert container.records == original
+    assert "sensitive-observer-detail" not in str(report)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure_mode", ["missing", "unavailable", "expired", "different_claim"])
+async def test_t123_shared_authority_loss_fences_physical_output(cosmos_capacity, failure_mode):
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID
+    from caller_runtime.services.owner_routing import OwnerRouting
+
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    output = []
+
+    class Connection:
+        async def send_audio(self, payload):
+            output.append(payload)
+
+        async def explain_unavailable(self):
+            return None
+
+        async def hangup(self):
+            return False
+
+    router = OwnerRouting(repository=store, utc_now=clock.utc_now)
+    await router.attach(
+        document["sessionId"],
+        physical_owner_id="owner-fixture",
+        connection_epoch=1,
+        connection=Connection(),
+    )
+    if failure_mode == "missing":
+        del container.records[AUTHORITY_ID]
+    elif failure_mode == "unavailable":
+        container.failure = 503
+    elif failure_mode == "expired":
+        clock.advance(31)
+    else:
+        claim = container.records[AUTHORITY_ID]["connections"][document["sessionId"]]
+        claim["claim_id"] = "b" * 32 if claim["claim_id"] != "b" * 32 else "c" * 32
+    assert not await router.send_audio(
+        document["sessionId"],
+        physical_owner_id="owner-fixture",
+        connection_epoch=1,
+        agent_epoch=0,
+        payload=b"synthetic-fenced-output",
+    )
+    assert output == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure_mode", ["unavailable", "canceled"])
+async def test_t123_ambiguous_connection_claim_is_never_reassigned(
+    cosmos_capacity, monkeypatch, failure_mode
+) -> None:
+    from caller_runtime.services.owner_routing import OwnerRouting
+
+    store, _container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    claim_connection = store.claim_connection
+
+    async def lost_reply(claim):
+        assert await claim_connection(claim)
+        if failure_mode == "canceled":
+            raise asyncio.CancelledError
+        raise RuntimeError("connection_claim_uncertain")
+
+    monkeypatch.setattr(store, "claim_connection", lost_reply)
+    first = OwnerRouting(repository=store, utc_now=clock.utc_now)
+    exception = asyncio.CancelledError if failure_mode == "canceled" else RuntimeError
+    with pytest.raises(exception):
+        await first.attach(
+            document["sessionId"],
+            physical_owner_id="owner-fixture",
+            connection_epoch=1,
+            connection=object(),
+        )
+    assert first._bindings[document["sessionId"]].fenced
+    monkeypatch.setattr(store, "claim_connection", claim_connection)
+    replacement = OwnerRouting(repository=store, utc_now=clock.utc_now)
+    with pytest.raises(PermissionError, match="physical_connection_not_owned"):
+        await replacement.attach(
+            document["sessionId"],
+            physical_owner_id="owner-fixture",
+            connection_epoch=1,
+            connection=object(),
+        )
+    assert await replacement.has_connections("owner-fixture")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("corruption", ["legacy_schema", "missing_connections"])
+async def test_t123_legacy_authority_cannot_silently_drop_connection_state(
+    cosmos_capacity, corruption
+):
+    from caller_runtime.adapters.capacity_repository import AUTHORITY_ID
+
+    store, container, _clock, _document, _limits = cosmos_capacity
+    if corruption == "legacy_schema":
+        container.records[AUTHORITY_ID]["schema_version"] = 1
+    else:
+        del container.records[AUTHORITY_ID]["connections"]
+    original = copy.deepcopy(container.records)
+    with pytest.raises(RuntimeError, match="capacity_store_response_invalid"):
+        await store.connection_claims("owner-fixture")
+    assert container.records == original
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("termination", ["deadline", "cancellation"])
+async def test_t123_recovery_uses_one_deadline_and_retains_unconfirmed_work(
+    cosmos_capacity, community_configuration, termination
+) -> None:
+    store, container, clock, document, limits = cosmos_capacity
+    await reserve_stored_capacity(store, document, limits)
+    service = recovery_service(store, clock, community_configuration, limits)
+    service._budget = 0.05
+    await service.register_owner("owner-fixture")
+    original = copy.deepcopy(container.records)
+    started, never = asyncio.Event(), asyncio.Event()
+
+    class Observer:
+        async def observe(self, binding, session, *, deadline):
+            started.set()
+            await never.wait()
+
+    task = asyncio.create_task(service.recover_owner("owner-fixture", observer=Observer()))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    if termination == "cancellation":
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError if termination == "cancellation" else TimeoutError):
+        await asyncio.wait_for(task, timeout=1)
+    assert container.records == original
 
 
 @pytest.mark.anyio

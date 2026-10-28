@@ -2,7 +2,16 @@
 
 ## Status
 
-**Current read-only recovery discovery is locally verified; hosted qualification remains pending.**
+**T123 engineering complete; full feature/live acceptance remains pending.** Shared call/model
+authority, persistent physical-connection claims, stale fencing and observation-gated restart
+recovery meet the task's controlled-port acceptance requirements. The final 22 cases include
+independent OS-process quota contention; all 512 backend tests, strict runtime types, eight
+repository gates and 175 tooling tests pass. No deadline/sandbox waiver or live operation is
+used. Completion is 114/129 with fifteen tasks open; changed-source native/image CI is pending.
+Actual provider/Cosmos/environment/live measurements and production activation remain gated
+by their own tasks. See the [T123 acceptance matrix](us6.md).
+
+**Earlier read-only recovery discovery checkpoint.**
 A red-first restart case now passes through an owner-scoped immutable binding snapshot.
 All 15 new contracts, the complete 490-case backend and strict runtime typing pass. Discovery
 does not reclaim capacity, renew leases, rebuild socket ownership or prove physical cleanup.

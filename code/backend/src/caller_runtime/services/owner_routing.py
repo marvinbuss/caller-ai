@@ -8,9 +8,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
+from uuid import uuid4
 
 from caller_runtime.adapters.session_repository import SessionConflict, metadata_model
-from caller_runtime.domain.session import CallSession, LifecycleState
+from caller_runtime.domain.session import CallSession, LifecycleState, PhysicalConnectionClaim
 from caller_runtime.services.capacity import CapacityRepository
 
 
@@ -20,6 +21,16 @@ class ConnectionPort(Protocol):
     async def explain_unavailable(self) -> None: ...
 
     async def hangup(self) -> bool: ...
+
+
+class PhysicalConnectionRepository(CapacityRepository, Protocol):
+    async def claim_connection(self, claim: PhysicalConnectionClaim) -> bool: ...
+
+    async def connection_claims(self, owner_id: str) -> tuple[PhysicalConnectionClaim, ...]: ...
+
+    async def connection_claim_current(self, claim: PhysicalConnectionClaim) -> bool: ...
+
+    async def close_connection_claim(self, claim: PhysicalConnectionClaim) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +44,7 @@ class ConnectionBinding:
     physical_owner_id: str
     connection_epoch: int
     connection: ConnectionPort
+    claim: PhysicalConnectionClaim
     fenced: bool = False
     closed: bool = False
     loss_result: OwnerLossResult | None = None
@@ -42,7 +54,7 @@ class OwnerRouting:
     def __init__(
         self,
         *,
-        repository: CapacityRepository,
+        repository: PhysicalConnectionRepository,
         operation_budget: float = 10,
         monotonic: Callable[[], float] = time.monotonic,
         utc_now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -83,9 +95,24 @@ class OwnerRouting:
                     await self._current(session_id), physical_owner_id, connection_epoch
                 ):
                     raise PermissionError("physical_connection_not_owned")
-                self._bindings[session_id] = ConnectionBinding(
-                    physical_owner_id, connection_epoch, connection
+                claim = PhysicalConnectionClaim(
+                    session_id=session_id,
+                    physical_owner_id=physical_owner_id,
+                    connection_epoch=connection_epoch,
+                    claim_id=uuid4().hex,
                 )
+                binding = ConnectionBinding(
+                    physical_owner_id, connection_epoch, connection, claim, fenced=True
+                )
+                self._bindings[session_id] = binding
+                if not await self._repository.claim_connection(claim):
+                    del self._bindings[session_id]
+                    raise PermissionError("physical_connection_not_owned")
+                if not self._valid(
+                    await self._current(session_id), physical_owner_id, connection_epoch
+                ):
+                    raise PermissionError("physical_connection_not_owned")
+                binding.fenced = False
 
     async def send_audio(
         self,
@@ -115,6 +142,7 @@ class OwnerRouting:
                         not self._valid(metadata, physical_owner_id, connection_epoch)
                         or type(agent_epoch) is not int
                         or agent_epoch != metadata.agent_epoch
+                        or not await self._repository.connection_claim_current(binding.claim)
                     ):
                         return False
                     await binding.connection.send_audio(payload)
@@ -127,6 +155,11 @@ class OwnerRouting:
             metadata = await self._current(session_id)
             if not self._valid(metadata, metadata.physical_owner_id, metadata.connection_epoch):
                 raise PermissionError("callback_owner_unavailable")
+            if any(
+                claim.session_id == session_id and claim.closed
+                for claim in await self._repository.connection_claims(metadata.physical_owner_id)
+            ):
+                raise PermissionError("callback_owner_unavailable")
             return metadata.physical_owner_id
 
     def connection_for(self, session_id: str) -> ConnectionPort:
@@ -136,11 +169,15 @@ class OwnerRouting:
         return binding.connection
 
     async def has_connections(self, physical_owner_id: str) -> bool:
-        async with self._lock:
-            return any(
-                binding.physical_owner_id == physical_owner_id and not binding.closed
-                for binding in self._bindings.values()
-            )
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                return any(
+                    binding.physical_owner_id == physical_owner_id and not binding.closed
+                    for binding in self._bindings.values()
+                ) or any(
+                    not claim.closed
+                    for claim in await self._repository.connection_claims(physical_owner_id)
+                )
 
     async def detach(
         self,
@@ -160,6 +197,7 @@ class OwnerRouting:
                     or hangup_acknowledged is not True
                 ):
                     raise PermissionError("verified_connection_closure_required")
+                await self._repository.close_connection_claim(binding.claim)
                 binding.closed = binding.fenced = True
 
     async def owner_lost(
@@ -213,6 +251,8 @@ class OwnerRouting:
             try:
                 async with asyncio.timeout_at(deadline):
                     acknowledged = await binding.connection.hangup() is True
+                    if acknowledged:
+                        await self._repository.close_connection_claim(binding.claim)
             except Exception:
                 pass
             binding.closed = acknowledged
