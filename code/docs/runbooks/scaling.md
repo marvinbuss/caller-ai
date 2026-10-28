@@ -187,6 +187,13 @@ Its complete backend run passes 394 cases; repository/type/Terraform/secret/publ
 and all 165 tooling cases pass. The changed admission sequence actually renders locally.
 It does not complete persistent quota/owner authority, cluster removal or live qualification.
 
+The increment's run 40606716532 on 6d859af passes native Ubuntu (394/413/165), all diagram/
+assertion/package gates and actual Linux image smoke/audits. Windows passes tooling but
+reports 392 backend passes/two handover failures before management discovery; both exact
+cases pass in one unchanged local check. The unproven host-only investigation is parked for
+now, not repaired or waived; current required CI remains blocked. See the acceptance record
+for exact test names, results and scope. No timeout or assertion was changed to obtain a pass.
+
 Local numeric measurement fixtures test acceptance boundaries, including strict integer zero
 disconnect evidence; they do not supply live samples. The opt-in wall-clock profile still
 requires T099/T112/T117/T118 and actual approved 100-to-200 load, admission/greeting/speech/

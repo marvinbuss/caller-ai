@@ -1,6 +1,12 @@
 # Release Gates
 
-**Current foundation gates pass.** Observed
+**Current increment CI blocked.** Run 40606716532 on 6d859af passes Ubuntu/images, but Windows
+reports 392 backend passes/two handover failures; management and later gates do not execute.
+Both exact cases pass once locally unchanged. Investigation is parked for now, not repaired
+or waived. T123 is a partial shared-local-authority increment, not persistent/live capacity
+qualification; no merge/release approval follows. See [scoped US6 evidence](us6.md).
+
+**Accepted foundation snapshot.** Observed
 [run 40599488969](https://github.com/marvinbuss/caller-ai/actions/runs/40599488969) on f4eae8f
 passes every native Windows, native Ubuntu and Linux image step. Both native platforms pass
 384/413/165 tests, 0/1/0 assertion/cleanup, all 33 documents/28 diagrams and strict package

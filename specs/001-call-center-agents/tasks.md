@@ -825,7 +825,12 @@ cases for shared owner/duplicate limits, quota changes, terminal retention, unce
 foreign token release and policy disagreement. No cloud operation or live composition is
 enabled. The complete backend passes 394 cases, all repository/type/Terraform/secret/publication
 gates and 165 tools cases pass, and the changed sequence renders locally. No new native Linux,
-management-browser, image or live result is claimed. Persistent Cosmos authority, global owner/drain state and qualified recovery remain
+management-browser, image or live result was claimed from that local checkpoint. The later
+run 40606716532 on 6d859af passes Ubuntu 394/413/165, all diagram/assertion/package gates and
+actual image smoke/audits. Windows has 392 backend passes/two handover failures before later
+gates; both exact failed cases pass in one unchanged local check. No root cause is reproduced;
+investigation is parked for now under user direction, while required Windows CI remains
+failed without retries, exclusions or budget changes. Persistent Cosmos authority, global owner/drain state and qualified recovery remain
 unimplemented, so T123 and all other open markers stay unchecked (113/129 tasks checked).
 
 - [ ] T120 [US1] CRITICAL F1: Implement the qualified provider adapter in `code/backend/src/caller_runtime/adapters/telephony.py` after explicit supported-scenario approval, reusing `api/provider_webhooks.py` and `api/media.py` contracts; pin and test real callback/media authentication, codec/framing, answer, bidirectional send, playback clear and acknowledged hangup, preserving the no-network fake and disabled default/live admission until T099. Stop rather than invent unsupported wire operations per FR-001, FR-004, FR-012, US1/AC1-4, plan: qualified telephony, and existing T035/T042 (missing).

@@ -2,6 +2,22 @@
 
 ## T123 Shared Local Authority Increment: 2026-10-28
 
+Observed [run 40606716532](https://github.com/marvinbuss/caller-ai/actions/runs/40606716532)
+on `6d859af2bcd9db93a640b93ae9491a7a3b43af36` passes native Ubuntu and Linux images. Ubuntu
+reports 394 runtime/413 management/165 tooling passes, exact 0/1/0 with fixture cleanup,
+33 documents/28 actual diagram renders using sandboxed Chrome 155.0.8059.39, and strict
+Python 68/90/59 plus frontend 294-package audits with zero findings. Actual image smoke
+passes offline/non-root and 360/768/1440 checks; three image audits have zero HIGH/CRITICAL.
+
+Windows tooling passes 165 cases, but its backend reports 392 passes/two handover failures:
+`test_existing_sdk_handover_keeps_original_revision_after_current_pointer_advances` returns
+failed instead of committed, and `test_hangup_during_preparation_cancels_destination_and_prevents_late_commit`
+times out waiting for destination preparation. Windows management and later gates do not
+execute. Each exact failed case was run once locally with unchanged assertions/budgets;
+both pass (12.52 seconds). No root cause was reproduced and no handover repair is claimed.
+Investigation is parked for now under the user's direction to move on when an error cannot
+be found. The workflow remains failed; there is no retry, skipped assertion or budget change.
+
 Two independent controllers sharing one session repository previously both admitted calls
 against one call/model slot; a second red-first check also allowed both handover models
 against one remaining model slot. Repository-owned atomic reservations now make both checks
@@ -10,7 +26,8 @@ The final complete backend run passes 394 cases with zero failures/errors/skips;
 warning is the expected blocked-egress assertion. All repository/type/Terraform/secret/
 publication gates and 165 tooling cases pass. The changed sequence below actually renders
 with prepared Chromium and nonempty SVG checks; all 33 documents/28 diagram sources validate.
-No new management-browser, native Linux, image or live qualification is claimed here.
+These local results and the scoped Linux results above do not establish current green
+Windows CI, persistent authority or live qualification.
 
 Controllers using the same `LocalSessionRepository` object share call/per-owner limits,
 baseline and overlapping model reservations, and the current model quota. Fixed-limit
