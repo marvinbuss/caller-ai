@@ -2,14 +2,14 @@
 
 ## Status
 
-**Current local T123 increment is partial; Windows CI is blocked.** Run
-[40606716532](https://github.com/marvinbuss/caller-ai/actions/runs/40606716532) on 6d859af
-passes Ubuntu 394/413/165 and all Linux image checks, but Windows has 392 backend passes/
-two handover failures before management and later gates. Both exact cases pass once locally
-without assertion/budget changes; the unproven investigation is parked for now, not a
-certified fix. Shared local reservations have ten new cases, 394 full local backend passes
-and 165 tooling passes; persistent/global-owner authority remains missing. Completion stays
-113/129 tasks, with T123 unchecked and all external gates intact. See [US6 evidence](us6.md).
+**Current local T123 increment is partial; required CI passes.** Observed
+[run 40652020707](https://github.com/marvinbuss/caller-ai/actions/runs/40652020707) on 1ea0e7c
+passes every Windows/Ubuntu/image step: 403 runtime/413 management/165 tooling cases per
+native platform, 0/1/0 assertion/cleanup, all 33 documents/28 diagrams and strict package/
+image audits. Shared local reservations and owner drain phase have nineteen new cases;
+persistent/global-owner leases and recovery remain missing. Completion stays 113/129 tasks,
+with T123 unchecked and all external gates intact. Earlier host failures and parked
+investigations remain recorded without root-cause claims. See [US6 evidence](us6.md).
 
 **Foundation complete; live/release acceptance remains blocked.** Observed
 [run 40599488969](https://github.com/marvinbuss/caller-ai/actions/runs/40599488969) on

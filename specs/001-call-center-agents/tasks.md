@@ -843,7 +843,17 @@ timeout, undrain or physical-deletion behavior. Persistent owner/lease authority
 connection coordination and durable recovery still require implementation/qualification;
 T123 and every other pending marker remain unchecked (113/129).
 All repository/type/Terraform/secret/publication gates and 165 tooling cases pass; the changed
-sequence actually renders locally. No new hosted, image or live result is claimed.
+sequence actually renders locally. At that local checkpoint no hosted/image/live result was
+yet claimed; the subsequent actual CI result is recorded below, not inferred from those checks.
+
+**Observed T123 increment CI (2026-10-28)**: run 40652020707 on
+`1ea0e7c3fe70415aec0109216c0ad615165d1092` passes every Windows/Ubuntu/image step. Each
+native platform reports 403 runtime/413 management/165 tools passes, exact 0/1/0 fixture
+cleanup, all 33 documents/28 actual diagram renders and strict package audits. Actual image
+smoke and three-image audits pass. These are local-increment regression checks, not durable
+authority, owner/lease recovery or live qualification. T123 and all sixteen open markers
+remain unchecked (113/129); prior failures and parked investigations are not erased or
+reinterpreted as demonstrated root-cause repairs.
 
 - [ ] T120 [US1] CRITICAL F1: Implement the qualified provider adapter in `code/backend/src/caller_runtime/adapters/telephony.py` after explicit supported-scenario approval, reusing `api/provider_webhooks.py` and `api/media.py` contracts; pin and test real callback/media authentication, codec/framing, answer, bidirectional send, playback clear and acknowledged hangup, preserving the no-network fake and disabled default/live admission until T099. Stop rather than invent unsupported wire operations per FR-001, FR-004, FR-012, US1/AC1-4, plan: qualified telephony, and existing T035/T042 (missing).
 - [ ] T121 [US1] CRITICAL F2: Implement an explicitly gated runtime composition in `code/backend/src/caller_runtime/main.py` and `settings.py`, plus concrete `AgentPort`/`AudioPort` integration across `adapters/agents_sdk.py`, `api/media.py`, `domain/call_lifecycle.py` and `services/configuration_activation.py`; connect approved provider media to fresh Azure realtime SDK sessions, pinned revisions, current-authority tools, owner/epoch fencing, independent bounded read/model/write work, interruption, Goodbye, terminal cleanup and safe audit. Test the composed boundary with controlled transports, including interruption while model work is pending and no post-terminal output; retain credential-free defaults and reject unqualified live composition per FR-001, FR-002, FR-004, FR-009-FR-012, FR-018-FR-024, US1/AC1-5, plan: runtime orchestration, and existing T038-T044/T085-T086/T108 (missing).

@@ -1,5 +1,22 @@
 # US6 Local Scaling Acceptance
 
+## Current Hosted Verification: 2026-10-28
+
+Observed [run 40652020707](https://github.com/marvinbuss/caller-ai/actions/runs/40652020707)
+on `1ea0e7c3fe70415aec0109216c0ad615165d1092` passes every native Windows, native Ubuntu
+and Linux image step, with no failed or skipped steps. Each native platform reports
+403 runtime/413 management/165 tooling passes with zero failures/errors/skips, exact
+baseline 0/broken 1/restored 0 and fixture cleanup, and 33 documents/28 actual diagram renders.
+Sandboxed Chrome versions are Windows 156.0.8078.48 and Ubuntu 155.0.8059.39. Strict Python
+audits cover Windows 69/92/60 and Linux 68/90/59 packages; frontend 294-package audits have
+zero findings on both platforms. Actual image smoke passes offline/non-root startup and
+360/768/1440 browser checks; three actual image audits report zero HIGH/CRITICAL findings.
+
+This verifies the shared local quota/drain increment across the declared native platforms,
+not persistent Cosmos authority, shared leases, recovery or live call qualification. T123
+remains partial and 113/129 tasks are checked. The earlier failed Windows run below remains
+recorded; current success does not establish a root-cause repair for a parked investigation.
+
 ## T123 Shared Local Drain Increment: 2026-10-28
 
 Three red-first cases reproduce cross-controller admission after a committed drain and
@@ -24,8 +41,9 @@ the committed phase. No undrain or forced expiry/reclamation operation is added.
 This remains a same-object in-memory authority. Heartbeat/lease coordination, physical
 connection registries, metrics, durable owner fencing, cross-process persistence and recovery
 are not completed by shared local phase. T123 stays unchecked, all live/environment gates
-remain intact, and no new hosted/image/live verification is claimed for this increment.
-The earlier scoped CI results and parked failures below remain historical evidence.
+remain intact. At that local checkpoint no hosted/image/live result was yet claimed; the
+subsequent hosted results are recorded above, not inferred from local tests. The earlier
+scoped CI results and parked failures below remain historical evidence.
 
 ## T123 Shared Local Authority Increment: 2026-10-28
 

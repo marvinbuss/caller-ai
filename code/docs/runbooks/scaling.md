@@ -206,6 +206,12 @@ owner/lease authority and actual physical/cluster removal qualification remain o
 Repository/type/Terraform/secret/publication gates and all 165 tooling cases pass, and the
 updated shared-drain sequence renders locally without changing browser or timeout controls.
 
+Observed run 40652020707 on 1ea0e7c subsequently passes every native Windows/Ubuntu and
+Linux image step: 403/413/165 tests per native platform, all assertion/render/package gates
+and actual image smoke/three-image audits. These results qualify the local increment's
+regression checks only; persistent authority, shared leases/recovery and live qualification
+remain open. Earlier failed checks and parked investigations are preserved in the evidence.
+
 Local numeric measurement fixtures test acceptance boundaries, including strict integer zero
 disconnect evidence; they do not supply live samples. The opt-in wall-clock profile still
 requires T099/T112/T117/T118 and actual approved 100-to-200 load, admission/greeting/speech/
