@@ -27,8 +27,14 @@ class CapacityRepository(Protocol):
 
 class SharedCapacityRepository(CapacityRepository, Protocol):
     async def register_capacity_owner(
-        self, owner_id: str
+        self, owner_id: str, *, lease_seconds: float
     ) -> Literal["serving", "draining", "drained"]: ...
+
+    async def renew_capacity_owner(
+        self, owner_id: str, *, lease_seconds: float
+    ) -> Literal["serving", "draining", "drained"]: ...
+
+    async def serving_capacity_owners(self, owner_ids: tuple[str, ...]) -> tuple[str, ...]: ...
 
     async def capacity_owner_state(
         self, owner_id: str
@@ -145,7 +151,9 @@ class CapacityService:
                 if owner_id not in self._owners:
                     if len(self._owners) >= 1024:
                         raise RuntimeError("owner_registry_full")
-                    state = await self._repository.register_capacity_owner(owner_id)
+                    state = await self._repository.register_capacity_owner(
+                        owner_id, lease_seconds=self._lease
+                    )
                     self._owners[owner_id] = OwnerCapacity(state, self._monotonic())
 
     async def admit(self, *, session_id: str, provider_call_ref: str) -> AdmissionResult:
@@ -177,13 +185,10 @@ class CapacityService:
                         owner: sum(value == owner for value in self._active.values())
                         for owner in self._owners
                     }
-                    eligible = [
-                        owner
-                        for owner, metadata in self._owners.items()
-                        if metadata.state == "serving"
-                        and self._monotonic() - metadata.heartbeat_at < self._lease
-                        and counts[owner] < self._slots
-                    ]
+                    available = set(
+                        await self._repository.serving_capacity_owners(tuple(self._owners))
+                    )
+                    eligible = [owner for owner in self._owners if owner in available]
                     if not eligible:
                         return unavailable
                     owner = min(eligible, key=lambda item: (counts[item], item))
@@ -221,33 +226,10 @@ class CapacityService:
         async with asyncio.timeout(self._budget):
             async with self._lock:
                 owner = self._owners[owner_id]
-                owner.state = await self._repository.capacity_owner_state(owner_id)
-                if (
-                    owner.state == "drained"
-                    or self._monotonic() - owner.heartbeat_at >= self._lease
-                ):
-                    raise PermissionError("owner_lease_lost")
-                for session_id, physical_owner in self._active.items():
-                    if physical_owner != owner_id:
-                        continue
-                    document = await self._repository.read(session_id)
-                    if document is None:
-                        raise RuntimeError("session_authority_unknown")
-                    current = metadata_model(document)
-                    if current.physical_owner_id != owner_id:
-                        raise PermissionError("session_owner_mismatch")
-                    if current.state != LifecycleState.ENDED:
-                        if current.lease_until <= self._utc_now():
-                            raise PermissionError("session_lease_lost")
-                        await self._repository.replace(
-                            session_id,
-                            document
-                            | {
-                                "leaseUntil": (
-                                    self._utc_now() + timedelta(seconds=self._lease)
-                                ).isoformat()
-                            },
-                        )
+                await self._repository.capacity_owner_state(owner_id)
+                owner.state = await self._repository.renew_capacity_owner(
+                    owner_id, lease_seconds=self._lease
+                )
                 owner.heartbeat_at = self._monotonic()
 
     async def release(self, session_id: str) -> None:

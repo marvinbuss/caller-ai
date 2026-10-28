@@ -146,7 +146,14 @@ async def admit(service, index):
 
 
 def build_controllers(
-    repository, clock, configuration, *, maximum_sessions, model_session_quota, count=2
+    repository,
+    clock,
+    configuration,
+    *,
+    maximum_sessions,
+    model_session_quota,
+    count=2,
+    sessions_per_owner=1,
 ):
     from caller_runtime.services.capacity import CapacityService
 
@@ -154,7 +161,7 @@ def build_controllers(
         CapacityService(
             repository=repository,
             configuration=configuration,
-            sessions_per_owner=1,
+            sessions_per_owner=sessions_per_owner,
             maximum_sessions=maximum_sessions,
             model_session_quota=model_session_quota,
             monotonic=clock.monotonic,
@@ -457,6 +464,200 @@ async def test_reconstructed_controller_cannot_reset_shared_drain(
     else:
         await reconstructed.heartbeat("shared-owner")
         assert await original.owner_state("shared-owner") == "draining"
+
+
+@pytest.mark.parametrize("operation", ["admit", "heartbeat"])
+async def test_reconstructed_controller_cannot_revive_expired_shared_owner(
+    capacity_case, community_configuration, operation
+):
+    _service, repository, clock = capacity_case
+    original = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await original.register_owner("shared-owner")
+    clock.advance(60)
+    reconstructed = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await reconstructed.register_owner("shared-owner")
+    if operation == "admit":
+        assert (await admit(reconstructed, 1)).outcome == "unavailable"
+        assert await repository.read("session-capacity-1") is None
+    else:
+        with pytest.raises(PermissionError, match="owner_lease_lost"):
+            await reconstructed.heartbeat("shared-owner")
+
+
+async def test_shared_heartbeat_renews_all_owned_calls_and_other_controllers_use_it(
+    capacity_case, community_configuration
+):
+    from caller_runtime.adapters.session_repository import metadata_model
+
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository,
+        clock,
+        community_configuration,
+        maximum_sessions=3,
+        model_session_quota=3,
+        sessions_per_owner=3,
+    )
+    for controller in controllers:
+        await controller.register_owner("shared-owner")
+    for index, controller in enumerate(controllers):
+        assert (await admit(controller, index + 1)).outcome == "admitted"
+    before = [
+        metadata_model(await repository.read(f"session-capacity-{index}")) for index in (1, 2)
+    ]
+    clock.advance(30)
+    await controllers[1].heartbeat("shared-owner")
+    for index, original in enumerate(before, start=1):
+        current = metadata_model(await repository.read(f"session-capacity-{index}"))
+        assert current.lease_until > original.lease_until
+        assert current.physical_owner_id == original.physical_owner_id
+        assert current.connection_epoch == original.connection_epoch
+    clock.advance(31)
+    assert (await admit(controllers[0], 3)).outcome == "admitted"
+
+
+async def test_admitted_call_lease_is_bounded_by_shared_owner_expiry(
+    capacity_case, community_configuration
+):
+    from datetime import timedelta
+
+    from caller_runtime.adapters.session_repository import metadata_model
+
+    _service, repository, clock = capacity_case
+    controller = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await controller.register_owner("shared-owner")
+    clock.advance(30)
+    assert (await admit(controller, 1)).outcome == "admitted"
+    current = metadata_model(await repository.read("session-capacity-1"))
+    assert current.lease_until == clock.utc_now() + timedelta(seconds=30)
+
+
+async def test_shared_heartbeat_validates_every_call_before_mutating_any_lease(
+    capacity_case, community_configuration
+):
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository,
+        clock,
+        community_configuration,
+        maximum_sessions=2,
+        model_session_quota=2,
+        sessions_per_owner=2,
+    )
+    for controller in controllers:
+        await controller.register_owner("shared-owner")
+    for index, controller in enumerate(controllers):
+        assert (await admit(controller, index + 1)).outcome == "admitted"
+    first = await repository.read("session-capacity-1")
+    second = await repository.read("session-capacity-2")
+    await repository.replace("session-capacity-2", second | {"leaseUntil": second["startedAt"]})
+    expired = await repository.read("session-capacity-2")
+    clock.advance(30)
+    with pytest.raises(PermissionError, match="session_lease_lost"):
+        await controllers[1].heartbeat("shared-owner")
+    assert await repository.read("session-capacity-1") == first
+    assert await repository.read("session-capacity-2") == expired
+    clock.advance(30)
+    with pytest.raises(PermissionError, match="owner_lease_lost"):
+        await controllers[0].heartbeat("shared-owner")
+
+
+async def test_expired_shared_owner_cannot_reserve_model_with_newer_session_metadata(
+    capacity_case, community_configuration
+):
+    from datetime import timedelta
+
+    from caller_runtime.adapters.session_repository import SessionConflict, metadata_model
+
+    _service, repository, clock = capacity_case
+    controller = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await controller.register_owner("shared-owner")
+    assert (await admit(controller, 1)).outcome == "admitted"
+    document = await repository.read("session-capacity-1")
+    await repository.replace(
+        "session-capacity-1",
+        document | {"leaseUntil": (clock.utc_now() + timedelta(seconds=120)).isoformat()},
+    )
+    clock.advance(60)
+    assert metadata_model(await repository.read("session-capacity-1")).lease_until > clock.utc_now()
+    with pytest.raises(SessionConflict, match="model_capacity_not_owned"):
+        await controller.reserve_model_session("session-capacity-1")
+
+
+async def test_shared_authority_selects_fresh_owner_instead_of_expired_cached_owner(
+    capacity_case, community_configuration
+):
+    _service, repository, clock = capacity_case
+    controller = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await controller.register_owner("owner-expired")
+    clock.advance(60)
+    await controller.register_owner("owner-fresh")
+    assert (await admit(controller, 1)).outcome == "admitted"
+    assert (await repository.read("session-capacity-1"))["physicalOwnerId"] == "owner-fresh"
+
+
+async def test_shared_owner_registration_cannot_change_existing_lease_policy(
+    capacity_case, community_configuration
+):
+    from caller_runtime.services.capacity import CapacityService
+
+    _service, repository, clock = capacity_case
+    controller = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await controller.register_owner("shared-owner")
+    conflicting = CapacityService(
+        repository=repository,
+        configuration=community_configuration,
+        sessions_per_owner=1,
+        maximum_sessions=2,
+        model_session_quota=2,
+        lease_seconds=300,
+        monotonic=clock.monotonic,
+        utc_now=clock.utc_now,
+    )
+    with pytest.raises(ValueError, match="owner_lease_policy_conflict"):
+        await conflicting.register_owner("shared-owner")
+    clock.advance(60)
+    assert (await admit(controller, 1)).outcome == "unavailable"
+
+
+@pytest.mark.parametrize("clock_kind", ["naive", "non-UTC", "backward"])
+async def test_invalid_shared_authority_clock_cannot_grant_capacity(
+    community_configuration, clock_kind
+):
+    from datetime import UTC, datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from caller_runtime.adapters.session_repository import LocalSessionRepository
+
+    instant = [datetime(2026, 10, 28, tzinfo=UTC)]
+    clock = SimpleNamespace(monotonic=lambda: 0.0, utc_now=lambda: instant[0])
+    repository = LocalSessionRepository(utc_now=clock.utc_now)
+    controller = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await controller.register_owner("shared-owner")
+    if clock_kind == "naive":
+        instant[0] = instant[0].replace(tzinfo=None)
+    elif clock_kind == "non-UTC":
+        instant[0] = instant[0].astimezone(timezone(timedelta(hours=1)))
+    else:
+        instant[0] -= timedelta(seconds=1)
+    assert (await admit(controller, 1)).outcome == "unavailable"
+    with pytest.raises(RuntimeError, match="capacity_clock_unavailable"):
+        await controller.heartbeat("shared-owner")
+    assert await repository.read("session-capacity-1") is None
 
 
 @pytest.mark.parametrize("operation", ["begin", "finish"])

@@ -1,6 +1,40 @@
 # US6 Local Scaling Acceptance
 
-## Current Hosted Verification: 2026-10-28
+## T123 Shared Local Lease Increment: 2026-10-28
+
+Two red-first cases reproduce reconstructed controllers reviving an expired shared owner
+for admission/heartbeat. Two further cases expose stale controller-local availability after
+another controller's heartbeat and session leases outliving shared owner expiry. Authority-
+owned UTC expiry, immutable bounded lease periods, atomic owner/session renewal, serving-owner
+selection and lease clamping make all four pass without sleeps or increased budgets.
+
+All eleven new lease cases pass: reconstruction expiry fences, shared renewal/availability,
+session-lease bounds, all-or-nothing renewal with an invalid sibling, expired-owner model
+denial despite newer session metadata, fresh-owner selection, conflicting lease periods and
+naive/non-UTC/backward clock rejection. There are 50 capacity/profile and 18 planned-drain
+passes (68 combined); the complete backend passes 414 cases with zero failures/errors/skips
+and only the expected blocked-egress warning. Repository/static and new hosted results are
+scoped separately: all repository/type/Terraform/secret/publication checks and 165 tooling
+cases pass. The changed lease sequence actually renders with prepared Chromium and valid
+SVG bounds; all 33 documents/28 diagram sources validate. No new hosted/image/live result
+is claimed from these local checks.
+
+The local authority owns one explicit UTC clock. Re-registration never extends an existing
+owner's expiry, a missed expiry cannot be renewed, and an incompatible lease period fails
+closed. A valid heartbeat validates every held session before updating any lease/ETag, then
+renews the owner and all its nonterminal calls atomically; any expired/missing/mismatched
+session aborts renewal without partial session/owner updates. A fresh call's lease is capped
+at the owner's expiry. Invalid or backward authority time denies new capacity and heartbeat;
+controller-local heartbeat timestamps are not admission authority. Existing drain and
+uncertain-reservation retention rules remain unchanged.
+
+This is still one explicitly shared in-memory repository, not a persistent Cosmos authority,
+cross-process clock/fencing guarantee or durable restart recovery. Physical connection
+coordination and qualified environment evidence remain missing. T123 stays unchecked, all
+113/129 completion markers are preserved, and no default client/route, network, infrastructure,
+timeout, forced reclamation or live operation is added.
+
+## Earlier Hosted Verification: 2026-10-28
 
 Observed [run 40652020707](https://github.com/marvinbuss/caller-ai/actions/runs/40652020707)
 on `1ea0e7c3fe70415aec0109216c0ad615165d1092` passes every native Windows, native Ubuntu
@@ -38,9 +72,9 @@ transition, but established calls can reserve a handover model within the existi
 its undisposed token still postpones completion. Unknown transition responses do not undo
 the committed phase. No undrain or forced expiry/reclamation operation is added.
 
-This remains a same-object in-memory authority. Heartbeat/lease coordination, physical
-connection registries, metrics, durable owner fencing, cross-process persistence and recovery
-are not completed by shared local phase. T123 stays unchecked, all live/environment gates
+This remains a same-object in-memory authority. Shared local lease coordination is added by
+the later increment above; physical connection registries, metrics, durable owner fencing,
+cross-process persistence and recovery are not completed by shared local phase. T123 stays unchecked, all live/environment gates
 remain intact. At that local checkpoint no hosted/image/live result was yet claimed; the
 subsequent hosted results are recorded above, not inferred from local tests. The earlier
 scoped CI results and parked failures below remain historical evidence.
@@ -83,9 +117,9 @@ owning binding after confirmed disposal. Lost reservation/create replies remain 
 including when another controller is reconstructed against the same local authority.
 
 This is a deterministic in-memory authority, not an atomic Cosmos quota implementation or
-cross-process durability. Shared local drain phase is added by the increment above; owner
-heartbeat/leases, connection registries, reservation counts/metrics and durable recovery
-remain controller-local or unimplemented. A new repository
+cross-process durability. Shared local drain and lease coordination are added above;
+connection registries, reservation counts/metrics and durable recovery remain controller-local
+or unimplemented. A new repository
 object loses volatile state; retaining the same object is not restart-durability evidence.
 `SharedCapacityRepository` is required for admission; the existing Cosmos session adapter
 does not implement it and receives no unsafe per-controller fallback. T123 stays unchecked
@@ -220,11 +254,13 @@ sequenceDiagram
     participant Store as Runtime session and shared local quota authority
     participant Model as Explicit model adapter
     participant Operator as Authorized local drain caller
+    Operator->>Capacity: Register owner with fixed lease period
+    Capacity->>Store: Register once using authority UTC clock
     Admission->>Capacity: Opaque session and provider references
     Capacity->>Capacity: Bound pending work and check serving owner
     Capacity->>Store: Atomically reserve shared call and baseline model slots
     alt Reservation accepted
-        Capacity->>Store: Conditional metadata-only session creation
+        Capacity->>Store: Create metadata with lease capped at owner expiry
         alt Creation confirmed
             Store-->>Capacity: Created once
             Capacity-->>Admission: Admitted with pinned owner metadata
@@ -242,6 +278,13 @@ sequenceDiagram
     Note over Capacity,Model: Source and prepared receiver overlap is charged
     Model->>Capacity: Release token after confirmed model disposal
     Capacity->>Store: Release matching owner-bound model reservation
+    Operator->>Capacity: Heartbeat registered owner
+    Capacity->>Store: Validate unexpired owner and every held session
+    alt All leases and bindings are valid
+        Store-->>Capacity: Atomically renew owner and nonterminal sessions
+    else Expired lease or unknown authority
+        Store-->>Capacity: Reject renewal without partial lease updates
+    end
     Operator->>Capacity: Begin drain for registered owner
     Capacity->>Store: Commit shared local draining phase
     Note over Admission,Store: Later new call reservations are denied

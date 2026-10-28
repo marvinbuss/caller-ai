@@ -2,8 +2,10 @@
 
 import asyncio
 import copy
+import math
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from azure.core import MatchConditions
@@ -135,28 +137,97 @@ def verify_handover(
 class LocalSessionRepository:
     """Conditional session/shared-capacity stand-in; not production or Cosmos evidence."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, utc_now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self._records: dict[str, dict[str, Any]] = {}
         self._handovers: dict[tuple[str, str], dict[str, Any]] = {}
         self._capacity_calls: dict[str, tuple[str, int]] = {}
         self._capacity_models: dict[str, tuple[str, str, int]] = {}
         self._capacity_owners: dict[str, Literal["serving", "draining", "drained"]] = {}
+        self._capacity_owner_leases: dict[str, datetime] = {}
+        self._capacity_owner_periods: dict[str, float] = {}
+        self._capacity_clock = utc_now
+        self._capacity_last_at: datetime | None = None
         self._capacity_limits: tuple[int, int] | None = None
         self._capacity_model_quota: int | None = None
         self._version = 0
         self._lock = asyncio.Lock()
 
+    def _capacity_now(self) -> datetime:
+        instant = self._capacity_clock()
+        if (
+            not isinstance(instant, datetime)
+            or instant.tzinfo is None
+            or instant.utcoffset() != timedelta(0)
+            or (self._capacity_last_at is not None and instant < self._capacity_last_at)
+        ):
+            raise RuntimeError("capacity_clock_unavailable")
+        self._capacity_last_at = instant
+        return instant
+
+    @staticmethod
+    def _capacity_period(lease_seconds: float) -> float:
+        if (
+            type(lease_seconds) not in (int, float)
+            or not math.isfinite(lease_seconds)
+            or not 0 < lease_seconds <= 300
+        ):
+            raise ValueError("invalid_owner_lease_period")
+        return float(lease_seconds)
+
     async def register_capacity_owner(
-        self, owner_id: str
+        self, owner_id: str, *, lease_seconds: float
     ) -> Literal["serving", "draining", "drained"]:
         if not isinstance(owner_id, str) or not re.fullmatch(
             r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", owner_id
         ):
             raise ValueError("invalid_capacity_owner")
+        period = self._capacity_period(lease_seconds)
         async with self._lock:
+            instant = self._capacity_now()
             if owner_id not in self._capacity_owners and len(self._capacity_owners) >= 1024:
                 raise RuntimeError("owner_registry_full")
+            if owner_id in self._capacity_owner_periods:
+                if self._capacity_owner_periods[owner_id] != period:
+                    raise ValueError("owner_lease_policy_conflict")
+            else:
+                self._capacity_owner_periods[owner_id] = period
+                self._capacity_owner_leases[owner_id] = instant + timedelta(seconds=period)
             return self._capacity_owners.setdefault(owner_id, "serving")
+
+    async def renew_capacity_owner(
+        self, owner_id: str, *, lease_seconds: float
+    ) -> Literal["serving", "draining", "drained"]:
+        period = self._capacity_period(lease_seconds)
+        async with self._lock:
+            instant = self._capacity_now()
+            state = self._capacity_owners.get(owner_id)
+            if (
+                state is None
+                or state == "drained"
+                or self._capacity_owner_leases[owner_id] <= instant
+            ):
+                raise PermissionError("owner_lease_lost")
+            if self._capacity_owner_periods[owner_id] != period:
+                raise ValueError("owner_lease_policy_conflict")
+            deadline = instant + timedelta(seconds=period)
+            updates = {}
+            for session_id, (owner, epoch) in self._capacity_calls.items():
+                if owner != owner_id:
+                    continue
+                document = self._records.get(session_id)
+                if document is None:
+                    raise RuntimeError("session_authority_unknown")
+                current = metadata_model(document)
+                if current.physical_owner_id != owner_id or current.connection_epoch != epoch:
+                    raise PermissionError("session_owner_mismatch")
+                if current.state != LifecycleState.ENDED:
+                    if current.lease_until <= instant:
+                        raise PermissionError("session_lease_lost")
+                    updates[session_id] = current.model_copy(update={"lease_until": deadline})
+            for session_id, current in updates.items():
+                self._records[session_id] = self._snapshot(current)
+            self._capacity_owner_leases[owner_id] = deadline
+            return state
 
     async def capacity_owner_state(
         self, owner_id: str
@@ -165,6 +236,31 @@ class LocalSessionRepository:
             if owner_id not in self._capacity_owners:
                 raise SessionConflict("capacity_owner_unknown")
             return self._capacity_owners[owner_id]
+
+    async def serving_capacity_owners(self, owner_ids: tuple[str, ...]) -> tuple[str, ...]:
+        if (
+            not isinstance(owner_ids, tuple)
+            or len(owner_ids) > 1024
+            or any(
+                not isinstance(owner, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", owner)
+                for owner in owner_ids
+            )
+        ):
+            raise ValueError("invalid_capacity_owner_query")
+        async with self._lock:
+            instant = self._capacity_now()
+            counts = {owner: 0 for owner in owner_ids}
+            for owner, _epoch in self._capacity_calls.values():
+                if owner in counts:
+                    counts[owner] += 1
+            return tuple(
+                owner
+                for owner in owner_ids
+                if self._capacity_owners.get(owner) == "serving"
+                and self._capacity_owner_leases.get(owner, instant) > instant
+                and (self._capacity_limits is None or counts[owner] < self._capacity_limits[1])
+            )
 
     async def begin_capacity_drain(
         self, owner_id: str
@@ -209,7 +305,11 @@ class LocalSessionRepository:
         ):
             raise ValueError("invalid_capacity_limits")
         async with self._lock:
-            if self._capacity_owners.get(session.physical_owner_id) != "serving":
+            instant = self._capacity_now()
+            if (
+                self._capacity_owners.get(session.physical_owner_id) != "serving"
+                or self._capacity_owner_leases[session.physical_owner_id] <= instant
+            ):
                 return "unavailable"
             limits = (maximum_sessions, sessions_per_owner)
             if self._capacity_limits is not None and self._capacity_limits != limits:
@@ -258,12 +358,15 @@ class LocalSessionRepository:
         if not isinstance(reservation, str) or not re.fullmatch(r"[a-f0-9]{32}", reservation):
             raise ValueError("invalid_model_reservation")
         async with self._lock:
+            instant = self._capacity_now()
             document = self._records.get(session_id)
             current = metadata_model(document) if document is not None else None
             if (
                 current is None
                 or current.state == LifecycleState.ENDED
                 or current.physical_owner_id != physical_owner_id
+                or self._capacity_owner_leases.get(physical_owner_id, instant) <= instant
+                or current.lease_until <= instant
                 or self._capacity_calls.get(session_id)
                 != (physical_owner_id, current.connection_epoch)
                 or self._capacity_model_quota is None
@@ -311,6 +414,18 @@ class LocalSessionRepository:
         async with self._lock:
             if session.session_id in self._records:
                 return False
+            reservation = self._capacity_calls.get(session.session_id)
+            if reservation is not None:
+                instant = self._capacity_now()
+                expiry = self._capacity_owner_leases.get(session.physical_owner_id, instant)
+                if (
+                    reservation != (session.physical_owner_id, session.connection_epoch)
+                    or expiry <= instant
+                ):
+                    raise PermissionError("owner_lease_lost")
+                session = session.model_copy(
+                    update={"lease_until": min(session.lease_until, expiry)}
+                )
             self._records[session.session_id] = self._snapshot(session)
             return True
 

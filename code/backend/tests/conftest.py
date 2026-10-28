@@ -298,7 +298,8 @@ def capacity_case(community_configuration):
         def advance(self, seconds):
             self.seconds += seconds
 
-    clock, repository = Clock(), LocalSessionRepository()
+    clock = Clock()
+    repository = LocalSessionRepository(utc_now=clock.utc_now)
     service = CapacityService(
         repository=repository,
         configuration=copy.deepcopy(community_configuration),

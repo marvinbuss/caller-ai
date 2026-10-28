@@ -42,19 +42,24 @@ must agree; current model-quota updates affect every controller using that objec
 not cross-process quota consensus, persistent Cosmos authority or restart ownership. The
 same local authority now also holds owner serving/draining/drained phase: it atomically denies
 new reservations after drain and postpones completion while any shared call/model reservation
-remains. Owner heartbeat/leases, physical connections and existing reservation metrics remain
-controller-local; this does not prove cluster-wide safe deletion or durable recovery.
+remains. Owner expiry/renewal now uses the same local authority's explicit UTC clock and
+validates every owned session before atomically updating owner/session leases. Controller
+heartbeat caches are not authority; expired owners cannot be revived by re-registration.
+Physical connections and existing reservation metrics remain controller-local; this does not
+prove persistent cross-process fencing, cluster-wide safe deletion or durable recovery.
 
 | Input or signal | Required handling |
 |-----------------|-------------------|
 | Slots per owner and aggregate maximum | Explicit reviewed limits; admit only to serving, healthy owners with remaining slots |
 | Shared local authority | Use the same repository object for all tested controllers; mismatched fixed limits deny admission. Unsupported repositories have no unsafe local-accounting fallback. |
 | Shared local owner drain phase | Registration cannot reset draining/drained; state-read or transition uncertainty must not return cached success. A different controller's call or undisposed model still postpones completion. |
+| Shared local owner lease | Use one trusted authority UTC clock and fixed bounded period. Re-registration cannot extend expiry; invalid/backward time denies capacity. Heartbeat validates all held session bindings/leases before any renewal. |
 | Model quota | Charge baseline sessions plus receiver overlap; reserve before preparation and release only after confirmed disposal |
 | Quota reduction or zero quota | Block new allocations rather than disconnect established calls; zero reports saturated |
 | Pending admission | Default 256, configurable within 1-4096; reject excess before the repository lock instead of accumulating work |
 | Owner registry | Local bound 1024; do not infer cluster size or live capacity from this safety cap |
 | Lease and operation budgets | Heartbeats cannot revive an expired persisted lease; operations use finite original budgets up to ten seconds |
+| Capacity-backed session lease | New session expiry cannot outlive its shared owner expiry. A stale local heartbeat cache cannot override the current authoritative serving-owner selection. |
 | Response uncertainty | Retain conservative reservations after an ambiguous create; denied admission is not proof no metadata was committed |
 | Reservation reply lost or metadata already terminal | Keep the authority reservation charged. Ended metadata or lease expiry alone does not authorize reclaiming it; verified closure/disposal and the matching owner binding are required. |
 | Model/phone/connection/RU limits | Obtain actual approved quotas, throttling behavior, headroom and provider eligibility before deployment |
@@ -205,6 +210,12 @@ planned-drain cases pass, and the complete backend passes 403 cases locally. Per
 owner/lease authority and actual physical/cluster removal qualification remain open.
 Repository/type/Terraform/secret/publication gates and all 165 tooling cases pass, and the
 updated shared-drain sequence renders locally without changing browser or timeout controls.
+
+The shared-local-lease increment adds eleven cases: all 50 capacity/profile and 18 planned-
+drain cases pass, and the complete backend passes 414 cases locally. These deterministic UTC
+clock/renewal checks are not persistent Cosmos, cross-process fencing or live recovery proof.
+All repository/type/Terraform/secret/publication gates and 165 tooling cases pass; the changed
+lease sequence actually renders locally without changing browser or timeout controls.
 
 Observed run 40652020707 on 1ea0e7c subsequently passes every native Windows/Ubuntu and
 Linux image step: 403/413/165 tests per native platform, all assertion/render/package gates
