@@ -25,6 +25,29 @@ class CapacityRepository(Protocol):
     async def replace(self, session_id: str, metadata: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
+class SharedCapacityRepository(CapacityRepository, Protocol):
+    async def reserve_capacity(
+        self,
+        metadata: Mapping[str, Any],
+        *,
+        maximum_sessions: int,
+        sessions_per_owner: int,
+        model_session_quota: int,
+    ) -> Literal["reserved", "duplicate", "unavailable"]: ...
+
+    async def release_capacity(self, session_id: str, *, physical_owner_id: str) -> None: ...
+
+    async def reserve_model_capacity(
+        self, session_id: str, *, physical_owner_id: str, reservation: str
+    ) -> bool: ...
+
+    async def release_model_capacity(
+        self, reservation: str, *, session_id: str, physical_owner_id: str
+    ) -> None: ...
+
+    async def set_model_capacity_quota(self, quota: int) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class AdmissionResult:
     outcome: Literal["admitted", "duplicate", "unavailable"]
@@ -38,12 +61,12 @@ class OwnerCapacity:
 
 
 class CapacityService:
-    """One injected controller serializes local reservations; live integration remains gated."""
+    """Repository-authorized local reservations; persistent live authority remains gated."""
 
     def __init__(
         self,
         *,
-        repository: CapacityRepository,
+        repository: SharedCapacityRepository,
         configuration: Mapping[str, Any],
         sessions_per_owner: int,
         maximum_sessions: int,
@@ -83,7 +106,7 @@ class CapacityService:
         )
         self._owners: dict[str, OwnerCapacity] = {}
         self._active: dict[str, str] = {}
-        self._extra_models: dict[str, str] = {}
+        self._extra_models: dict[str, tuple[str, str]] = {}
         self._pending = 0
         self._lock = asyncio.Lock()
         self._metrics = metrics
@@ -133,10 +156,7 @@ class CapacityService:
                         or await self._repository.read(session_id) is not None
                     ):
                         return AdmissionResult("duplicate", session_id)
-                    if (
-                        len(self._active) >= self._maximum
-                        or len(self._active) + len(self._extra_models) >= self._quota
-                    ):
+                    if len(self._active) >= self._maximum:
                         return unavailable
                     counts = {
                         owner: sum(value == owner for value in self._active.values())
@@ -162,6 +182,16 @@ class CapacityService:
                         startedAt=now,
                         leaseUntil=now + timedelta(seconds=self._lease),
                     )
+                    reservation = await self._repository.reserve_capacity(
+                        candidate.to_document(),
+                        maximum_sessions=self._maximum,
+                        sessions_per_owner=self._slots,
+                        model_session_quota=self._quota,
+                    )
+                    if reservation == "duplicate":
+                        return AdmissionResult("duplicate", session_id)
+                    if reservation != "reserved":
+                        return unavailable
                     self._active[session_id] = owner
                     if not await self._repository.create(candidate.to_document()):
                         self._active.pop(session_id, None)
@@ -220,6 +250,9 @@ class CapacityService:
                             LifecycleState.ENDED, at=self._utc_now(), terminal_reason="completed"
                         )
                         await self._repository.replace(session_id, ended.model_dump(by_alias=True))
+                await self._repository.release_capacity(
+                    session_id, physical_owner_id=self._active[session_id]
+                )
                 self._active.pop(session_id, None)
 
                 self._publish_capacity()
@@ -244,10 +277,17 @@ class CapacityService:
                     or current.physical_owner_id != self._active[session_id]
                 ):
                     raise PermissionError("session_model_budget_not_owned")
-                if len(self._active) + len(self._extra_models) >= self._quota:
-                    return None
                 reservation = uuid4().hex
-                self._extra_models[reservation] = session_id
+                if (
+                    await self._repository.reserve_model_capacity(
+                        session_id,
+                        physical_owner_id=current.physical_owner_id,
+                        reservation=reservation,
+                    )
+                    is not True
+                ):
+                    return None
+                self._extra_models[reservation] = (session_id, current.physical_owner_id)
                 self._publish_capacity()
                 return reservation
 
@@ -255,15 +295,24 @@ class CapacityService:
         """Release only after confirmed model disposal; duplicate release is harmless."""
         async with asyncio.timeout(self._budget):
             async with self._lock:
-                self._extra_models.pop(reservation, None)
+                binding = self._extra_models.get(reservation)
+                if binding is None:
+                    return
+                session_id, physical_owner_id = binding
+                await self._repository.release_model_capacity(
+                    reservation, session_id=session_id, physical_owner_id=physical_owner_id
+                )
+                del self._extra_models[reservation]
                 self._publish_capacity()
 
     async def set_model_session_quota(self, quota: int) -> None:
         if type(quota) is not int or not 0 <= quota <= 10000:
             raise ValueError("invalid_model_session_quota")
-        async with self._lock:
-            self._quota = quota
-            self._publish_capacity()
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                await self._repository.set_model_capacity_quota(quota)
+                self._quota = quota
+                self._publish_capacity()
 
     async def owner_state(self, owner_id: str) -> str:
         async with self._lock:

@@ -1,5 +1,38 @@
 # US6 Local Scaling Acceptance
 
+## T123 Shared Local Authority Increment: 2026-10-28
+
+Two independent controllers sharing one session repository previously both admitted calls
+against one call/model slot; a second red-first check also allowed both handover models
+against one remaining model slot. Repository-owned atomic reservations now make both checks
+pass. All 30 capacity/profile cases pass, including the ten new shared-authority cases.
+The final complete backend run passes 394 cases with zero failures/errors/skips; its single
+warning is the expected blocked-egress assertion. All repository/type/Terraform/secret/
+publication gates and 165 tooling cases pass. The changed sequence below actually renders
+with prepared Chromium and nonempty SVG checks; all 33 documents/28 diagram sources validate.
+No new management-browser, native Linux, image or live qualification is claimed here.
+
+Controllers using the same `LocalSessionRepository` object share call/per-owner limits,
+baseline and overlapping model reservations, and the current model quota. Fixed-limit
+disagreement fails closed; explicit model-quota updates govern other controllers' next
+reservations. A terminal session record alone does not release a slot. The trusted closure
+path releases owner/epoch-bound call reservations; model tokens release only through their
+owning binding after confirmed disposal. Lost reservation/create replies remain charged,
+including when another controller is reconstructed against the same local authority.
+
+This is a deterministic in-memory authority, not an atomic Cosmos quota implementation or
+cross-process durability. Owner registries, drain state, local reservation counts/metrics
+and recovery of uncertain work remain controller-local or unimplemented. A new repository
+object loses volatile state; retaining the same object is not restart-durability evidence.
+`SharedCapacityRepository` is required for admission; the existing Cosmos session adapter
+does not implement it and receives no unsafe per-controller fallback. T123 stays unchecked
+until persistent authority, global owner/lease fencing and qualified recovery exist. T120,
+T124-T129 and all earlier provider/environment/live gates remain unchanged.
+
+The following checkpoint counts and earlier failures are historical; they are not current
+failures created or waived by this increment. Default app composition, routes, dependencies,
+infrastructure, operation budgets and network policy are unchanged.
+
 ## Authorization and Status
 
 T089-T093 are locally implemented/tested. The user explicitly selected **Continue local
@@ -32,7 +65,7 @@ complete actual AKS deployment, authenticated live cluster operation or independ
 enforcement. Default application startup is unchanged;
 neither capacity controls nor internal drain endpoints are automatically mounted.
 
-## Executed Evidence
+## Historical Executed Evidence
 
 The locked Python 3.12 backend environment was exercised on native Windows with outbound
 sockets denied. No model/phone connection, Azure credentials, Cosmos account, emulator or
@@ -121,22 +154,30 @@ Duplicate sessions cannot claim another owner or consume another confirmed reser
 sequenceDiagram
     participant Admission as Trusted admission caller
     participant Capacity as Local control coordinator
-    participant Store as Runtime session repository
+    participant Store as Runtime session and shared local quota authority
     participant Model as Explicit model adapter
     Admission->>Capacity: Opaque session and provider references
-    Capacity->>Capacity: Bound pending work, check serving owner and quotas
-    Capacity->>Store: Conditional metadata-only session creation
-    alt Creation confirmed
-        Store-->>Capacity: Created once
-        Capacity-->>Admission: Admitted with pinned owner metadata
-    else Unknown response
-        Capacity->>Capacity: Retain conservative reservation
-        Capacity-->>Admission: Unavailable, no claimed connection success
+    Capacity->>Capacity: Bound pending work and check serving owner
+    Capacity->>Store: Atomically reserve shared call and baseline model slots
+    alt Reservation accepted
+        Capacity->>Store: Conditional metadata-only session creation
+        alt Creation confirmed
+            Store-->>Capacity: Created once
+            Capacity-->>Admission: Admitted with pinned owner metadata
+        else Unknown response
+            Note over Capacity,Store: Retain conservative reservation
+            Capacity-->>Admission: Unavailable, no claimed connection success
+        end
+    else Duplicate or unavailable budget
+        Store-->>Capacity: Bounded denial without session creation
+        Capacity-->>Admission: Duplicate or unavailable
     end
     Model->>Capacity: Reserve transient receiver model slot
+    Capacity->>Store: Atomically reserve owner-bound overlap token
     Capacity-->>Model: Token or quota unavailable
     Note over Capacity,Model: Source and prepared receiver overlap is charged
     Model->>Capacity: Release token after confirmed model disposal
+    Capacity->>Store: Release matching owner-bound model reservation
 ```
 
 The default pending bound is 256 and registry bound is 1024 owners; these are implementation

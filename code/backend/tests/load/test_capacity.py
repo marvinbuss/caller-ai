@@ -145,6 +145,25 @@ async def admit(service, index):
     )
 
 
+def build_controllers(
+    repository, clock, configuration, *, maximum_sessions, model_session_quota, count=2
+):
+    from caller_runtime.services.capacity import CapacityService
+
+    return [
+        CapacityService(
+            repository=repository,
+            configuration=configuration,
+            sessions_per_owner=1,
+            maximum_sessions=maximum_sessions,
+            model_session_quota=model_session_quota,
+            monotonic=clock.monotonic,
+            utc_now=clock.utc_now,
+        )
+        for _index in range(count)
+    ]
+
+
 async def test_virtual_100_to_200_schedule_preserves_all_existing_owners(capacity_case):
     service, repository, clock = capacity_case
     await service.register_owner("owner-one")
@@ -200,6 +219,184 @@ async def test_quota_and_duplicate_admission_are_atomic(capacity_case):
     assert await service.active_count() == 1
     await service.set_model_session_quota(1)
     assert (await admit(service, 2)).outcome == "unavailable"
+    assert await repository.read("session-capacity-2") is None
+
+
+async def test_independent_controllers_share_the_call_and_model_budget(
+    capacity_case, community_configuration
+):
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=1, model_session_quota=1
+    )
+    await controllers[0].register_owner("owner-one")
+    await controllers[1].register_owner("owner-two")
+    results = await asyncio.gather(admit(controllers[0], 1), admit(controllers[1], 2))
+    assert sorted(result.outcome for result in results) == ["admitted", "unavailable"]
+    documents = [await repository.read(f"session-capacity-{index}") for index in (1, 2)]
+    assert sum(document is not None for document in documents) == 1
+
+
+async def test_independent_controllers_share_overlapping_model_reservations(
+    capacity_case, community_configuration
+):
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository,
+        clock,
+        community_configuration,
+        maximum_sessions=3,
+        model_session_quota=3,
+        count=3,
+    )
+    for index, controller in enumerate(controllers):
+        await controller.register_owner(f"owner-{index}")
+    assert (await admit(controllers[0], 1)).outcome == "admitted"
+    assert (await admit(controllers[1], 2)).outcome == "admitted"
+    reservations = await asyncio.gather(
+        controllers[0].reserve_model_session("session-capacity-1"),
+        controllers[1].reserve_model_session("session-capacity-2"),
+    )
+    assert sum(reservation is not None for reservation in reservations) == 1
+    assert (await admit(controllers[2], 3)).outcome == "unavailable"
+    winner = next(index for index, reservation in enumerate(reservations) if reservation)
+    await controllers[winner].release_model_session(reservations[winner])
+    assert (await admit(controllers[2], 3)).outcome == "admitted"
+
+
+@pytest.mark.parametrize("same_session", [False, True])
+async def test_shared_owner_slots_and_duplicate_calls_are_atomic(
+    capacity_case, community_configuration, same_session
+):
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )
+    for controller in controllers:
+        await controller.register_owner("shared-owner")
+    results = await asyncio.gather(
+        admit(controllers[0], 1), admit(controllers[1], 1 if same_session else 2)
+    )
+    expected = "duplicate" if same_session else "unavailable"
+    assert sorted(result.outcome for result in results) == sorted(["admitted", expected])
+
+
+async def test_quota_changes_apply_to_other_controllers(capacity_case, community_configuration):
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository,
+        clock,
+        community_configuration,
+        maximum_sessions=3,
+        model_session_quota=3,
+        count=3,
+    )
+    for index, controller in enumerate(controllers):
+        await controller.register_owner(f"owner-{index}")
+    assert (await admit(controllers[0], 1)).outcome == "admitted"
+    assert (await admit(controllers[1], 2)).outcome == "admitted"
+    await controllers[0].set_model_session_quota(2)
+    assert (await admit(controllers[2], 3)).outcome == "unavailable"
+    await controllers[0].set_model_session_quota(3)
+    assert (await admit(controllers[2], 3)).outcome == "admitted"
+
+
+async def test_terminal_metadata_does_not_release_a_call_reservation(
+    capacity_case, community_configuration
+):
+    from caller_runtime.adapters.session_repository import metadata_model
+    from caller_runtime.domain.session import LifecycleState
+
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=1, model_session_quota=1
+    )
+    await controllers[0].register_owner("owner-one")
+    await controllers[1].register_owner("owner-two")
+    assert (await admit(controllers[0], 1)).outcome == "admitted"
+    current = metadata_model(await repository.read("session-capacity-1"))
+    ended = current.transition(
+        LifecycleState.ENDED, at=clock.utc_now(), terminal_reason="completed"
+    )
+    await repository.replace("session-capacity-1", ended.model_dump(by_alias=True))
+    assert (await admit(controllers[1], 2)).outcome == "unavailable"
+    await controllers[0].release("session-capacity-1")
+    await controllers[0].release("session-capacity-1")
+    assert (await admit(controllers[1], 2)).outcome == "admitted"
+
+
+@pytest.mark.parametrize("operation", ["call", "model"])
+async def test_ambiguous_reservations_remain_held_for_a_reconstructed_controller(
+    capacity_case, community_configuration, monkeypatch, operation
+):
+    _service, repository, clock = capacity_case
+    limit = 1 if operation == "call" else 2
+    controllers = build_controllers(
+        repository,
+        clock,
+        community_configuration,
+        maximum_sessions=limit,
+        model_session_quota=limit,
+    )
+    await controllers[0].register_owner("owner-one")
+    if operation == "model":
+        assert (await admit(controllers[0], 1)).outcome == "admitted"
+    name = "reserve_capacity" if operation == "call" else "reserve_model_capacity"
+    reserve = getattr(repository, name)
+
+    async def lost_response(*arguments, **options):
+        await reserve(*arguments, **options)
+        raise RuntimeError("synthetic_reservation_response_lost")
+
+    monkeypatch.setattr(repository, name, lost_response)
+    if operation == "call":
+        assert (await admit(controllers[0], 1)).outcome == "unavailable"
+    else:
+        with pytest.raises(RuntimeError, match="synthetic_reservation_response_lost"):
+            await controllers[0].reserve_model_session("session-capacity-1")
+    monkeypatch.setattr(repository, name, reserve)
+    await controllers[1].register_owner("reconstructed-owner")
+    assert (await admit(controllers[1], 2)).outcome == "unavailable"
+    assert await repository.read("session-capacity-2") is None
+
+
+async def test_foreign_controller_cannot_free_another_models_reservation(
+    capacity_case, community_configuration
+):
+    from caller_runtime.adapters.session_repository import SessionConflict
+
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=3
+    )
+    for index, controller in enumerate(controllers):
+        await controller.register_owner(f"owner-{index}")
+        assert (await admit(controller, index + 1)).outcome == "admitted"
+    reservation = await controllers[0].reserve_model_session("session-capacity-1")
+    assert reservation is not None
+    await controllers[1].release_model_session(reservation)
+    with pytest.raises(SessionConflict, match="model_capacity_not_owned"):
+        await repository.release_model_capacity(
+            reservation, session_id="session-capacity-2", physical_owner_id="owner-1"
+        )
+    assert await controllers[1].reserve_model_session("session-capacity-2") is None
+    await controllers[0].release_model_session(reservation)
+    await controllers[0].release_model_session(reservation)
+    assert await controllers[1].reserve_model_session("session-capacity-2") is not None
+
+
+async def test_mismatched_controller_limits_fail_closed(capacity_case, community_configuration):
+    _service, repository, clock = capacity_case
+    first = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=1, model_session_quota=2
+    )[0]
+    second = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await first.register_owner("owner-one")
+    await second.register_owner("owner-two")
+    assert (await admit(first, 1)).outcome == "admitted"
+    assert (await admit(second, 2)).outcome == "unavailable"
     assert await repository.read("session-capacity-2") is None
 
 

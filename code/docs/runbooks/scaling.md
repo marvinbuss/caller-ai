@@ -36,18 +36,24 @@ flowchart TD
 Decide new capacity using confirmed demand, conservative session reservations, model quotas,
 transient handover overlap and routing/connection limits, not CPU alone. `active_count()` and
 `caller.active.reservations` are local reservations, possibly including ambiguous creates, not
-verified active phone calls. Current controllers/registries are volatile and instance-local;
-adding another controller does not establish global quota consensus or safe restart ownership.
+verified active phone calls. T123 now shares atomic call/model reservation accounting when
+controllers explicitly use the same `LocalSessionRepository` authority object. Fixed limits
+must agree; current model-quota updates affect every controller using that object. This is
+not cross-process quota consensus, persistent Cosmos authority or restart ownership. Owner
+registries, drain state and existing reservation metrics remain controller-local; do not
+infer safe cross-controller drain from shared admission accounting.
 
 | Input or signal | Required handling |
 |-----------------|-------------------|
 | Slots per owner and aggregate maximum | Explicit reviewed limits; admit only to serving, healthy owners with remaining slots |
+| Shared local authority | Use the same repository object for all tested controllers; mismatched fixed limits deny admission. Unsupported repositories have no unsafe local-accounting fallback. |
 | Model quota | Charge baseline sessions plus receiver overlap; reserve before preparation and release only after confirmed disposal |
 | Quota reduction or zero quota | Block new allocations rather than disconnect established calls; zero reports saturated |
 | Pending admission | Default 256, configurable within 1-4096; reject excess before the repository lock instead of accumulating work |
 | Owner registry | Local bound 1024; do not infer cluster size or live capacity from this safety cap |
 | Lease and operation budgets | Heartbeats cannot revive an expired persisted lease; operations use finite original budgets up to ten seconds |
 | Response uncertainty | Retain conservative reservations after an ambiguous create; denied admission is not proof no metadata was committed |
+| Reservation reply lost or metadata already terminal | Keep the authority reservation charged. Ended metadata or lease expiry alone does not authorize reclaiming it; verified closure/disposal and the matching owner binding are required. |
 | Model/phone/connection/RU limits | Obtain actual approved quotas, throttling behavior, headroom and provider eligibility before deployment |
 | Cost | Model cost per call, transient overlap, Cosmos RU, AKS nodes, firewall/egress and telemetry ingestion are unmeasured; require accountable limits |
 | Telemetry retention/caps | Explicit reviewed Terraform inputs; a declared ingestion cap is not a complete billing or privacy guarantee |
@@ -173,6 +179,13 @@ The isolated checkpoint passes **80 backend cases**, **32 management metric case
 operational-tool cases**. Full backend discovery has **313 passes and 13 missing-media errors**;
 it is not green. The earlier Azure deadline failure did not recur in that run, but is not
 proved repaired. Management browser failures and other prior release gates were not waived.
+
+Those counts describe the earlier checkpoint. The current T123 local increment passes all
+30 capacity/profile cases, including ten cross-controller/authority boundary cases; see
+[current scoped results](../acceptance/us6.md#t123-shared-local-authority-increment-2026-10-28).
+Its complete backend run passes 394 cases; repository/type/Terraform/secret/publication checks
+and all 165 tooling cases pass. The changed admission sequence actually renders locally.
+It does not complete persistent quota/owner authority, cluster removal or live qualification.
 
 Local numeric measurement fixtures test acceptance boundaries, including strict integer zero
 disconnect evidence; they do not supply live samples. The opt-in wall-clock profile still

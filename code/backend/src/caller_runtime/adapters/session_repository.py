@@ -2,8 +2,9 @@
 
 import asyncio
 import copy
+import re
 from collections.abc import Mapping
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError, HttpResponseError
@@ -132,13 +133,127 @@ def verify_handover(
 
 
 class LocalSessionRepository:
-    """Conditional deterministic stand-in; not production persistence or Cosmos evidence."""
+    """Conditional session/shared-capacity stand-in; not production or Cosmos evidence."""
 
     def __init__(self) -> None:
         self._records: dict[str, dict[str, Any]] = {}
         self._handovers: dict[tuple[str, str], dict[str, Any]] = {}
+        self._capacity_calls: dict[str, tuple[str, int]] = {}
+        self._capacity_models: dict[str, tuple[str, str, int]] = {}
+        self._capacity_limits: tuple[int, int] | None = None
+        self._capacity_model_quota: int | None = None
         self._version = 0
         self._lock = asyncio.Lock()
+
+    async def reserve_capacity(
+        self,
+        metadata: Mapping[str, Any],
+        *,
+        maximum_sessions: int,
+        sessions_per_owner: int,
+        model_session_quota: int,
+    ) -> Literal["reserved", "duplicate", "unavailable"]:
+        session = metadata_model(metadata)
+        if (
+            any(
+                type(value) is not int or not 1 <= value <= 10000
+                for value in (maximum_sessions, sessions_per_owner)
+            )
+            or type(model_session_quota) is not int
+            or not 0 <= model_session_quota <= 10000
+        ):
+            raise ValueError("invalid_capacity_limits")
+        async with self._lock:
+            limits = (maximum_sessions, sessions_per_owner)
+            if self._capacity_limits is not None and self._capacity_limits != limits:
+                raise ValueError("capacity_policy_conflict")
+            self._capacity_limits = limits
+            if self._capacity_model_quota is None:
+                self._capacity_model_quota = model_session_quota
+            if session.session_id in self._records or session.session_id in self._capacity_calls:
+                return "duplicate"
+            owned = sum(
+                owner == session.physical_owner_id
+                for owner, _epoch in self._capacity_calls.values()
+            )
+            if (
+                len(self._capacity_calls) >= maximum_sessions
+                or len(self._capacity_calls) + len(self._capacity_models)
+                >= self._capacity_model_quota
+                or owned >= sessions_per_owner
+            ):
+                return "unavailable"
+            self._capacity_calls[session.session_id] = (
+                session.physical_owner_id,
+                session.connection_epoch,
+            )
+            return "reserved"
+
+    async def release_capacity(self, session_id: str, *, physical_owner_id: str) -> None:
+        async with self._lock:
+            reservation = self._capacity_calls.get(session_id)
+            if reservation is None:
+                return
+            document = self._records.get(session_id)
+            current = metadata_model(document) if document is not None else None
+            if (
+                current is None
+                or current.state != LifecycleState.ENDED
+                or reservation != (physical_owner_id, current.connection_epoch)
+                or current.physical_owner_id != physical_owner_id
+            ):
+                raise SessionConflict("capacity_closure_not_confirmed")
+            del self._capacity_calls[session_id]
+
+    async def reserve_model_capacity(
+        self, session_id: str, *, physical_owner_id: str, reservation: str
+    ) -> bool:
+        if not isinstance(reservation, str) or not re.fullmatch(r"[a-f0-9]{32}", reservation):
+            raise ValueError("invalid_model_reservation")
+        async with self._lock:
+            document = self._records.get(session_id)
+            current = metadata_model(document) if document is not None else None
+            if (
+                current is None
+                or current.state == LifecycleState.ENDED
+                or current.physical_owner_id != physical_owner_id
+                or self._capacity_calls.get(session_id)
+                != (physical_owner_id, current.connection_epoch)
+                or self._capacity_model_quota is None
+            ):
+                raise SessionConflict("model_capacity_not_owned")
+            binding = (session_id, physical_owner_id, current.connection_epoch)
+            if reservation in self._capacity_models:
+                if self._capacity_models[reservation] != binding:
+                    raise SessionConflict("model_capacity_not_owned")
+                return True
+            if len(self._capacity_calls) + len(self._capacity_models) >= self._capacity_model_quota:
+                return False
+            self._capacity_models[reservation] = binding
+            return True
+
+    async def release_model_capacity(
+        self, reservation: str, *, session_id: str, physical_owner_id: str
+    ) -> None:
+        async with self._lock:
+            binding = self._capacity_models.get(reservation)
+            if binding is None:
+                return
+            document = self._records.get(session_id)
+            current = metadata_model(document) if document is not None else None
+            if (
+                current is None
+                or binding != (session_id, physical_owner_id, current.connection_epoch)
+                or current.physical_owner_id != physical_owner_id
+            ):
+                raise SessionConflict("model_capacity_not_owned")
+            del self._capacity_models[reservation]
+
+    async def set_model_capacity_quota(self, quota: int) -> None:
+        if type(quota) is not int or not 0 <= quota <= 10000:
+            raise ValueError("invalid_model_session_quota")
+        async with self._lock:
+            self._capacity_model_quota = quota
 
     def _snapshot(self, session: CallSession) -> dict[str, Any]:
         self._version += 1
