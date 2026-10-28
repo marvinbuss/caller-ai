@@ -26,6 +26,20 @@ class CapacityRepository(Protocol):
 
 
 class SharedCapacityRepository(CapacityRepository, Protocol):
+    async def register_capacity_owner(
+        self, owner_id: str
+    ) -> Literal["serving", "draining", "drained"]: ...
+
+    async def capacity_owner_state(
+        self, owner_id: str
+    ) -> Literal["serving", "draining", "drained"]: ...
+
+    async def begin_capacity_drain(
+        self, owner_id: str
+    ) -> Literal["serving", "draining", "drained"]: ...
+
+    async def finish_capacity_drain(self, owner_id: str) -> Literal["postponed", "drained"]: ...
+
     async def reserve_capacity(
         self,
         metadata: Mapping[str, Any],
@@ -131,7 +145,8 @@ class CapacityService:
                 if owner_id not in self._owners:
                     if len(self._owners) >= 1024:
                         raise RuntimeError("owner_registry_full")
-                    self._owners[owner_id] = OwnerCapacity("serving", self._monotonic())
+                    state = await self._repository.register_capacity_owner(owner_id)
+                    self._owners[owner_id] = OwnerCapacity(state, self._monotonic())
 
     async def admit(self, *, session_id: str, provider_call_ref: str) -> AdmissionResult:
         try:
@@ -206,6 +221,7 @@ class CapacityService:
         async with asyncio.timeout(self._budget):
             async with self._lock:
                 owner = self._owners[owner_id]
+                owner.state = await self._repository.capacity_owner_state(owner_id)
                 if (
                     owner.state == "drained"
                     or self._monotonic() - owner.heartbeat_at >= self._lease
@@ -315,24 +331,24 @@ class CapacityService:
                 self._publish_capacity()
 
     async def owner_state(self, owner_id: str) -> str:
-        async with self._lock:
-            return self._owners[owner_id].state
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                owner = self._owners[owner_id]
+                owner.state = await self._repository.capacity_owner_state(owner_id)
+                return owner.state
 
     async def begin_drain(self, owner_id: str) -> str:
         async with asyncio.timeout(self._budget):
             async with self._lock:
                 owner = self._owners[owner_id]
-                if owner.state == "serving":
-                    owner.state = "draining"
+                owner.state = await self._repository.begin_capacity_drain(owner_id)
                 return owner.state
 
     async def finish_drain(self, owner_id: str) -> str:
         async with asyncio.timeout(self._budget):
             async with self._lock:
                 owner = self._owners[owner_id]
-                if owner.state == "serving":
-                    raise PermissionError("drain_not_started")
-                if owner_id in self._active.values():
-                    return "postponed"
-                owner.state = "drained"
-                return "drained"
+                outcome = await self._repository.finish_capacity_drain(owner_id)
+                if outcome == "drained":
+                    owner.state = "drained"
+                return outcome

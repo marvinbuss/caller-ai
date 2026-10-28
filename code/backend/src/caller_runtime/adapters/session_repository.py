@@ -140,10 +140,55 @@ class LocalSessionRepository:
         self._handovers: dict[tuple[str, str], dict[str, Any]] = {}
         self._capacity_calls: dict[str, tuple[str, int]] = {}
         self._capacity_models: dict[str, tuple[str, str, int]] = {}
+        self._capacity_owners: dict[str, Literal["serving", "draining", "drained"]] = {}
         self._capacity_limits: tuple[int, int] | None = None
         self._capacity_model_quota: int | None = None
         self._version = 0
         self._lock = asyncio.Lock()
+
+    async def register_capacity_owner(
+        self, owner_id: str
+    ) -> Literal["serving", "draining", "drained"]:
+        if not isinstance(owner_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", owner_id
+        ):
+            raise ValueError("invalid_capacity_owner")
+        async with self._lock:
+            if owner_id not in self._capacity_owners and len(self._capacity_owners) >= 1024:
+                raise RuntimeError("owner_registry_full")
+            return self._capacity_owners.setdefault(owner_id, "serving")
+
+    async def capacity_owner_state(
+        self, owner_id: str
+    ) -> Literal["serving", "draining", "drained"]:
+        async with self._lock:
+            if owner_id not in self._capacity_owners:
+                raise SessionConflict("capacity_owner_unknown")
+            return self._capacity_owners[owner_id]
+
+    async def begin_capacity_drain(
+        self, owner_id: str
+    ) -> Literal["serving", "draining", "drained"]:
+        async with self._lock:
+            if owner_id not in self._capacity_owners:
+                raise SessionConflict("capacity_owner_unknown")
+            if self._capacity_owners[owner_id] == "serving":
+                self._capacity_owners[owner_id] = "draining"
+            return self._capacity_owners[owner_id]
+
+    async def finish_capacity_drain(self, owner_id: str) -> Literal["postponed", "drained"]:
+        async with self._lock:
+            state = self._capacity_owners.get(owner_id)
+            if state is None:
+                raise SessionConflict("capacity_owner_unknown")
+            if state == "serving":
+                raise PermissionError("drain_not_started")
+            if any(owner == owner_id for owner, _epoch in self._capacity_calls.values()) or any(
+                owner == owner_id for _session, owner, _epoch in self._capacity_models.values()
+            ):
+                return "postponed"
+            self._capacity_owners[owner_id] = "drained"
+            return "drained"
 
     async def reserve_capacity(
         self,
@@ -164,6 +209,8 @@ class LocalSessionRepository:
         ):
             raise ValueError("invalid_capacity_limits")
         async with self._lock:
+            if self._capacity_owners.get(session.physical_owner_id) != "serving":
+                return "unavailable"
             limits = (maximum_sessions, sessions_per_owner)
             if self._capacity_limits is not None and self._capacity_limits != limits:
                 raise ValueError("capacity_policy_conflict")

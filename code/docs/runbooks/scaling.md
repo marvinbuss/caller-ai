@@ -39,14 +39,17 @@ transient handover overlap and routing/connection limits, not CPU alone. `active
 verified active phone calls. T123 now shares atomic call/model reservation accounting when
 controllers explicitly use the same `LocalSessionRepository` authority object. Fixed limits
 must agree; current model-quota updates affect every controller using that object. This is
-not cross-process quota consensus, persistent Cosmos authority or restart ownership. Owner
-registries, drain state and existing reservation metrics remain controller-local; do not
-infer safe cross-controller drain from shared admission accounting.
+not cross-process quota consensus, persistent Cosmos authority or restart ownership. The
+same local authority now also holds owner serving/draining/drained phase: it atomically denies
+new reservations after drain and postpones completion while any shared call/model reservation
+remains. Owner heartbeat/leases, physical connections and existing reservation metrics remain
+controller-local; this does not prove cluster-wide safe deletion or durable recovery.
 
 | Input or signal | Required handling |
 |-----------------|-------------------|
 | Slots per owner and aggregate maximum | Explicit reviewed limits; admit only to serving, healthy owners with remaining slots |
 | Shared local authority | Use the same repository object for all tested controllers; mismatched fixed limits deny admission. Unsupported repositories have no unsafe local-accounting fallback. |
+| Shared local owner drain phase | Registration cannot reset draining/drained; state-read or transition uncertainty must not return cached success. A different controller's call or undisposed model still postpones completion. |
 | Model quota | Charge baseline sessions plus receiver overlap; reserve before preparation and release only after confirmed disposal |
 | Quota reduction or zero quota | Block new allocations rather than disconnect established calls; zero reports saturated |
 | Pending admission | Default 256, configurable within 1-4096; reject excess before the repository lock instead of accumulating work |
@@ -110,6 +113,9 @@ does not promise recovery from hardware loss without disconnects or automatic so
    fixed node count or longer grace timer is not deployed enforcement.
 3. Start drain through `POST /v1/operations/drain/{owner_id}`. This fences new assignments but
    leaves established media, callbacks and required owner heartbeats on the same owner.
+   In controlled local tests, all controllers must use the same explicit repository authority;
+   committed drain phase is checked atomically with call-slot reservation. This is not a
+   persistent cluster fence or permission to operate a real environment.
 4. Use `POST /v1/operations/drain/{owner_id}/complete` and fresh authenticated
    `GET /v1/operations/drain/{owner_id}` status. Require exact owner, `state=drained` and a
    boolean `canTerminate=true`. Reservations **and** unacknowledged physical connections block
@@ -193,6 +199,12 @@ reports 392 backend passes/two handover failures before management discovery; bo
 cases pass in one unchanged local check. The unproven host-only investigation is parked for
 now, not repaired or waived; current required CI remains blocked. See the acceptance record
 for exact test names, results and scope. No timeout or assertion was changed to obtain a pass.
+
+The subsequent shared-local-drain increment adds nine cases: 39 capacity/profile and 18
+planned-drain cases pass, and the complete backend passes 403 cases locally. Persistent
+owner/lease authority and actual physical/cluster removal qualification remain open.
+Repository/type/Terraform/secret/publication gates and all 165 tooling cases pass, and the
+updated shared-drain sequence renders locally without changing browser or timeout controls.
 
 Local numeric measurement fixtures test acceptance boundaries, including strict integer zero
 disconnect evidence; they do not supply live samples. The opt-in wall-clock profile still

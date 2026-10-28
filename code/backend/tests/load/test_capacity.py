@@ -400,6 +400,131 @@ async def test_mismatched_controller_limits_fail_closed(capacity_case, community
     assert await repository.read("session-capacity-2") is None
 
 
+@pytest.mark.parametrize("scenario", ["admission", "remote-call", "model-overlap"])
+async def test_drain_uses_shared_local_owner_and_reservation_authority(
+    capacity_case, community_configuration, scenario
+):
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )
+    for controller in controllers:
+        await controller.register_owner("shared-owner")
+    reservation = None
+    if scenario == "remote-call":
+        assert (await admit(controllers[1], 1)).outcome == "admitted"
+    elif scenario == "model-overlap":
+        assert (await admit(controllers[0], 1)).outcome == "admitted"
+        reservation = await controllers[0].reserve_model_session("session-capacity-1")
+        assert reservation is not None
+        await controllers[0].release("session-capacity-1")
+    assert await controllers[0].begin_drain("shared-owner") == "draining"
+    if scenario == "admission":
+        assert (await admit(controllers[1], 2)).outcome == "unavailable"
+    else:
+        assert await controllers[0].finish_drain("shared-owner") == "postponed"
+        if reservation is not None:
+            await controllers[0].release_model_session(reservation)
+        else:
+            await controllers[1].release("session-capacity-1")
+    assert await controllers[1].owner_state("shared-owner") == "draining"
+    assert await controllers[0].finish_drain("shared-owner") == "drained"
+    assert await controllers[1].owner_state("shared-owner") == "drained"
+
+
+@pytest.mark.parametrize("state", ["draining", "drained"])
+async def test_reconstructed_controller_cannot_reset_shared_drain(
+    capacity_case, community_configuration, state
+):
+    _service, repository, clock = capacity_case
+    original = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await original.register_owner("shared-owner")
+    await original.begin_drain("shared-owner")
+    if state == "drained":
+        assert await original.finish_drain("shared-owner") == "drained"
+    reconstructed = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await reconstructed.register_owner("shared-owner")
+    await reconstructed.register_owner("shared-owner")
+    assert await reconstructed.owner_state("shared-owner") == state
+    assert (await admit(reconstructed, 1)).outcome == "unavailable"
+    if state == "drained":
+        with pytest.raises(PermissionError, match="owner_lease_lost"):
+            await reconstructed.heartbeat("shared-owner")
+    else:
+        await reconstructed.heartbeat("shared-owner")
+        assert await original.owner_state("shared-owner") == "draining"
+
+
+@pytest.mark.parametrize("operation", ["begin", "finish"])
+async def test_unknown_drain_reply_retains_shared_authority(
+    capacity_case, community_configuration, monkeypatch, operation
+):
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )
+    for controller in controllers:
+        await controller.register_owner("shared-owner")
+    if operation == "finish":
+        await controllers[0].begin_drain("shared-owner")
+    name = "begin_capacity_drain" if operation == "begin" else "finish_capacity_drain"
+    change = getattr(repository, name)
+
+    async def lost_response(owner_id):
+        await change(owner_id)
+        raise RuntimeError("synthetic_drain_response_lost")
+
+    monkeypatch.setattr(repository, name, lost_response)
+    method = controllers[0].begin_drain if operation == "begin" else controllers[0].finish_drain
+    with pytest.raises(RuntimeError, match="synthetic_drain_response_lost"):
+        await method("shared-owner")
+    expected = "draining" if operation == "begin" else "drained"
+    assert await controllers[1].owner_state("shared-owner") == expected
+    assert (await admit(controllers[1], 1)).outcome == "unavailable"
+
+
+async def test_unknown_shared_owner_state_does_not_return_cached_success(
+    capacity_case, community_configuration, monkeypatch
+):
+    _service, repository, clock = capacity_case
+    controller = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )[0]
+    await controller.register_owner("shared-owner")
+
+    async def unavailable(owner_id):
+        raise RuntimeError("synthetic_owner_authority_unavailable")
+
+    monkeypatch.setattr(repository, "capacity_owner_state", unavailable)
+    with pytest.raises(RuntimeError, match="synthetic_owner_authority_unavailable"):
+        await controller.owner_state("shared-owner")
+    with pytest.raises(RuntimeError, match="synthetic_owner_authority_unavailable"):
+        await controller.heartbeat("shared-owner")
+
+
+async def test_draining_existing_call_can_prepare_model_but_completion_waits_for_disposal(
+    capacity_case, community_configuration
+):
+    _service, repository, clock = capacity_case
+    controllers = build_controllers(
+        repository, clock, community_configuration, maximum_sessions=2, model_session_quota=2
+    )
+    for controller in controllers:
+        await controller.register_owner("shared-owner")
+    assert (await admit(controllers[0], 1)).outcome == "admitted"
+    await controllers[1].begin_drain("shared-owner")
+    reservation = await controllers[0].reserve_model_session("session-capacity-1")
+    assert reservation is not None
+    await controllers[0].release("session-capacity-1")
+    assert await controllers[1].finish_drain("shared-owner") == "postponed"
+    await controllers[0].release_model_session(reservation)
+    assert await controllers[1].finish_drain("shared-owner") == "drained"
+
+
 @pytest.mark.parametrize("failure", ["read", "create-response-lost"])
 async def test_unknown_store_state_denies_admission_without_freeing_uncertain_reservation(
     capacity_case, monkeypatch, failure

@@ -1,5 +1,32 @@
 # US6 Local Scaling Acceptance
 
+## T123 Shared Local Drain Increment: 2026-10-28
+
+Three red-first cases reproduce cross-controller admission after a committed drain and
+premature completion while a different controller's call or undisposed model remains.
+Shared repository-owned owner phase now fences call reservation atomically and checks all
+shared call/model reservations before committing drained. The same three cases pass.
+Nine new cases also cover reconstruction without resetting drain, ambiguous begin/finish
+replies, unavailable owner-state reads and existing-call model preparation during drain.
+All 39 capacity/profile and 18 planned-drain cases pass (57 combined); the complete backend
+passes 403 cases with zero failures/errors/skips and the expected blocked-egress warning.
+All repository/type/Terraform/secret/publication checks and 165 tooling cases pass. The
+changed shared-drain sequence actually renders with prepared Chromium and valid SVG bounds;
+33 documents/28 diagram sources validate. These are local results, not a new hosted outcome.
+
+Owner registration is bounded and preserves existing draining/drained phase. Controller
+state reads and heartbeats consult the same local authority instead of claiming cached
+serving/drained state when the read fails. New calls cannot enter after the shared drain
+transition, but established calls can reserve a handover model within the existing quota;
+its undisposed token still postpones completion. Unknown transition responses do not undo
+the committed phase. No undrain or forced expiry/reclamation operation is added.
+
+This remains a same-object in-memory authority. Heartbeat/lease coordination, physical
+connection registries, metrics, durable owner fencing, cross-process persistence and recovery
+are not completed by shared local phase. T123 stays unchecked, all live/environment gates
+remain intact, and no new hosted/image/live verification is claimed for this increment.
+The earlier scoped CI results and parked failures below remain historical evidence.
+
 ## T123 Shared Local Authority Increment: 2026-10-28
 
 Observed [run 40606716532](https://github.com/marvinbuss/caller-ai/actions/runs/40606716532)
@@ -38,8 +65,9 @@ owning binding after confirmed disposal. Lost reservation/create replies remain 
 including when another controller is reconstructed against the same local authority.
 
 This is a deterministic in-memory authority, not an atomic Cosmos quota implementation or
-cross-process durability. Owner registries, drain state, local reservation counts/metrics
-and recovery of uncertain work remain controller-local or unimplemented. A new repository
+cross-process durability. Shared local drain phase is added by the increment above; owner
+heartbeat/leases, connection registries, reservation counts/metrics and durable recovery
+remain controller-local or unimplemented. A new repository
 object loses volatile state; retaining the same object is not restart-durability evidence.
 `SharedCapacityRepository` is required for admission; the existing Cosmos session adapter
 does not implement it and receives no unsafe per-controller fallback. T123 stays unchecked
@@ -173,6 +201,7 @@ sequenceDiagram
     participant Capacity as Local control coordinator
     participant Store as Runtime session and shared local quota authority
     participant Model as Explicit model adapter
+    participant Operator as Authorized local drain caller
     Admission->>Capacity: Opaque session and provider references
     Capacity->>Capacity: Bound pending work and check serving owner
     Capacity->>Store: Atomically reserve shared call and baseline model slots
@@ -195,6 +224,16 @@ sequenceDiagram
     Note over Capacity,Model: Source and prepared receiver overlap is charged
     Model->>Capacity: Release token after confirmed model disposal
     Capacity->>Store: Release matching owner-bound model reservation
+    Operator->>Capacity: Begin drain for registered owner
+    Capacity->>Store: Commit shared local draining phase
+    Note over Admission,Store: Later new call reservations are denied
+    Operator->>Capacity: Complete drain
+    Capacity->>Store: Check all shared call and model reservations
+    alt Reservation or model disposal remains unresolved
+        Store-->>Capacity: Postponed, keep draining
+    else No shared reservations remain
+        Store-->>Capacity: Commit drained
+    end
 ```
 
 The default pending bound is 256 and registry bound is 1024 owners; these are implementation
