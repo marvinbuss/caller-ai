@@ -14,6 +14,8 @@ from types import MappingProxyType
 from typing import Any, Literal, Never, Protocol
 from uuid import uuid4
 
+import httpx
+
 
 def reference(value: str) -> None:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value):
@@ -68,6 +70,116 @@ class OperationsPort(Protocol):
     async def status(self, owner_id: str, *, deadline: float) -> Mapping[str, Any]: ...
     async def begin(self, owner_id: str, *, deadline: float) -> Mapping[str, Any]: ...
     async def complete(self, owner_id: str, *, deadline: float) -> Mapping[str, Any]: ...
+
+
+class OperationsCredentials(Protocol):
+    async def bearer_token(self, *, origin: str, deadline: float) -> str:
+        """Resolve an authorized least-privileged token for this exact reviewed origin."""
+        ...
+
+
+class HttpOperationsClient:
+    """Explicit HTTPX/credential injection; no identity discovery or CLI activation."""
+
+    def __init__(
+        self, *, base_url: str, client: httpx.AsyncClient, credentials: OperationsCredentials
+    ) -> None:
+        try:
+            if not isinstance(base_url, str) or any(character.isspace() for character in base_url):
+                raise ValueError
+            endpoint = httpx.URL(base_url)
+            if (
+                endpoint.scheme != "https"
+                or not endpoint.host
+                or endpoint.username
+                or endpoint.password
+                or endpoint.query
+                or endpoint.fragment
+                or endpoint.path not in ("", "/")
+                or endpoint.port not in (None, 443)
+                or client is None
+                or credentials is None
+            ):
+                raise ValueError
+        except (ValueError, httpx.InvalidURL):
+            raise ValueError("invalid_operations_origin_or_ports") from None
+        self._origin = str(endpoint).rstrip("/")
+        self._client, self._credentials = client, credentials
+
+    async def _request(
+        self, owner_id: str, phase: Literal["status", "begin", "complete"], deadline: float
+    ) -> Mapping[str, Any]:
+        reference(owner_id)
+        loop = asyncio.get_running_loop()
+        if (
+            type(deadline) not in (int, float)
+            or not math.isfinite(deadline)
+            or deadline - loop.time() > 10
+        ):
+            raise ValueError("invalid_operations_deadline")
+        if deadline <= loop.time():
+            raise TimeoutError("operations_deadline_exceeded")
+        async with asyncio.timeout_at(deadline):
+            try:
+                token = await self._credentials.bearer_token(origin=self._origin, deadline=deadline)
+                if (
+                    not isinstance(token, str)
+                    or not 1 <= len(token) <= 8192
+                    or not re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", token)
+                ):
+                    raise PermissionError("operations_credentials_unavailable")
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise TimeoutError("operations_deadline_exceeded")
+                path = f"/v1/operations/drain/{owner_id}" + (
+                    "/complete" if phase == "complete" else ""
+                )
+                request = httpx.Request(
+                    "GET" if phase == "status" else "POST",
+                    self._origin + path,
+                    headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                    content=b"",
+                    extensions={"timeout": httpx.Timeout(remaining).as_dict()},
+                )
+                response = await self._client.send(
+                    request, stream=True, auth=None, follow_redirects=False
+                )
+                try:
+                    if response.status_code in {401, 403}:
+                        raise PermissionError("operations_permission_denied")
+                    if response.status_code != 200:
+                        raise RuntimeError("operations_control_unavailable")
+                    if (
+                        response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                        != "application/json"
+                    ):
+                        raise ValueError("invalid_operations_content_type")
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(body) + len(chunk) > 4096:
+                            raise ValueError("operations_response_too_large")
+                        body.extend(chunk)
+                    value = json.loads(body, object_pairs_hook=unique_object)
+                    return snapshot(value, owner_id, phase)
+                finally:
+                    await response.aclose()
+            except PermissionError:
+                raise PermissionError("operations_permission_denied") from None
+            except TimeoutError:
+                raise
+            except (ValueError, TypeError):
+                raise RuntimeError("operations_response_invalid") from None
+            except Exception:
+                raise RuntimeError("operations_control_unavailable") from None
+
+    async def status(self, owner_id: str, *, deadline: float) -> Mapping[str, Any]:
+        return await self._request(owner_id, "status", deadline)
+
+    async def begin(self, owner_id: str, *, deadline: float) -> Mapping[str, Any]:
+        return await self._request(owner_id, "begin", deadline)
+
+    async def complete(self, owner_id: str, *, deadline: float) -> Mapping[str, Any]:
+        return await self._request(owner_id, "complete", deadline)
 
 
 class ClusterPort(Protocol):

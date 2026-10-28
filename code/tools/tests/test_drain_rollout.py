@@ -122,6 +122,285 @@ def run(case, *, budget=1):
     )
 
 
+def test_authenticated_operations_http_client_preserves_deadline_and_wire_contract(case):
+    import httpx
+
+    module, _request, _operations, _cluster, _deadlines = case
+    requests, grants = [], []
+
+    class Credentials:
+        async def bearer_token(self, *, origin, deadline):
+            grants.append((origin, deadline))
+            return "synthetic-operator-credential"
+
+    async def exercise():
+        deadline = asyncio.get_running_loop().time() + 2
+
+        async def respond(request):
+            requests.append(request)
+            assert request.headers["authorization"] == "Bearer synthetic-operator-credential"
+            assert await request.aread() == b""
+            assert 0 < request.extensions["timeout"]["read"] <= 2
+            body = {"ownerId": "owner-fixture", "state": "draining", "canTerminate": False}
+            if request.method == "POST":
+                body["outcome"] = (
+                    "postponed" if request.url.path.endswith("/complete") else "draining"
+                )
+            return httpx.Response(200, json=body)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            client = module.HttpOperationsClient(
+                base_url="https://runtime.example.invalid", client=http, credentials=Credentials()
+            )
+            assert (await client.status("owner-fixture", deadline=deadline))["state"] == "draining"
+            assert (await client.begin("owner-fixture", deadline=deadline))["outcome"] == "draining"
+            assert (await client.complete("owner-fixture", deadline=deadline))[
+                "outcome"
+            ] == "postponed"
+        assert all(
+            origin == "https://runtime.example.invalid" and granted == deadline
+            for origin, granted in grants
+        )
+
+    asyncio.run(exercise())
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("GET", "/v1/operations/drain/owner-fixture"),
+        ("POST", "/v1/operations/drain/owner-fixture"),
+        ("POST", "/v1/operations/drain/owner-fixture/complete"),
+    ]
+
+
+@pytest.mark.parametrize("status", [301, 302, 307, 401, 403, 404, 429, 503])
+def test_operations_http_denial_and_redirects_never_retry_or_leak_details(case, status):
+    import httpx
+
+    module, *_rest = case
+    requests = []
+
+    class Credentials:
+        async def bearer_token(self, **keywords):
+            return "synthetic-operator-credential"
+
+    async def execute():
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(
+                status,
+                headers={"Location": "https://different.example.invalid/"},
+                text="synthetic-private-error-details",
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(respond), follow_redirects=True
+        ) as http:
+            client = module.HttpOperationsClient(
+                base_url="https://runtime.example.invalid", client=http, credentials=Credentials()
+            )
+            with pytest.raises(
+                PermissionError if status in {401, 403} else RuntimeError
+            ) as failure:
+                await client.begin("owner-fixture", deadline=asyncio.get_running_loop().time() + 1)
+            assert "synthetic-private" not in str(failure.value)
+            assert "synthetic-operator-credential" not in str(failure.value)
+        assert len(requests) == 1
+
+    asyncio.run(execute())
+
+
+@pytest.mark.parametrize(
+    "violation",
+    [
+        "duplicate",
+        "foreign_owner",
+        "unexpected_field",
+        "boolean",
+        "oversized",
+        "not_json",
+        "content_type",
+    ],
+)
+def test_operations_http_rejects_unsafe_response_shapes(case, violation):
+    import httpx
+
+    module, *_rest = case
+
+    class Credentials:
+        async def bearer_token(self, **keywords):
+            return "synthetic-operator-credential"
+
+    async def execute():
+        def respond(request):
+            body = {"ownerId": "owner-fixture", "state": "drained", "canTerminate": True}
+            if violation == "duplicate":
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    content=b'{"ownerId":"owner-fixture","state":"drained","canTerminate":true,"canTerminate":false}',
+                )
+            if violation == "foreign_owner":
+                body["ownerId"] = "foreign-owner"
+            elif violation == "unexpected_field":
+                body["transcript"] = "synthetic-content"
+            elif violation == "boolean":
+                body["canTerminate"] = "true"
+            elif violation == "oversized":
+                return httpx.Response(
+                    200, headers={"content-type": "application/json"}, content=b" " * 4097
+                )
+            elif violation == "not_json":
+                return httpx.Response(
+                    200, headers={"content-type": "application/json"}, content=b"not-json"
+                )
+            elif violation == "content_type":
+                return httpx.Response(200, text=json.dumps(body))
+            return httpx.Response(200, json=body)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            client = module.HttpOperationsClient(
+                base_url="https://runtime.example.invalid", client=http, credentials=Credentials()
+            )
+            with pytest.raises(RuntimeError, match="operations_response_invalid") as failure:
+                await client.status("owner-fixture", deadline=asyncio.get_running_loop().time() + 1)
+            assert "synthetic-content" not in str(failure.value)
+
+    asyncio.run(execute())
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://runtime.example.invalid",
+        "https://runtime.example.invalid/path",
+        "https://runtime.example.invalid/?override=1",
+        "https://runtime.example.invalid/#fragment",
+        "https://runtime.example.invalid:8443",
+        " https://runtime.example.invalid",
+    ],
+)
+def test_operations_http_rejects_noncanonical_origins_before_network(case, origin):
+    import httpx
+
+    module, *_rest = case
+    with pytest.raises(ValueError, match="invalid_operations_origin_or_ports"):
+        module.HttpOperationsClient(
+            base_url=origin, client=httpx.AsyncClient(), credentials=object()
+        )
+
+
+def test_operations_http_does_not_inherit_ambient_auth_cookies_or_query_parameters(case):
+    import httpx
+
+    module, *_rest = case
+
+    class Credentials:
+        async def bearer_token(self, **keywords):
+            return "explicit-fixture-token"
+
+    async def execute():
+        def respond(request):
+            assert request.headers["authorization"] == "Bearer explicit-fixture-token"
+            assert "cookie" not in request.headers and "x-ambient-context" not in request.headers
+            assert not request.url.query
+            return httpx.Response(
+                200, json={"ownerId": "owner-fixture", "state": "serving", "canTerminate": False}
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(respond),
+            auth=("ambient-user", "synthetic-ambient-value"),
+            cookies={"ambient": "synthetic-cookie"},
+            params={"ambient": "synthetic-query"},
+            headers={"X-Ambient-Context": "synthetic-header"},
+        ) as http:
+            client = module.HttpOperationsClient(
+                base_url="https://runtime.example.invalid", client=http, credentials=Credentials()
+            )
+            assert (
+                await client.status("owner-fixture", deadline=asyncio.get_running_loop().time() + 1)
+            )["state"] == "serving"
+
+    asyncio.run(execute())
+
+
+@pytest.mark.parametrize(
+    "failure_mode", ["expired", "credential_denied", "invalid_token", "canceled"]
+)
+def test_operations_http_authority_failure_never_sends_a_request(case, failure_mode):
+    import httpx
+
+    module, *_rest = case
+    requests = []
+
+    class Credentials:
+        async def bearer_token(self, **keywords):
+            if failure_mode == "credential_denied":
+                raise PermissionError("synthetic-private-auth-details")
+            if failure_mode == "canceled":
+                raise asyncio.CancelledError
+            return "invalid token"
+
+    async def execute():
+        def respond(request):
+            requests.append(request)
+            raise AssertionError("unexpected_network_request")
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            client = module.HttpOperationsClient(
+                base_url="https://runtime.example.invalid", client=http, credentials=Credentials()
+            )
+            deadline = asyncio.get_running_loop().time() + (-1 if failure_mode == "expired" else 1)
+            exception = (
+                TimeoutError
+                if failure_mode == "expired"
+                else asyncio.CancelledError
+                if failure_mode == "canceled"
+                else PermissionError
+            )
+            with pytest.raises(exception) as failure:
+                await client.status("owner-fixture", deadline=deadline)
+            assert "synthetic-private" not in str(failure.value)
+        assert not requests
+
+    asyncio.run(execute())
+
+
+def test_operations_http_cleanup_cannot_extend_original_deadline(case):
+    import httpx
+
+    module, *_rest = case
+
+    class Credentials:
+        async def bearer_token(self, **keywords):
+            return "synthetic-operator-credential"
+
+    class BlockedClose(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"ownerId":"owner-fixture","state":"serving","canTerminate":false}'
+
+        async def aclose(self):
+            await asyncio.Event().wait()
+
+    async def execute():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, headers={"content-type": "application/json"}, stream=BlockedClose()
+                )
+            )
+        ) as http:
+            client = module.HttpOperationsClient(
+                base_url="https://runtime.example.invalid", client=http, credentials=Credentials()
+            )
+            started = asyncio.get_running_loop().time()
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(
+                    client.status("owner-fixture", deadline=started + 0.05), timeout=0.5
+                )
+            assert asyncio.get_running_loop().time() - started < 0.3
+
+    asyncio.run(execute())
+
+
 def test_active_calls_postpone_without_waiting_or_forced_removal(case):
     module, request, operations, cluster, deadlines = case
     assert run(case).outcome == "postponed"

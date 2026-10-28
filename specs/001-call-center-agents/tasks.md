@@ -1028,6 +1028,25 @@ Actual image smoke and three-image audits pass. T123 remains checked, completion
 budget/sandbox change or live action is used. This is engineering regression verification,
 not real Cosmos/provider/environment/live capacity qualification or release authorization.
 
+**Remaining-task scope and T124 HTTP increment (2026-10-28)**: user explicitly selected
+"Keep telephony deferred; local-only work" and "No approved environment; keep live gates
+blocked" when asked what could unblock provider/live obligations. Those tasks cannot be
+closed by inventing approvals or evidence. Independent local T124 work adds a concrete
+`HttpOperationsClient` to `code/tools/scripts/drain_rollout.py`: explicit canonical HTTPS
+origin/HTTPX/credential injection, exact origin-scoped token resolution on every request,
+original <=10-second deadline, nonambient empty-body requests, no redirects/retries and
+bounded 4096-byte duplicate-rejecting strict JSON snapshots with safe failures. A red-first
+wire contract now passes; 28 new security/failure cases bring rollout/client tests to 56.
+The actual FastAPI/ASGI integration now uses the concrete client with original safety
+assertions retained; all 18 drain/API cases pass. Strict module typing, all eight repository
+gates and 203 tooling cases pass. No dependency, CLI execution flag, default client/route,
+cloud/provider connection, infrastructure, budget or live permission changes. T124 remains
+partial because durable cluster-side enforcement/reconciliation are missing. All fifteen
+open markers remain unchecked (114/129); T123 stays complete. Changed-source CI is pending.
+All 33 documents/28 diagram sources validate and the changed HTTP operations sequence actually
+renders through the unchanged sandboxed direct/offline path. The response-cleanup deadline
+regression passes without a production workaround or any budget/secret-policy waiver.
+
 - [ ] T120 [US1] CRITICAL F1: Implement the qualified provider adapter in `code/backend/src/caller_runtime/adapters/telephony.py` after explicit supported-scenario approval, reusing `api/provider_webhooks.py` and `api/media.py` contracts; pin and test real callback/media authentication, codec/framing, answer, bidirectional send, playback clear and acknowledged hangup, preserving the no-network fake and disabled default/live admission until T099. Stop rather than invent unsupported wire operations per FR-001, FR-004, FR-012, US1/AC1-4, plan: qualified telephony, and existing T035/T042 (missing).
 - [ ] T121 [US1] CRITICAL F2: Implement an explicitly gated runtime composition in `code/backend/src/caller_runtime/main.py` and `settings.py`, plus concrete `AgentPort`/`AudioPort` integration across `adapters/agents_sdk.py`, `api/media.py`, `domain/call_lifecycle.py` and `services/configuration_activation.py`; connect approved provider media to fresh Azure realtime SDK sessions, pinned revisions, current-authority tools, owner/epoch fencing, independent bounded read/model/write work, interruption, Goodbye, terminal cleanup and safe audit. Test the composed boundary with controlled transports, including interruption while model work is pending and no post-terminal output; retain credential-free defaults and reject unqualified live composition per FR-001, FR-002, FR-004, FR-009-FR-012, FR-018-FR-024, US1/AC1-5, plan: runtime orchestration, and existing T038-T044/T085-T086/T108 (missing).
 - [ ] T122 [US2] CRITICAL F3: Add a guarded non-test management composition in `code/management/management_app/management_app.py` and `settings.py` that reuses `adapters/entra_oidc.py`, `security.py`, management-owned Cosmos repositories, bootstrap/audit services, authenticated configuration/runtime/capability routers and `EditorServices`; supply approved credential-reference resolution and public read-only transports without constructing clients in default local mode or allowing an environment flag to bypass qualification. Test authenticated HTTP and Reflex editing, denied access, conflict preservation, complete publication and runtime contract consumption through the composed app; qualify actual restart durability separately per FR-003, FR-013-FR-017, FR-019-FR-025, FR-033-FR-034, US2/AC1-7, plan: management ownership/identity, and existing T054-T058/T062/T081-T084/T106/T109 (missing).

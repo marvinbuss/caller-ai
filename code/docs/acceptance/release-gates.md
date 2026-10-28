@@ -1,5 +1,26 @@
 # Release Gates
 
+## Remaining Work and Confirmed Scope
+
+On 2026-10-28, after asking to implement the remaining tasks, the user explicitly selected
+**Keep telephony deferred; local-only work** and **No approved environment; keep live gates
+blocked**. These decisions do not waive missing engineering or permit cloud/provider access.
+The current T124 increment implements only the authenticated HTTP operations client: 28 new
+cases, 56 rollout/client tests, 18 actual drain/API integration cases, strict module typing,
+eight repository gates and 203 tooling tests pass. Default CLI remains validation-only;
+changed-source hosted verification is pending. No new task marker is checked (114/129).
+
+| Open tasks | Remaining work or required authorization |
+|------------|------------------------------------------|
+| T042, T120 | Supported provider/scenario approval and qualified wire adapter; telephony remains deferred |
+| T121, T122 | Runtime/media and guarded management production compositions still require implementation and contract verification; live activation remains separate |
+| T097, T125 | Real physical-call/speech producers and qualified telemetry mapping/query/alert delivery; neither code stubs nor disabled rules supply live evidence |
+| T099, T126 | Concrete authorized probes plus an approved real environment and reviewed identity/network/storage/provider/quota/privacy evidence; none is approved |
+| T117, T127 | Concrete protected identity/review/plan/publication adapters and approved repository/environment controls; no publication/deployment authority is granted |
+| T118, T128 | Executable gated live profiles plus actual qualified execution; no synthetic promotion or missing evidence marked passing |
+| T119, T129 | Reviewed real measurements, costs, privacy/environment approvals and final release evidence after dependencies |
+| T124 | HTTP operations client now exists, but durable independent-deletion enforcement, authenticated cluster adapters and restart reconciliation remain unimplemented/unqualified |
+
 **T123 complete with passing native/image CI; release remains gated.** Observed
 [run 40700747209](https://github.com/marvinbuss/caller-ai/actions/runs/40700747209) on 9c5cd78
 passes Windows/Ubuntu/images. Both native platforms pass 512/413/175 tests, assertion/cleanup,

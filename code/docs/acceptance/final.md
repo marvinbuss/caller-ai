@@ -2,6 +2,18 @@
 
 ## Status
 
+**Remaining-task invocation: local operations client implemented; full completion is blocked.**
+The user explicitly kept telephony deferred/local-only and confirmed that no live environment
+is approved. T124 now has a concrete authenticated HTTP operations client with canonical
+origin, original deadline, nonambient credentials, no redirects/retries and bounded strict
+responses. Its 28 new cases, all 56 rollout/client tests, 18 actual drain/API integration
+cases, strict module typing, eight repository gates and 203 tooling tests pass. The CLI
+remains validation-only. T124 is still partial because durable cluster enforcement and
+reconciliation are missing; other implementation and live tasks remain open. No provider,
+cloud login, deployment, image publication or live call is performed or authorized.
+Completion remains 114/129. See [remaining-task gates](release-gates.md) and the
+[operations client contract](../runbooks/drain-rollout.md).
+
 **T123 complete and hosted-verified; full feature/live acceptance remains pending.** Observed
 [run 40700747209](https://github.com/marvinbuss/caller-ai/actions/runs/40700747209) on 9c5cd78
 passes Windows/Ubuntu/images. Each native platform reports 512 runtime/413 management/175

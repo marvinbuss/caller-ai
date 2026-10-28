@@ -8,8 +8,8 @@ media and live gates are unchanged. This is local T098 completion, not permissio
 Azure, authenticate a real cluster, enable alerts, provision, deploy, evict pods or scale nodes.
 
 [drain_rollout.py](../../tools/scripts/drain_rollout.py) implements one bounded planned-removal
-attempt. Its CLI only validates a nonsecret plan. No live cluster/identity/HTTP execution
-adapter is provided, no workload manifest is changed, and no cloud package is added. A fake
+attempt. Its CLI only validates a nonsecret plan. No live cluster/identity adapter or CLI
+execution path is enabled, no workload manifest is changed, and no cloud package is added. A fake
 port's assertion of protection is not evidence that Kubernetes or Azure prevents deletion.
 Read [monitoring](monitoring.md) and [platform security](platform-security.md) for other gates.
 
@@ -19,14 +19,23 @@ Read [monitoring](monitoring.md) and [platform security](platform-security.md) f
 sequenceDiagram
     participant Operator as Trusted local caller
     participant Tool as Rollout orchestrator
+    participant HTTP as Explicit authenticated HTTP client
+    participant Identity as Injected origin-scoped credentials
     participant Runtime as Authenticated drain API
     participant Cluster as Trusted fenced retirement port
     Operator->>Tool: Exact cluster, workload, owner, pod UID and operation ID
-    Tool->>Runtime: Authenticated read-only status
+    Tool->>HTTP: Status with original deadline
+    HTTP->>Identity: Resolve token for exact configured origin and deadline
+    Identity-->>HTTP: Scoped bearer token, never logged
+    HTTP->>Runtime: Status with explicit bearer authorization
+    Runtime-->>HTTP: Strict bounded owner/state snapshot
+    HTTP-->>Tool: Immutable validated response
     Tool->>Cluster: Acquire persistent planned-deletion fence
     Cluster-->>Tool: Exact request-bound fence or rejection
-    Tool->>Runtime: Start admission drain
-    Tool->>Runtime: Complete drain once
+    Tool->>HTTP: Start admission drain, same deadline
+    HTTP->>Runtime: Authenticated empty-body POST
+    Tool->>HTTP: Complete drain once, same deadline
+    HTTP->>Runtime: Authenticated completion POST
     alt Active reservation or unacknowledged connection
         Runtime-->>Tool: Postponed
         Tool-->>Operator: Postponed, retain deletion fence and original routing
@@ -44,6 +53,38 @@ and **pod UID**, with one stable `operation_id` and intent `rollout` or `scale_i
 cannot authorize removal of a replacement pod. IDs are bounded, and Kubernetes target names
 use a conservative lowercase-label subset. No credentials, endpoints, scripts or arbitrary
 execution fields are accepted.
+
+### Authenticated Operations HTTP Boundary
+
+`HttpOperationsClient` implements `OperationsPort` using an explicitly supplied HTTPX async
+client, canonical HTTPS origin and `OperationsCredentials.bearer_token(origin, deadline)`
+provider. The constructor accepts only a host root on port 443, with no userinfo, query,
+fragment or path override. Neither the CLI nor default apps construct or invoke this client.
+The trusted caller supplies the approved TLS-verifying transport and qualified credential
+provider; this adapter is not issuer/audience/RBAC verification or environment approval.
+
+Every status/begin/complete call resolves credentials again for the exact origin and original
+deadline. Requests are built directly, excluding ambient client auth, cookies, default headers
+and query parameters. Methods/paths match the existing drain API and contain no request body.
+Redirects, HTTP retries and credential-discovery fallbacks are disabled. The original finite
+deadline is at most ten seconds and covers credential resolution, send, streamed read and
+closure; no request receives a fresh budget.
+
+Only HTTP 200 `application/json` responses are accepted. Streamed decoded content is bounded
+to 4096 bytes; duplicate/unknown fields, foreign owners and nonboolean termination flags fail.
+Results reuse the existing strict immutable drain snapshot. Authorization, transport and
+response failures expose fixed categories, never tokens, response bodies or raw HTTP errors.
+Cancellation propagates. No endpoint, token or execution option is added to the plan/CLI.
+
+The local increment adds 28 cases: all 56 rollout/client tests, strict module typing and all
+203 tooling cases pass, along with all eight repository gates. The existing actual FastAPI/
+HTTPX integration now uses this client rather than a test-only request wrapper; all 18 drain/
+API cases pass with the original no-forced-hangup, postponed-drain and UID assertions intact.
+No live request or cluster action occurs. T124 remains unchecked: durable independent-deletion
+enforcement, authenticated cluster adapters and restart reconciliation are still unimplemented.
+The response-cleanup deadline regression also passes without a production workaround.
+All 33 documents/28 diagram sources validate, and the changed HTTP operations sequence
+actually renders through the unchanged sandboxed direct/offline path and SVG checks.
 
 `OperationsPort` must authenticate a least-privileged internal operator for every call. Its
 status/begin/complete responses must match the existing API's exact bounded fields and owner;
@@ -127,7 +168,7 @@ CLI has no execute mode, credential argument, automatic kubectl/Azure fallback o
 Plan validity proves neither target existence, operator authorization, current ownership nor
 a deletion fence. Calling `orchestrate` requires explicitly supplied trusted ports.
 
-## Executed Local Evidence
+## Earlier Executed Local Evidence
 
 All **28 rollout tooling cases** pass, and the full tooling suite passes **59 cases**. All
 **18 planned-drain/API integration cases** pass, including a new actual FastAPI/HTTPX journey

@@ -196,8 +196,13 @@ async def test_rollout_orchestrator_uses_real_drain_api_and_requires_connection_
 
     class Identity:
         async def require_operator(self, request):
-            if request.headers.get("X-Fixture-Principal") != "operations-fixture":
+            if request.headers.get("Authorization") != "Bearer operations-fixture":
                 raise HTTPException(403, "synthetic-private-auth-details")
+            return "operations-fixture"
+
+    class Credentials:
+        async def bearer_token(self, *, origin, deadline):
+            assert origin == "https://runtime.example.invalid"
             return "operations-fixture"
 
     class Cluster:
@@ -226,27 +231,10 @@ async def test_rollout_orchestrator_uses_real_drain_api_and_requires_connection_
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=application),
-            base_url="http://test",
-            headers={"X-Fixture-Principal": "operations-fixture"},
         ) as client:
-
-            class Operations:
-                async def status(self, owner_id, *, deadline):
-                    response = await client.get(f"/v1/operations/drain/{owner_id}")
-                    response.raise_for_status()
-                    return response.json()
-
-                async def begin(self, owner_id, *, deadline):
-                    response = await client.post(f"/v1/operations/drain/{owner_id}")
-                    response.raise_for_status()
-                    return response.json()
-
-                async def complete(self, owner_id, *, deadline):
-                    response = await client.post(f"/v1/operations/drain/{owner_id}/complete")
-                    response.raise_for_status()
-                    return response.json()
-
-            operations = Operations()
+            operations = rollout.HttpOperationsClient(
+                base_url="https://runtime.example.invalid", client=client, credentials=Credentials()
+            )
             assert (
                 await rollout.orchestrate(request, operations=operations, cluster=cluster)
             ).outcome == "postponed"
