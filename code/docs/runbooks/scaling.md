@@ -108,9 +108,17 @@ Observed run 40669135195 on 2239345 subsequently verifies 448 runtime/413 manage
 tooling passes and assertion/cleanup on Windows and Ubuntu, with Ubuntu diagrams/audits and
 actual Linux image smoke/three-image audits passing. Windows fails the required actual
 Mermaid render at the unchanged 300-second limit; its later dependency audit does not run.
-The investigation remains parked under the user's move-on direction, not certified repaired.
-Keep the failed gate and merge/release block visible without retries, sandbox/budget changes
+At that checkpoint the investigation was parked under the user's move-on direction, not
+certified repaired. The failed gate was retained without retries, sandbox/budget changes
 or waived assertions. These checks do not qualify actual Cosmos, physical recovery or calls.
+
+Observed run 40686000514 on deb9c8a now passes every Windows/Ubuntu/image step, with
+448 runtime/413 management/175 tooling cases per native platform, assertion/cleanup,
+Mermaid CLI preparation and all 28 actual diagram indices, plus package/image audits and
+actual image smoke. The direct-Node Windows path is hosted-verified; historical causes
+remain uncertified. This removes that current verification blocker, not the physical
+coordination/reconciliation, actual Cosmos/environment or live/release gates. T123 stays
+partial and 113/129 tasks are checked; no live action is authorized by the successful CI.
 
 Before any live action, obtain separate environment/deployment authorization and actual T099
 qualification, reviewed image/infra/resource ownership, privacy inputs, provider support and

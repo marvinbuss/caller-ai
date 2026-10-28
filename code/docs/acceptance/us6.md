@@ -1,6 +1,28 @@
 # US6 Local Scaling Acceptance
 
-## Current Direct Windows Launcher Follow-Up: 2026-10-28
+## Current Hosted Direct-Launcher Verification: 2026-10-28
+
+Observed [run 40686000514](https://github.com/marvinbuss/caller-ai/actions/runs/40686000514)
+on `deb9c8a96f3ca5cf641e562d2c58580aa9464469` passes every native Windows, native Ubuntu
+and Linux image step, with no failed or skipped steps. Both native platforms report
+448 runtime/413 management/175 tooling passes, zero test failures/errors/skips, exact
+baseline 0/broken 1/restored 0 and fixture cleanup. Both prepare Mermaid CLI 12.0.0 and
+report all 28 diagram indices started and passed across 33 documents. Sandboxed Chrome
+versions are Windows 156.0.8078.48 and Ubuntu 156.0.8078.47. Python audits cover Windows
+69/92/60 and Linux 68/90/59 packages; both frontend 294-package audits have zero findings.
+Actual image smoke passes offline/non-root startup and 360/768/1440 browser checks; three
+actual image audits report zero HIGH/CRITICAL findings.
+
+The direct-Node preparation/offline-render path is now verified on both declared native
+platforms. The failed preparation signature is absent in this run; no job retry, assertion
+waiver, sandbox change or deadline increase was used. Historical failures remain recorded,
+and this success is not independent proof of their exact root cause. Verification for this
+renderer increment is complete, not full-feature/live acceptance. T123 and all sixteen
+open markers remain unchecked (113/129); physical coordination/reconciliation and actual
+Cosmos/environment qualification are still missing. Results apply to the exact source
+revision above, not automatically to later edits.
+
+## Earlier Direct Windows Launcher Follow-Up: 2026-10-28
 
 Observed [run 40680073899](https://github.com/marvinbuss/caller-ai/actions/runs/40680073899)
 on `fb72c8195025e69c8bbd762f29d44752af848b86` passes Ubuntu and Linux images. Windows and

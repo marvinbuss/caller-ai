@@ -951,6 +951,17 @@ scope and sixteen open markers remain unchanged (113/129). No live permission is
 Final local validation passes all eight repository/type/Terraform/secret/publication gates,
 all 175 tooling cases and all 33 documents/28 actual direct-launch diagram renders.
 
+**Observed direct-launcher CI (2026-10-28)**: run 40686000514 on
+`deb9c8a96f3ca5cf641e562d2c58580aa9464469` passes every Windows/Ubuntu/image step with
+no failed or skipped steps. Each native platform reports 448 runtime/413 management/175
+tools passes, exact 0/1/0 fixture cleanup, CLI 12.0.0 preparation and all 28 diagram indices
+started/passed across 33 documents. Strict native package audits and actual image smoke/
+three-image audits pass. This completes the renderer increment's hosted checkpoint without
+job retries, deadline/sandbox changes or waived assertions. Historical failures remain
+without independent root-cause certification. T123 and all sixteen open markers stay
+unchecked (113/129); physical recovery and actual Cosmos/environment/live/release gates
+are not qualified by these regression checks.
+
 - [ ] T120 [US1] CRITICAL F1: Implement the qualified provider adapter in `code/backend/src/caller_runtime/adapters/telephony.py` after explicit supported-scenario approval, reusing `api/provider_webhooks.py` and `api/media.py` contracts; pin and test real callback/media authentication, codec/framing, answer, bidirectional send, playback clear and acknowledged hangup, preserving the no-network fake and disabled default/live admission until T099. Stop rather than invent unsupported wire operations per FR-001, FR-004, FR-012, US1/AC1-4, plan: qualified telephony, and existing T035/T042 (missing).
 - [ ] T121 [US1] CRITICAL F2: Implement an explicitly gated runtime composition in `code/backend/src/caller_runtime/main.py` and `settings.py`, plus concrete `AgentPort`/`AudioPort` integration across `adapters/agents_sdk.py`, `api/media.py`, `domain/call_lifecycle.py` and `services/configuration_activation.py`; connect approved provider media to fresh Azure realtime SDK sessions, pinned revisions, current-authority tools, owner/epoch fencing, independent bounded read/model/write work, interruption, Goodbye, terminal cleanup and safe audit. Test the composed boundary with controlled transports, including interruption while model work is pending and no post-terminal output; retain credential-free defaults and reject unqualified live composition per FR-001, FR-002, FR-004, FR-009-FR-012, FR-018-FR-024, US1/AC1-5, plan: runtime orchestration, and existing T038-T044/T085-T086/T108 (missing).
 - [ ] T122 [US2] CRITICAL F3: Add a guarded non-test management composition in `code/management/management_app/management_app.py` and `settings.py` that reuses `adapters/entra_oidc.py`, `security.py`, management-owned Cosmos repositories, bootstrap/audit services, authenticated configuration/runtime/capability routers and `EditorServices`; supply approved credential-reference resolution and public read-only transports without constructing clients in default local mode or allowing an environment flag to bypass qualification. Test authenticated HTTP and Reflex editing, denied access, conflict preservation, complete publication and runtime contract consumption through the composed app; qualify actual restart durability separately per FR-003, FR-013-FR-017, FR-019-FR-025, FR-033-FR-034, US2/AC1-7, plan: management ownership/identity, and existing T054-T058/T062/T081-T084/T106/T109 (missing).

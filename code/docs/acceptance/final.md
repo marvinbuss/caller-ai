@@ -2,7 +2,16 @@
 
 ## Status
 
-**Current direct Windows launcher is locally verified; changed-source CI is pending.**
+**Current renderer increment passes all required native/image CI.** Observed
+[run 40686000514](https://github.com/marvinbuss/caller-ai/actions/runs/40686000514) on deb9c8a
+passes every Windows/Ubuntu/image step. Each native platform passes 448 runtime/413
+management/175 tooling cases, exact 0/1/0 assertion/cleanup, CLI 12.0.0 preparation and all
+33 documents/28 actual diagram indices, plus strict package audits. Actual image smoke and
+three-image audits pass. The direct-Node path is hosted-verified without retries, deadline
+increases, sandbox changes or waived assertions; historical failure causes remain uncertified.
+Completion remains 113/129 with T123 and all live/release obligations open. See [US6 evidence](us6.md).
+
+**Earlier direct Windows launcher local checkpoint.**
 Run 40680073899 on fb72c81 passes Ubuntu/images, but Windows times out during CLI preparation
 before any diagram starts. Both native platforms pass 448 runtime/413 management/171 tools
 cases and assertion/cleanup. Node now directly runs npm's adjacent `npx-cli.js` on Windows,

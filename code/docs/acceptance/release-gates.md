@@ -1,6 +1,16 @@
 # Release Gates
 
-**Current direct Windows launcher is locally verified; native CI and release remain gated.**
+**Current native/image verification passes; release remains gated.** Observed
+[run 40686000514](https://github.com/marvinbuss/caller-ai/actions/runs/40686000514) on deb9c8a
+passes every Windows/Ubuntu/image step. Both native platforms pass 448/413/175 tests,
+assertion/cleanup, exact CLI preparation, all 33 documents/28 actual diagram indices and
+strict package audits. Actual image smoke/three-image audits pass. This satisfies the
+renderer increment's hosted verification checkpoint, not actual Cosmos/physical recovery
+or live/release qualification. Historical failures remain without root-cause certification;
+no retries, deadline/sandbox changes or assertion waivers were used. T123 is partial and
+all sixteen open markers remain unchanged (113/129).
+
+**Earlier direct Windows launcher local checkpoint.**
 Run 40680073899 on fb72c81 passes Ubuntu/images and both native 448/413/171 tests plus
 assertion/cleanup. Windows still fails during CLI preparation, before diagram zero; its
 later audit does not run. The owned Windows child now directly launches Node with npm's
