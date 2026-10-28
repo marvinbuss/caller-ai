@@ -1,6 +1,13 @@
 # Release Gates
 
-**Current native/image verification passes; release remains gated.** Observed
+**Current cleanup-recovery increment is locally verified; native/image CI and release remain gated.**
+All 27 new contracts, the complete 475-case backend and strict runtime typing pass. Explicit
+trusted cleanup reconciles original durable bindings without inferring physical outcomes,
+rebuilding socket ownership, renewing expired leases or reclaiming unknown work. Physical
+verification, production recovery composition and actual Cosmos/environment/live gates
+remain open. T123 stays partial and all sixteen open markers remain unchanged (113/129).
+
+**Earlier native/image verification passes.** Observed
 [run 40686000514](https://github.com/marvinbuss/caller-ai/actions/runs/40686000514) on deb9c8a
 passes every Windows/Ubuntu/image step. Both native platforms pass 448/413/175 tests,
 assertion/cleanup, exact CLI preparation, all 33 documents/28 actual diagram indices and

@@ -100,6 +100,30 @@ lease or controller cache. Unknown closure/disposal remains charged across adapt
 Reconcile actual physical/provider/model closure under qualified authority before trusted
 release; this adapter supplies no connection reattachment or automatic uncertain-work cleanup.
 
+### Trusted Cleanup After Reconstruction
+
+`CapacityService.reconcile_closed_session` accepts the original session ID, registered
+physical owner and connection epoch after a trusted lifecycle/recovery caller independently
+verifies physical call and baseline-model closure. It also requires existing Ended metadata;
+it never marks an unconfirmed live call terminal or treats expiry/Ended as physical proof.
+`reconcile_disposed_model` additionally requires the exact known reservation token after
+independent disposal confirmation. Model disposal can be reconciled while its call remains
+active; it cannot free another session's token. These are internal trusted interfaces, not
+authentication, an approval credential, public routes or a physical-status probe.
+
+Both methods use the existing bounded operation/lock, reread durable session identity and
+owner/epoch, and delegate conditional release to the shared repository. Unknown/missing
+authority, foreign bindings and conflicting local caches fail without clearing local state.
+After an uncertain reply, retain bookkeeping and reconcile the same exact verified cleanup;
+only a confirmed idempotent release clears it. Cancellation does not infer a cleanup outcome.
+An expired owner may finish verified one-way cleanup, not renew/revive its lease or reattach
+a socket. Ordinary cache-based release methods keep their conservative existing behavior.
+
+No automatic scan, unknown-token discovery, synthesized missing session, forced reclaim or
+provider/cluster client is added. Real outcome verification and production recovery wiring
+still need separate implementation/qualification. The 27 new offline service contracts do
+not complete T123 or authorize operating a live environment.
+
 These are 34 offline storage-contract cases, not real Cosmos/process-crash evidence. T123
 remains partial until physical coordination/reconciliation and relevant live qualification
 are complete. No new cloud access, provider choice, deployment, route or call is enabled.

@@ -255,6 +255,84 @@ class CapacityService:
 
                 self._publish_capacity()
 
+    async def _recovery_session(
+        self, session_id: str, *, physical_owner_id: str, connection_epoch: int
+    ) -> CallSession:
+        if (
+            not isinstance(session_id, str)
+            or not 1 <= len(session_id) <= 128
+            or not isinstance(physical_owner_id, str)
+            or type(connection_epoch) is not int
+            or connection_epoch < 1
+        ):
+            raise ValueError("invalid_capacity_recovery_binding")
+        if physical_owner_id not in self._owners or self._active.get(session_id) not in (
+            None,
+            physical_owner_id,
+        ):
+            raise PermissionError("capacity_recovery_not_owned")
+        document = await self._repository.read(session_id)
+        if document is None:
+            raise PermissionError("session_authority_unknown")
+        current = metadata_model(document)
+        if (
+            current.session_id != session_id
+            or current.physical_owner_id != physical_owner_id
+            or current.connection_epoch != connection_epoch
+        ):
+            raise PermissionError("capacity_recovery_not_owned")
+        return current
+
+    async def reconcile_closed_session(
+        self, session_id: str, *, physical_owner_id: str, connection_epoch: int
+    ) -> None:
+        """Trusted recovery caller must independently verify call and baseline-model closure."""
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                current = await self._recovery_session(
+                    session_id,
+                    physical_owner_id=physical_owner_id,
+                    connection_epoch=connection_epoch,
+                )
+                if current.state != LifecycleState.ENDED:
+                    raise PermissionError("capacity_closure_not_confirmed")
+                await self._repository.release_capacity(
+                    session_id, physical_owner_id=physical_owner_id
+                )
+                self._active.pop(session_id, None)
+                self._publish_capacity()
+
+    async def reconcile_disposed_model(
+        self,
+        reservation: str,
+        *,
+        session_id: str,
+        physical_owner_id: str,
+        connection_epoch: int,
+    ) -> None:
+        """Trusted recovery caller must independently verify disposal of this exact token."""
+        if not isinstance(reservation, str) or not re.fullmatch(r"[a-f0-9]{32}", reservation):
+            raise ValueError("invalid_model_reservation")
+        async with asyncio.timeout(self._budget):
+            async with self._lock:
+                await self._recovery_session(
+                    session_id,
+                    physical_owner_id=physical_owner_id,
+                    connection_epoch=connection_epoch,
+                )
+                if self._extra_models.get(reservation) not in (
+                    None,
+                    (session_id, physical_owner_id),
+                ):
+                    raise PermissionError("capacity_recovery_not_owned")
+                await self._repository.release_model_capacity(
+                    reservation,
+                    session_id=session_id,
+                    physical_owner_id=physical_owner_id,
+                )
+                self._extra_models.pop(reservation, None)
+                self._publish_capacity()
+
     async def active_count(self) -> int:
         async with self._lock:
             return len(self._active)

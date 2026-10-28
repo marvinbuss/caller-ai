@@ -2,7 +2,15 @@
 
 ## Status
 
-**Current renderer increment passes all required native/image CI.** Observed
+**Current explicit cleanup-recovery increment is locally verified; native/image CI is pending.**
+Two red-first restart cases now pass through explicit session/owner/epoch-bound call cleanup
+and exact-token model disposal reconciliation. All 27 new contracts, the complete 475-case
+backend and strict runtime typing pass. Trusted callers still independently verify physical
+outcomes; unknown work remains conservative and no socket ownership or lease is recovered.
+T123 is partial and completion stays 113/129; actual recovery/live qualification remain open.
+See [current US6 evidence](us6.md).
+
+**Earlier renderer increment passes all required native/image CI.** Observed
 [run 40686000514](https://github.com/marvinbuss/caller-ai/actions/runs/40686000514) on deb9c8a
 passes every Windows/Ubuntu/image step. Each native platform passes 448 runtime/413
 management/175 tooling cases, exact 0/1/0 assertion/cleanup, CLI 12.0.0 preparation and all

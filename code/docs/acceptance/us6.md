@@ -1,6 +1,38 @@
 # US6 Local Scaling Acceptance
 
-## Current Hosted Direct-Launcher Verification: 2026-10-28
+## Current Explicit Cleanup-Recovery Increment: 2026-10-28
+
+Two red-first cases reproduce the missing service path for independently verified cleanup
+after controller reconstruction: persisted call/model charges keep drain postponed while
+the old cache-only release methods return without releasing them. Explicit
+`reconcile_closed_session` and `reconcile_disposed_model` methods now resolve those cases
+with the original session/owner/connection-epoch binding and exact model token.
+
+All 27 new recovery contracts pass: reconstructed cleanup after expiry, unregistered/foreign
+owners, wrong/boolean epochs, missing sessions/authority, unavailable storage, cache conflicts,
+nonterminal call denial, lost release acknowledgments with conservative caches and idempotent
+confirmation, cancellation, malformed tokens and sibling-session token denial. The complete
+backend passes 475 cases with zero failures/errors/skips and only the expected blocked-egress
+warning. Strict runtime typing covers 33 sources; editor diagnostics are clean.
+All eight repository/type/Terraform/secret/publication gates and 175 tooling cases pass.
+All 33 documents/28 diagram sources validate; the changed recovery sequence actually renders
+with the established direct-Node/offline path, sandbox and nonempty SVG checks unchanged.
+
+Trusted callers must independently verify physical call/baseline-model closure or exact model
+disposal before invoking these internal methods. Terminal metadata is additionally required
+for call release, never accepted as physical proof by itself. Acknowledgment uncertainty
+preserves local bookkeeping; an already committed release can be confirmed idempotently.
+No cache is rebuilt as socket ownership, no lease renewed, no missing authority recreated
+and no unknown reservation automatically reclaimed. Existing ordinary release behavior and
+the original at-most-ten-second budget remain unchanged.
+
+This is injected-storage/control evidence, not actual provider/process-crash recovery or
+Cosmos/environment/live qualification. Physical outcome verification, discovery of unknown
+work and production recovery composition remain missing. T123 and all sixteen open markers
+remain unchecked (113/129); default apps, routes, dependencies, infrastructure and every
+application/browser/test budget are unchanged. Changed-source hosted verification is pending.
+
+## Earlier Hosted Direct-Launcher Verification: 2026-10-28
 
 Observed [run 40686000514](https://github.com/marvinbuss/caller-ai/actions/runs/40686000514)
 on `deb9c8a96f3ca5cf641e562d2c58580aa9464469` passes every native Windows, native Ubuntu
@@ -407,6 +439,7 @@ sequenceDiagram
     participant Authority as Injected Cosmos capacity partition
     participant Model as Explicit model adapter
     participant Operator as Authorized local drain caller
+    participant Recovery as Trusted cleanup caller
     Operator->>Capacity: Register owner with fixed lease period
     Capacity->>Store: Register once using authority UTC clock
     Admission->>Capacity: Opaque session and provider references
@@ -452,6 +485,18 @@ sequenceDiagram
         Store-->>Capacity: Postponed, keep draining
     else No shared reservations remain
         Store-->>Capacity: Commit drained
+    end
+    opt Controller reconstructed with known cleanup bindings
+        Recovery->>Recovery: Independently verify call closure or exact model disposal
+        Recovery->>Capacity: Original session, owner, connection epoch and token
+        Capacity->>Store: Verify durable binding and terminal call metadata
+        alt Binding and required terminal state match
+            Capacity->>Store: Idempotent matching capacity release
+            Store-->>Capacity: Confirm conditional release
+            Capacity-->>Recovery: Reconciled without acquiring socket ownership
+        else Unknown authority or mismatched binding
+            Capacity-->>Recovery: Bounded failure, retain conservative bookkeeping
+        end
     end
 ```
 
