@@ -15,6 +15,54 @@ Read [monitoring](monitoring.md) and [platform security](platform-security.md) f
 
 ## Workflow and Safety Boundary
 
+### Durable Operation Metadata
+
+`CosmosRemovalLedger` in the runtime's [rollout repository](../../backend/src/caller_runtime/adapters/rollout_repository.py)
+persists exact operation/target/fence/phase metadata over an explicitly injected runtime-owned
+container. Its reserved item has `id=sessionId=runtime-removal-ledger-v1`, schema 1 and
+`ttl=-1`; no container, identity/client, default route or CLI execution path is created.
+It is a ledger, not RBAC, an admission controller, a deletion fence or a pod-removal adapter.
+The current rollout CLI/orchestrator does not automatically wire or execute it.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Requested: reserve exact full request
+  Requested --> Fenced: record trusted fence reference
+  Fenced --> Submitted: conditional submission grant
+  Submitted --> Submitted: repeated request returns uncertain
+  Submitted --> Retired: trusted exact removal confirmation
+  Retired --> Retired: duplicate returns already retired
+```
+
+One operation ID binds intent plus cluster, namespace, workload, physical owner, pod name
+and pod UID. Reuse for any changed field fails; a fence reference cannot be swapped after
+recording. `begin_retirement` returns `submit` only for the first confirmed fenced-to-submitted
+transition. A reconstructed adapter sees `submitted` and returns `uncertain`, never another
+submission grant. Only an independently verified exact guarded outcome may be passed to
+`confirm_retired`; duplicate confirmed results are idempotent. Persisting `submitted` is
+not proof that removal occurred, and persisting `fenced` is not actual deletion enforcement.
+
+Strong point reads and `IfNotModified` replacements serialize independent adapters. Automatic
+write retries are off; at most four 412 conflicts share one existing budget up to ten seconds.
+HTTP/cancellation replies lost after commit leave the committed phase intact. The ledger is
+bounded to 1,024 entries/512 KiB and never evicts uncertain or retired entries automatically.
+Saturation blocks new work; any archival or migration requires separately reviewed authority.
+
+Explicit `initialize` is trusted empty-installation bootstrap, not outage repair. Normal
+operations never recreate missing state or reset phases. Missing/corrupt state, absent ETags,
+expired retention configuration, invalid/backward UTC clocks and unavailable storage fail
+closed with fixed errors. The caller must separately authenticate authorization and enforce
+the real cluster guard, exact UID and fresh drain proof at its side-effect boundary.
+
+All 33 new ledger contracts and the full 545-case backend pass; strict typing covers 34
+runtime sources. These are storage-double tests, including forced ETag contention and restart
+reconstruction, not real Cosmos/cluster crash or independent-deletion evidence. Production
+ledger/controller wiring, the enforcement definitions and qualified cluster adapters remain
+missing. T124 stays partial; no environment or live operation is authorized.
+All eight repository/type/Terraform/secret/publication gates and 203 tooling cases pass.
+All 33 documents/29 diagram sources validate, and the ledger state diagram actually renders
+through the unchanged pinned direct/offline/sandbox path and nonempty SVG checks.
+
 ```mermaid
 sequenceDiagram
     participant Operator as Trusted local caller

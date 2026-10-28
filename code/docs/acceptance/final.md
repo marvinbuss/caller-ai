@@ -2,7 +2,16 @@
 
 ## Status
 
-**Remaining-task invocation: local operations client implemented; full completion is blocked.**
+**Current T124 ledger increment is locally verified; native/image CI and full completion remain pending.**
+An explicitly injected Cosmos removal ledger now persists full request/UID bindings, fence
+references and conservative submission phases across adapter reconstruction. All 33 new
+ledger contracts, the full 545-case backend and strict typing of 34 runtime sources pass.
+A ledger is not independent-deletion enforcement: authenticated controller/cluster wiring,
+reviewed enforcement definitions and actual environment qualification remain missing.
+T124 stays unchecked and completion remains 114/129; provider/live scope is unchanged.
+See [ledger contract](../runbooks/drain-rollout.md).
+
+**Earlier remaining-task invocation: local operations client implemented.**
 The user explicitly kept telephony deferred/local-only and confirmed that no live environment
 is approved. T124 now has a concrete authenticated HTTP operations client with canonical
 origin, original deadline, nonambient credentials, no redirects/retries and bounded strict

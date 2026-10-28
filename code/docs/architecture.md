@@ -257,6 +257,21 @@ remain pending. An open connection blocks baseline cleanup. No socket is recover
 no expired lease renewed and no missing state synthesized. Real observer identity/protocol
 and Cosmos/live behavior remain separately qualified; the default apps construct none.
 
+`CosmosRemovalLedger` adds a separate runtime-owned reserved item at
+`id=sessionId=runtime-removal-ledger-v1` in the explicitly injected session container. Schema 1
+stores bounded immutable full-target operation entries, fence references and requested/fenced/
+submitted/retired phases, with `ttl=-1` and UTC high-water time. It constructs no identity,
+client or infrastructure. Strong point reads and conditional ETag replacements retain the
+original at-most-ten-second budget, four-conflict bound and disabled automatic write retries.
+No cross-partition transaction or direct management-container access is assumed.
+
+Submission permission is one-way: a repeated submitted operation is uncertain, not a second
+grant to remove a pod. Any request/UID/intent/fence change conflicts; confirmed outcomes are
+idempotent. Explicit empty-installation bootstrap is never automatic recovery after missing
+state. The 1,024-entry/512 KiB limits fail closed without eviction. Ledger state is not proof
+of authorization, physical deletion or protection from independent actors; those controller/
+admission/cluster integrations remain T124 work. See the [ledger state and runbook](runbooks/drain-rollout.md).
+
 The local `CallLifecycle` composes injected metadata/agent/phone ports and a copied,
 prevalidated graph. It selects protected roles, preserves admission identity/revision/owner,
 and denies tools until the later authorized capability boundary exists. Per-call locks and

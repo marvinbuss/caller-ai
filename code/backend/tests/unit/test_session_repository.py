@@ -131,6 +131,352 @@ def repository(request):
     return instance, container
 
 
+def removal_instant():
+    return datetime(2026, 10, 28, tzinfo=UTC)
+
+
+def removal_request():
+    return {
+        "operation_id": "operation-ledger-fixture",
+        "intent": "rollout",
+        "target": {
+            "cluster_ref": "cluster-fixture",
+            "namespace": "runtime",
+            "workload": "calls",
+            "owner_id": "owner-fixture",
+            "pod_name": "call-worker",
+            "pod_uid": "pod-uid-fixture",
+        },
+    }
+
+
+@pytest.mark.anyio
+async def test_removal_ledger_survives_reconstruction_without_repeating_uncertain_submission():
+    from caller_runtime.adapters.rollout_repository import CosmosRemovalLedger
+
+    container = ContainerDouble()
+    clock = removal_instant
+    first = CosmosRemovalLedger(container, utc_now=clock)
+    assert await first.initialize()
+    request = removal_request()
+    assert (await first.reserve(request)).phase == "requested"
+    assert (await first.record_fence(request, fence_reference="fence-fixture")).phase == "fenced"
+    assert await first.begin_retirement(request, fence_reference="fence-fixture") == "submit"
+    reconstructed = CosmosRemovalLedger(container, utc_now=clock)
+    assert (
+        await reconstructed.begin_retirement(request, fence_reference="fence-fixture")
+        == "uncertain"
+    )
+    assert (await reconstructed.inspect(request)).phase == "submitted"
+    await reconstructed.confirm_retired(request, fence_reference="fence-fixture")
+    third = CosmosRemovalLedger(container, utc_now=clock)
+    assert (
+        await third.begin_retirement(request, fence_reference="fence-fixture") == "already_retired"
+    )
+    assert (await third.reserve(request)).phase == "retired"
+    assert await third.initialize() is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "cluster_ref",
+        "namespace",
+        "workload",
+        "owner_id",
+        "pod_name",
+        "pod_uid",
+        "intent",
+    ],
+)
+async def test_removal_ledger_rejects_reuse_for_a_different_full_target(field_name):
+    from caller_runtime.adapters.rollout_repository import CosmosRemovalLedger
+
+    container = ContainerDouble()
+    clock = removal_instant
+    store = CosmosRemovalLedger(container, utc_now=clock)
+    await store.initialize()
+    request = removal_request()
+    await store.reserve(request)
+    changed = copy.deepcopy(request)
+    if field_name == "intent":
+        changed["intent"] = "scale_in"
+    else:
+        changed["target"][field_name] = "different-target"
+    original = copy.deepcopy(container.records)
+    reconstructed = CosmosRemovalLedger(container, utc_now=clock)
+    with pytest.raises(RuntimeError, match="removal_operation_binding_conflict"):
+        await reconstructed.reserve(changed)
+    assert container.records == original
+
+
+@pytest.mark.anyio
+async def test_removal_ledger_concurrent_submitters_get_only_one_submission_grant(monkeypatch):
+    from caller_runtime.adapters.rollout_repository import CosmosRemovalLedger
+
+    container = ContainerDouble()
+    clock = removal_instant
+    first, second = [CosmosRemovalLedger(container, utc_now=clock) for _ in range(2)]
+    await first.initialize()
+    request = removal_request()
+    await first.reserve(request)
+    await first.record_fence(request, fence_reference="fence-fixture")
+    read_item, released, snapshots = container.read_item, asyncio.Event(), []
+
+    async def competing_read(*arguments, **keywords):
+        value = await read_item(*arguments, **keywords)
+        if len(snapshots) < 2:
+            snapshots.append(value)
+            if len(snapshots) == 2:
+                released.set()
+            await released.wait()
+        return value
+
+    monkeypatch.setattr(container, "read_item", competing_read)
+    outcomes = await asyncio.wait_for(
+        asyncio.gather(
+            *(
+                store.begin_retirement(request, fence_reference="fence-fixture")
+                for store in (first, second)
+            )
+        ),
+        timeout=2,
+    )
+    assert sorted(outcomes) == ["submit", "uncertain"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("transition", ["fence", "submit", "confirm"])
+@pytest.mark.parametrize("reply", ["lost", "canceled"])
+async def test_removal_ledger_ambiguous_commits_survive_adapter_restart(
+    monkeypatch, transition, reply
+):
+    from caller_runtime.adapters.rollout_repository import CosmosRemovalLedger
+
+    container = ContainerDouble()
+    clock = removal_instant
+    store = CosmosRemovalLedger(container, utc_now=clock)
+    await store.initialize()
+    request = removal_request()
+    await store.reserve(request)
+    if transition != "fence":
+        await store.record_fence(request, fence_reference="fence-fixture")
+    if transition == "confirm":
+        assert await store.begin_retirement(request, fence_reference="fence-fixture") == "submit"
+    replace_item = container.replace_item
+
+    async def committed_without_reply(*arguments, **keywords):
+        await replace_item(*arguments, **keywords)
+        if reply == "canceled":
+            raise asyncio.CancelledError
+        raise CosmosHttpResponseError(message="sensitive-store-details", status_code=503)
+
+    monkeypatch.setattr(container, "replace_item", committed_without_reply)
+    action = {
+        "fence": store.record_fence,
+        "submit": store.begin_retirement,
+        "confirm": store.confirm_retired,
+    }[transition]
+    with pytest.raises(asyncio.CancelledError if reply == "canceled" else RuntimeError) as failure:
+        await action(request, fence_reference="fence-fixture")
+    assert "sensitive-store-details" not in str(failure.value)
+    monkeypatch.setattr(container, "replace_item", replace_item)
+    reconstructed = CosmosRemovalLedger(container, utc_now=clock)
+    expected = {"fence": "fenced", "submit": "submitted", "confirm": "retired"}[transition]
+    assert (await reconstructed.inspect(request)).phase == expected
+    if transition == "submit":
+        assert (
+            await reconstructed.begin_retirement(request, fence_reference="fence-fixture")
+            == "uncertain"
+        )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing",
+        "unavailable",
+        "etag",
+        "identity",
+        "operations",
+        "ttl",
+        "content",
+        "backward_clock",
+    ],
+)
+async def test_removal_ledger_missing_or_corrupt_authority_never_resets(corruption):
+    from caller_runtime.adapters.rollout_repository import LEDGER_ID, CosmosRemovalLedger
+
+    container = ContainerDouble()
+    instant = datetime(2026, 10, 28, tzinfo=UTC)
+    store = CosmosRemovalLedger(container, utc_now=lambda: instant)
+    await store.initialize()
+    if corruption == "missing":
+        del container.records[LEDGER_ID]
+    elif corruption == "unavailable":
+        container.failure = 503
+    elif corruption == "backward_clock":
+        store = CosmosRemovalLedger(container, utc_now=lambda: instant - timedelta(seconds=1))
+    elif corruption in {"etag", "identity", "operations"}:
+        del container.records[LEDGER_ID][
+            {"etag": "_etag", "identity": "id", "operations": "operations"}[corruption]
+        ]
+    elif corruption == "ttl":
+        container.records[LEDGER_ID]["ttl"] = 30
+    else:
+        container.records[LEDGER_ID]["transcript"] = "synthetic-content-must-be-rejected"
+    original = copy.deepcopy(container.records)
+    creates = sum(call[0] == "create" for call in container.calls)
+    with pytest.raises(RuntimeError):
+        await store.reserve(removal_request())
+    assert container.records == original
+    assert sum(call[0] == "create" for call in container.calls) == creates
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "transition", ["submit_without_fence", "confirm_without_submit", "wrong_fence"]
+)
+async def test_removal_ledger_rejects_unbound_phase_transitions(transition):
+    from caller_runtime.adapters.rollout_repository import CosmosRemovalLedger
+
+    container = ContainerDouble()
+    store = CosmosRemovalLedger(container, utc_now=lambda: datetime(2026, 10, 28, tzinfo=UTC))
+    await store.initialize()
+    request = removal_request()
+    await store.reserve(request)
+    if transition != "submit_without_fence":
+        await store.record_fence(request, fence_reference="fence-fixture")
+    original = copy.deepcopy(container.records)
+    action = (
+        store.confirm_retired if transition == "confirm_without_submit" else store.begin_retirement
+    )
+    with pytest.raises(RuntimeError):
+        await action(
+            request,
+            fence_reference="wrong-fence" if transition == "wrong_fence" else "fence-fixture",
+        )
+    assert container.records == original
+
+
+@pytest.mark.anyio
+async def test_removal_ledger_reads_are_strong_writes_conditional_and_retention_disabled():
+    from caller_runtime.adapters.rollout_repository import LEDGER_ID, CosmosRemovalLedger
+
+    container = ContainerDouble()
+    store = CosmosRemovalLedger(container, utc_now=lambda: datetime(2026, 10, 28, tzinfo=UTC))
+    await store.initialize()
+    request = removal_request()
+    entry = await store.reserve(request)
+    with pytest.raises(ValueError):
+        entry.phase = "retired"
+    await store.record_fence(request, fence_reference="fence-fixture")
+    assert container.records[LEDGER_ID]["ttl"] == -1
+    assert all(
+        call[2]["partition_key"] == LEDGER_ID and call[2]["consistency_level"] == "Strong"
+        for call in container.calls
+        if call[0] == "read"
+    )
+    writes = [call for call in container.calls if call[0] == "replace"]
+    assert writes and all(
+        call[2]["retry_write"] == 0 and call[2]["match_condition"] == MatchConditions.IfNotModified
+        for call in writes
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("limit", ["entries", "bytes"])
+async def test_removal_ledger_capacity_limits_fail_closed(limit):
+    from caller_runtime.adapters.rollout_repository import LEDGER_ID, CosmosRemovalLedger
+
+    container = ContainerDouble()
+    store = CosmosRemovalLedger(container, utc_now=lambda: datetime(2026, 10, 28, tzinfo=UTC))
+    await store.initialize()
+    request = removal_request()
+    if limit == "bytes":
+        request["target"] = {
+            "cluster_ref": "c" * 128,
+            "owner_id": "o" * 128,
+            "pod_uid": "p" * 128,
+            "namespace": "n" * 63,
+            "workload": "w" * 63,
+            "pod_name": "p" * 63,
+        }
+    for index in range(1024 if limit == "entries" else 800):
+        operation = copy.deepcopy(request)
+        operation["operation_id"] = f"operation-{index}" + ("x" * 100 if limit == "bytes" else "")
+        container.records[LEDGER_ID]["operations"][operation["operation_id"]] = {
+            "request": operation,
+            "phase": "requested",
+            "fence_reference": None,
+        }
+    original = copy.deepcopy(container.records)
+    with pytest.raises(RuntimeError, match="removal_(ledger_full|store_response_invalid)"):
+        await store.reserve(removal_request())
+    assert container.records == original
+
+
+@pytest.mark.anyio
+async def test_removal_ledger_conflict_retries_are_bounded():
+    from caller_runtime.adapters.rollout_repository import LEDGER_ID, CosmosRemovalLedger
+
+    container = ContainerDouble()
+    store = CosmosRemovalLedger(container, utc_now=lambda: datetime(2026, 10, 28, tzinfo=UTC))
+    await store.initialize()
+    original = copy.deepcopy(container.records[LEDGER_ID])
+    container.calls.clear()
+    container.conflict_on_replace = True
+    with pytest.raises(RuntimeError, match="removal_store_unavailable"):
+        await store.reserve(removal_request())
+    assert len([call for call in container.calls if call[0] == "replace"]) == 4
+    assert container.records[LEDGER_ID] == original
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("invalid", ["naive", "non_utc"])
+async def test_removal_ledger_rejects_invalid_clock_before_bootstrap(invalid):
+    from datetime import timezone
+
+    from caller_runtime.adapters.rollout_repository import CosmosRemovalLedger
+
+    instant = datetime(2026, 10, 28, tzinfo=UTC)
+    value = (
+        instant.replace(tzinfo=None)
+        if invalid == "naive"
+        else instant.astimezone(timezone(timedelta(hours=1)))
+    )
+    container = ContainerDouble()
+    store = CosmosRemovalLedger(container, utc_now=lambda: value)
+    with pytest.raises(RuntimeError, match="removal_clock_unavailable"):
+        await store.initialize()
+    assert not container.records and not container.calls
+
+
+@pytest.mark.anyio
+async def test_removal_ledger_cancellation_during_read_commits_nothing(monkeypatch):
+    from caller_runtime.adapters.rollout_repository import CosmosRemovalLedger
+
+    container = ContainerDouble()
+    store = CosmosRemovalLedger(container, utc_now=lambda: datetime(2026, 10, 28, tzinfo=UTC))
+    await store.initialize()
+    original = copy.deepcopy(container.records)
+    started, never = asyncio.Event(), asyncio.Event()
+
+    async def blocked_read(*arguments, **keywords):
+        started.set()
+        await never.wait()
+
+    monkeypatch.setattr(container, "read_item", blocked_read)
+    task = asyncio.create_task(store.reserve(removal_request()))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert container.records == original
+
+
 class ProcessAuthority:
     def __init__(self):
         self.records = {}
