@@ -1,5 +1,31 @@
 # US6 Local Scaling Acceptance
 
+## Current Hosted Cosmos-Adapter Verification: 2026-10-28
+
+Observed [run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195)
+on `2239345260e3734a87b2a36ba86112421bedbd6c` passes native Ubuntu and Linux images.
+Windows and Ubuntu each report 448 runtime/413 management/165 tooling passes with zero
+test failures/errors/skips, exact baseline 0/broken 1/restored 0 and fixture cleanup.
+Ubuntu renders all 28 diagrams across 33 documents with sandboxed Chrome 156.0.8078.47;
+its Python 68/90/59-package and frontend 294-package audits have zero findings. Actual image
+smoke passes offline/non-root startup and 360/768/1440 browser checks; three actual image
+audits report zero HIGH/CRITICAL findings.
+
+Windows fails the required documentation step: `verify_docs.py` main line 152 calls
+`run_renderer`, whose line 78 raises `psutil.TimeoutExpired` after the unchanged 300-second
+render budget. Its later dependency audit does not run. This is the actual Mermaid render,
+not an application test or the Chrome launch/version probe. The failure signature matches
+the previously parked renderer investigation; it does not establish a shared root cause.
+Under the user's move-on direction, no new diagnosis, CI rerun, timeout increase, sandbox
+change or assertion waiver is performed. The investigation stays parked, while the actual
+Windows documentation gate remains failed and merge/release remains blocked.
+
+These are regression results for the exact revision above, not actual Cosmos service
+durability, physical recovery or live qualification. T123 and all sixteen open markers stay
+unchecked (113/129). Existing foundation acceptance remains historical; it does not turn
+this new failed gate into a passing result. Implementation stops at this verification
+checkpoint rather than claiming the full task or feature complete.
+
 ## Current Injected Cosmos Authority Increment: 2026-10-28
 
 `CosmosCapacityRepository` now implements `SharedCapacityRepository` against an explicitly
@@ -23,7 +49,8 @@ actually renders with prepared Chromium, valid SVG bounds and unchanged sandbox/
 
 These are injected-storage contract results, not actual Cosmos service durability, separate-
 process crash experiments, production clock/fencing guarantees or live call measurements.
-No new native Ubuntu, management-browser, image or live result is claimed. Physical owner
+At that local checkpoint no new native Ubuntu, management-browser, image or live result
+was claimed; the later scoped hosted result is recorded above. Physical owner
 coordination, uncertainty reconciliation and qualified deployment remain missing; T123 and
 all sixteen open markers stay unchecked (113/129). The default apps, routes, dependencies,
 infrastructure and all application/test/browser budgets are unchanged.

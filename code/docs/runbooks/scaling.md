@@ -104,6 +104,14 @@ These are 34 offline storage-contract cases, not real Cosmos/process-crash evide
 remains partial until physical coordination/reconciliation and relevant live qualification
 are complete. No new cloud access, provider choice, deployment, route or call is enabled.
 
+Observed run 40669135195 on 2239345 subsequently verifies 448 runtime/413 management/165
+tooling passes and assertion/cleanup on Windows and Ubuntu, with Ubuntu diagrams/audits and
+actual Linux image smoke/three-image audits passing. Windows fails the required actual
+Mermaid render at the unchanged 300-second limit; its later dependency audit does not run.
+The investigation remains parked under the user's move-on direction, not certified repaired.
+Keep the failed gate and merge/release block visible without retries, sandbox/budget changes
+or waived assertions. These checks do not qualify actual Cosmos, physical recovery or calls.
+
 Before any live action, obtain separate environment/deployment authorization and actual T099
 qualification, reviewed image/infra/resource ownership, privacy inputs, provider support and
 working operator monitoring. No command in this guide provisions or deploys anything.

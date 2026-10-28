@@ -2,7 +2,15 @@
 
 ## Status
 
-**Current T123 Cosmos-adapter increment is locally verified; changed-source CI is pending.**
+**Current T123 regressions pass; the required Windows documentation gate fails.** Observed
+[run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195) on 2239345
+passes Ubuntu and Linux images. Both native platforms pass 448 runtime/413 management/165
+tooling cases and the 0/1/0 assertion/cleanup gate. Windows then times out in the actual
+Mermaid renderer after the unchanged 300 seconds; its later dependency audit does not run.
+Ubuntu completes all diagrams and audits. The renderer investigation remains parked under
+user direction, not certified repaired; merge/release remains blocked without retries,
+budget increases, sandbox changes or waived assertions.
+
 An explicitly injected persistent authority now uses one bounded, Strong-read/ETag-protected
 runtime-owned item for quota, drain and owner/call leases. All 34 new contract cases and the
 full 448-case backend pass; strict runtime typing, protocol compatibility and touched lint

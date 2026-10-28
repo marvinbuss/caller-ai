@@ -1,9 +1,16 @@
 # Release Gates
 
-**Current Cosmos-authority increment is locally verified; release remains blocked.** The
-injected persistent adapter passes 34 new contracts and the full 448-case backend, strict
-runtime typing, protocol compatibility and touched lint. Changed-source native/image CI is
-pending; all repository gates/165 tools pass and the changed sequence actually renders.
+**Current required Windows documentation gate fails; release remains blocked.** Observed
+[run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195) on 2239345
+passes Ubuntu and Linux images. Both native platforms pass 448 runtime/413 management/165
+tooling cases and assertion/cleanup. Windows then reaches the unchanged 300-second actual
+Mermaid render timeout; its later dependency audit does not run. Ubuntu completes diagrams
+and package audits, and actual image smoke/three-image audits pass. The investigation stays
+parked under user direction; no diagnosis loop, retry, timeout/sandbox change or waiver is
+used to convert this failed gate into a pass.
+
+The injected persistent adapter's 34 contracts, full local 448-case backend, strict runtime
+typing, protocol compatibility, repository gates/165 tools and changed local render pass.
 Physical coordination, uncertain-work reconciliation and actual Cosmos/environment
 qualification remain open. T123 is partial and 113/129 tasks are checked. Storage doubles
 are not live/release evidence; defaults remain credential-free and fail closed.
