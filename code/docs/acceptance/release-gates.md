@@ -1,11 +1,13 @@
 # Release Gates
 
-**T123 implementation complete; native/image verification and release remain gated.** Shared
-admission/model quota, physical-owner claims and conservative observer-gated recovery now
-satisfy T123's engineering contract tests, including independent process contention. All
-512 backend tests, strict runtime types, eight repository gates and 175 tooling tests pass.
-Completion is 114/129; the other fifteen open markers and live/environment/production rollout
-obligations are unchanged. Changed-source CI is pending. This is not actual Cosmos/provider
+**T123 complete with passing native/image CI; release remains gated.** Observed
+[run 40700747209](https://github.com/marvinbuss/caller-ai/actions/runs/40700747209) on 9c5cd78
+passes Windows/Ubuntu/images. Both native platforms pass 512/413/175 tests, assertion/cleanup,
+CLI preparation, all 33 documents/28 actual diagram indices and strict package audits;
+actual image smoke/three-image audits pass. T123's shared authority, physical-owner claims
+and conservative recovery engineering are complete, including independent process tests.
+Completion stays 114/129; the other fifteen open markers and live/environment/production
+rollout obligations are unchanged. This is not actual Cosmos/provider
 qualification, a live capacity measurement or release permission. See [T123 evidence](us6.md).
 
 **Earlier recovery discovery checkpoint.**

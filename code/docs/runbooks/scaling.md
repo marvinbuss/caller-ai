@@ -106,6 +106,12 @@ T123's shared admission/physical-owner/recovery engineering is complete; real en
 provider observation, live performance and protected rollout qualification remain separate.
 See the requirement-by-requirement [T123 completion evidence](../acceptance/us6.md).
 
+Observed run 40700747209 on 9c5cd78 verifies completed T123 across Windows/Ubuntu and
+Linux images: 512 runtime/413 management/175 tooling cases per native platform, assertion/
+cleanup, all diagram indices and package audits, plus actual image smoke/three-image audits.
+This closes T123's hosted checkpoint, not actual Cosmos/provider/clock/live qualification,
+protected cluster enforcement or deployment approval. The other fifteen task gates remain.
+
 The stable authority item now requires document schema 2 with shared connection claims.
 Schema 1 or absent connection state fails closed. Never delete/reset old authority or infer
 zero physical work from a legacy document; reviewed inventory/migration and deployment remain

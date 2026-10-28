@@ -2,12 +2,14 @@
 
 ## Status
 
-**T123 engineering complete; full feature/live acceptance remains pending.** Shared call/model
-authority, persistent physical-connection claims, stale fencing and observation-gated restart
-recovery meet the task's controlled-port acceptance requirements. The final 22 cases include
-independent OS-process quota contention; all 512 backend tests, strict runtime types, eight
-repository gates and 175 tooling tests pass. No deadline/sandbox waiver or live operation is
-used. Completion is 114/129 with fifteen tasks open; changed-source native/image CI is pending.
+**T123 complete and hosted-verified; full feature/live acceptance remains pending.** Observed
+[run 40700747209](https://github.com/marvinbuss/caller-ai/actions/runs/40700747209) on 9c5cd78
+passes Windows/Ubuntu/images. Each native platform reports 512 runtime/413 management/175
+tooling passes, assertion/cleanup, all 33 documents/28 actual diagram indices and strict
+package audits. Actual image smoke/three-image audits pass. Shared authority, physical
+claims and observation-gated recovery meet T123's controlled-port acceptance requirements,
+including independent OS-process contention. Completion stays 114/129 with fifteen tasks
+open; no retry, waived assertion, budget/sandbox change or live operation was used.
 Actual provider/Cosmos/environment/live measurements and production activation remain gated
 by their own tasks. See the [T123 acceptance matrix](us6.md).
 

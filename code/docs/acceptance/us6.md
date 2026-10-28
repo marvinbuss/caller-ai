@@ -1,5 +1,25 @@
 # US6 Local Scaling Acceptance
 
+## T123 Hosted Verification Complete: 2026-10-28
+
+Observed [run 40700747209](https://github.com/marvinbuss/caller-ai/actions/runs/40700747209)
+on `9c5cd780d5426144649245398833089be9991a43` passes native Windows, native Ubuntu and
+Linux images. Both native platforms report **512 runtime/413 management/175 tooling**
+passes with zero test failures/errors/skips, exact baseline 0/broken 1/restored 0 and fixture
+cleanup. Both prepare Mermaid CLI 12.0.0 and pass all 28 diagram indices across 33 documents.
+Sandboxed Chrome versions are Windows 156.0.8078.48 and Ubuntu 155.0.8059.39. Python audits
+cover Windows 69/92/60 and Linux 68/90/59 packages; both frontend 294-package audits have
+zero findings. Actual image smoke passes offline/non-root startup and 360/768/1440 browser
+checks; three actual image audits report zero HIGH/CRITICAL findings.
+
+This verifies the completed T123 engineering implementation on both declared native platforms,
+including shared authority, physical claims, observation-gated recovery and independent-
+process tests. T123 remains checked and completion stays **114/129**, with all fifteen other
+pending tasks unchanged. It does not qualify actual Cosmos consistency/RU/clock behavior,
+real provider observation, deployment, live capacity or release. No job retries, waived
+assertions, budget/sandbox changes or live actions were used to obtain this result. Evidence
+applies to the exact source above, not automatically to later edits.
+
 ## T123 Complete: 2026-10-28
 
 T123's shared-authority, physical-owner fencing and conservative recovery implementation is
@@ -35,8 +55,9 @@ workflow, infrastructure, browser setting or existing operation budget is added 
 
 This completion does not qualify real Cosmos consistency/RU/clock behavior, a real provider
 observer, deployment or live capacity/latency. Those remain T099/T118/T129 and relevant
-production composition/rollout obligations. Changed-source native/image CI is pending; local
-tests are not presented as hosted/live evidence. Completion is **114/129**, with all other
+production composition/rollout obligations. At that local checkpoint changed-source CI was
+pending; the subsequent actual hosted result is recorded above, not inferred from local
+tests or promoted to live evidence. Completion is **114/129**, with all other
 fifteen pending tasks unchanged and SC-008 still deferred.
 
 ## Earlier Read-Only Recovery Discovery: 2026-10-28
