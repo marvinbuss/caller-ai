@@ -75,7 +75,20 @@ def run_renderer(arguments: list[str], values: dict[str, str], log: Path) -> Non
             stderr=output,
         )
         try:
-            if process.wait(timeout=300) != 0:
+            try:
+                result = process.wait(timeout=300)
+            except (subprocess.TimeoutExpired, psutil.TimeoutExpired):
+                output.flush()
+                with log.open("rb") as diagnostic:
+                    diagnostic.seek(max(0, log.stat().st_size - 16384))
+                    tail = diagnostic.read(16384)
+                phase = (
+                    "mermaid_started"
+                    if b"Generating single mermaid chart" in tail
+                    else "launcher_or_package"
+                )
+                raise RuntimeError("diagram_renderer_timeout:" + phase) from None
+            if result != 0:
                 output.flush()
                 raise RuntimeError("diagram_renderer_failed:" + build_failure_category(log))
         finally:
@@ -141,6 +154,24 @@ def main() -> None:
     browser, browser_version = renderer_browser(browser, values)
     output = ROOT / "code/tools/test-results/diagrams"
     output.mkdir(parents=True, exist_ok=True)
+    renderer = [
+        launcher,
+        "--yes",
+        "--registry",
+        values["NPM_CONFIG_REGISTRY"],
+        "--package",
+        "@mermaid-js/mermaid-cli@12.0.0",
+        "--",
+        "mmdc",
+    ]
+    preparation_log = output / "renderer-prepare.log"
+    print(json.dumps({"event": "diagram_renderer_prepare_started"}), flush=True)
+    run_renderer([*renderer, "--version"], values, preparation_log)
+    with preparation_log.open("rb") as diagnostic:
+        prepared_version = diagnostic.read(65536).decode("utf-8", errors="replace")
+    if not re.search(r"(?m)^12\.0\.0\r?$", prepared_version):
+        raise RuntimeError("mermaid_cli_version_invalid")
+    print(json.dumps({"event": "diagram_renderer_prepared", "version": "12.0.0"}), flush=True)
     with tempfile.TemporaryDirectory(prefix="caller-diagrams-") as temporary:
         directory = Path(temporary)
         configuration = directory / "browser.json"
@@ -149,16 +180,14 @@ def main() -> None:
             diagram = directory / f"diagram-{index}.mmd"
             rendered = output / f"{path.stem}-{index}.svg"
             diagram.write_text(source, encoding="utf-8")
+            print(
+                json.dumps({"event": "diagram_render_started", "diagram_index": index}), flush=True
+            )
             run_renderer(
                 [
-                    launcher,
-                    "--yes",
-                    "--registry",
-                    values["NPM_CONFIG_REGISTRY"],
-                    "--package",
-                    "@mermaid-js/mermaid-cli@12.0.0",
-                    "--",
-                    "mmdc",
+                    renderer[0],
+                    "--offline",
+                    *renderer[1:],
                     "-i",
                     str(diagram),
                     "-o",
@@ -179,6 +208,9 @@ def main() -> None:
                 or len(list(svg.iter())) < 5
             ):
                 raise RuntimeError("rendered_diagram_empty_or_invalid")
+            print(
+                json.dumps({"event": "diagram_render_passed", "diagram_index": index}), flush=True
+            )
     print(
         json.dumps(
             {

@@ -1,12 +1,20 @@
 # Release Gates
 
-**Current required Windows documentation gate fails; release remains blocked.** Observed
+**Current renderer repair is locally verified; changed-source CI and release remain gated.**
+At the user's explicit request, timeout diagnosis is reopened. Pinned CLI preparation runs
+once; every actual render is offline, version-checked and bounded by the unchanged 300-second
+cap. Sixteen focused renderer contracts and all 28 real local diagrams pass. Safe stage/index
+events distinguish future preparation/render failures without raw logs or uploads. The old
+hosted stall remains unproven, not declared fixed because a later run passed. No application,
+identity, infrastructure, browser sandbox, CI-job budget or live/release authority changed.
+
+**Earlier required Windows documentation failure.** Observed
 [run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195) on 2239345
 passes Ubuntu and Linux images. Both native platforms pass 448 runtime/413 management/165
 tooling cases and assertion/cleanup. Windows then reaches the unchanged 300-second actual
 Mermaid render timeout; its later dependency audit does not run. Ubuntu completes diagrams
-and package audits, and actual image smoke/three-image audits pass. The investigation stays
-parked under user direction; no diagnosis loop, retry, timeout/sandbox change or waiver is
+and package audits, and actual image smoke/three-image audits pass. At that checkpoint the
+investigation was parked under user direction; no retry, timeout/sandbox change or waiver was
 used to convert this failed gate into a pass.
 
 The injected persistent adapter's 34 contracts, full local 448-case backend, strict runtime
@@ -78,8 +86,11 @@ or live qualification. Source publication does not waive failed or missing relea
 flowchart TD
     Local[Full runtime, management and tools regression] --> Counts[Nonempty JUnit counts and real exit status]
     Counts --> Passed[Current local regression passes]
+    Passed --> Prepare[Pinned Mermaid preparation and version check]
+    Prepare --> Diagrams[Offline rendering with unchanged sandbox and deadlines]
+    Diagrams --> Verified[Every diagram has valid nonempty SVG]
     External[Qualified provider, environment, monitoring and live evidence missing] --> Blocked[Release blocked]
-    Passed --> Review[Still requires all external reviewed gates]
+    Verified --> Review[Still requires native CI and all external reviewed gates]
     Review --> Blocked
 ```
 

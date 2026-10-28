@@ -284,6 +284,21 @@ sandbox; Windows remained unclassified. Tail-based classification retains errors
 compiler progress output without increasing memory bounds or disclosing payloads. Missing
 categories remain failed gates, not permission to retry indefinitely or weaken assertions.
 
+The renderer prepares pinned Mermaid CLI 12.0.0 once and verifies its reported version before
+rendering. Only that explicit preparation may resolve packages through the approved registry;
+every diagram runs with npm `--offline`, so registry access cannot consume its render deadline.
+Preparation and each render retain the existing 300-second child-process cap; the CI job cap,
+30-second Windows/10-second Linux browser probes and application limits are unchanged.
+Missing cached packages or a wrong CLI version fail rather than falling back online.
+
+Fixed JSON events identify preparation and each diagram index starting/passing. Timeout errors
+report only `diagram_renderer_timeout:launcher_or_package` or `mermaid_started`, based on a
+bounded 16 KiB log tail; they expose neither raw npm/browser diagnostics nor registry URLs.
+Both subprocess and psutil timeouts still clean owned processes. The intermittent hosted
+timeout was not reproduced locally; removing package I/O from rendering is a verified launch-
+path repair, not proof that npm caused every historical failure. Do not waive a remaining
+failure or increase a budget on that assumption.
+
 The owned editor compiler/server children explicitly set `PYTHONUTF8=1` and
 `PYTHONIOENCODING=utf-8` to match their UTF-8 log files. A clean redirected Windows Python
 child was observed using cp1252 and failing on a checkmark; a real-process regression now
@@ -301,7 +316,8 @@ The first command proves baseline pass, deliberate assertion failure and restore
 temporary test against the real runtime, without editing genuine tests. The second parses
 Markdown/local links and actually renders every Mermaid block with Mermaid CLI 12.0.0
 obtained through the approved npm registry. It reuses prepared Chromium without another
-browser download. Rendered SVGs are ignored artifacts under `code/tools/test-results/diagrams`.
+browser download and performs actual renders offline after version-checked preparation.
+Rendered SVGs are ignored artifacts under `code/tools/test-results/diagrams`.
 Both checks are wired into native CI. Earlier advisory findings were remediated, but workflow
 wiring and local execution are not observed remote-CI evidence.
 

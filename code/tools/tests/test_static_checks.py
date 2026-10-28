@@ -771,7 +771,17 @@ def test_build_metadata_exposes_only_allowlisted_node_error(monkeypatch, tmp_pat
     assert "sensitive-fixture-value" not in str(metadata)
 
 
-def test_diagram_renderer_timeout_cleans_owned_process(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "diagnostic,phase",
+    [
+        ("", "launcher_or_package"),
+        ("Generating single mermaid chart", "mermaid_started"),
+    ],
+)
+@pytest.mark.parametrize("timeout_kind", ["subprocess", "psutil"])
+def test_diagram_renderer_timeout_cleans_owned_process(
+    tmp_path: Path, monkeypatch, diagnostic, phase, timeout_kind
+) -> None:
     import importlib.util
 
     monkeypatch.syspath_prepend(str(SCRIPTS))
@@ -784,6 +794,9 @@ def test_diagram_renderer_timeout_cleans_owned_process(tmp_path: Path, monkeypat
 
     class Process:
         def wait(self, timeout):
+            assert timeout == 300
+            if timeout_kind == "psutil":
+                raise module.psutil.TimeoutExpired(seconds=timeout, pid=123)
             raise subprocess.TimeoutExpired("renderer", timeout)
 
     process = Process()
@@ -791,13 +804,76 @@ def test_diagram_renderer_timeout_cleans_owned_process(tmp_path: Path, monkeypat
 
     def spawn(*arguments, **keywords):
         assert keywords["stdin"] == subprocess.DEVNULL
+        keywords["stdout"].write(diagnostic + "\nsensitive-fixture-must-not-leak")
         return process
 
     monkeypatch.setattr(module.psutil, "Popen", spawn)
     monkeypatch.setattr(module, "stop", lambda processes: stopped.extend(processes))
-    with pytest.raises(subprocess.TimeoutExpired):
+    with pytest.raises(RuntimeError, match="diagram_renderer_timeout:" + phase) as rejected:
         module.run_renderer(["renderer"], {}, tmp_path / "renderer.log")
+    assert "sensitive-fixture-must-not-leak" not in str(rejected.value)
     assert stopped == [process]
+
+
+@pytest.mark.parametrize("reported", ["12.0.0", "12.0.1", ""])
+def test_diagram_rendering_prepares_once_then_forbids_package_network(
+    tmp_path: Path, monkeypatch, reported
+) -> None:
+    import importlib.util
+    from types import SimpleNamespace
+
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    specification = importlib.util.spec_from_file_location(
+        "caller_docs", SCRIPTS / "verify_docs.py"
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    browser = tmp_path / "prepared-browser"
+    browser.touch()
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        module, "environment", lambda: {"NPM_CONFIG_REGISTRY": "https://registry.example.invalid/"}
+    )
+    monkeypatch.setattr(module.shutil, "which", lambda command: "npx")
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *arguments, **keywords: SimpleNamespace(stdout=str(browser)),
+    )
+    monkeypatch.setattr(module, "renderer_browser", lambda prepared, values: (prepared, "prepared"))
+    monkeypatch.setattr(
+        module,
+        "validate_documents",
+        lambda paths, root: [
+            (tmp_path / "first.md", "flowchart LR\n A --> B"),
+            (tmp_path / "second.md", "flowchart LR\n B --> C"),
+        ],
+    )
+    commands = []
+
+    def execute(arguments, values, log):
+        commands.append(arguments)
+        if arguments[-1] == "--version":
+            assert "--offline" not in arguments
+            log.write_text(reported + "\n", encoding="utf-8")
+            return
+        assert "--offline" in arguments
+        rendered = Path(arguments[arguments.index("-o") + 1])
+        rendered.write_text(
+            '<svg viewBox="0 0 10 10"><g><path/><path/><path/></g></svg>', encoding="utf-8"
+        )
+
+    monkeypatch.setattr(module, "run_renderer", execute)
+    if reported != "12.0.0":
+        with pytest.raises(RuntimeError, match="mermaid_cli_version_invalid"):
+            module.main()
+        assert len(commands) == 1
+    else:
+        module.main()
+        assert len(commands) == 3
+        assert commands[0][-1] == "--version"
+        assert all("@mermaid-js/mermaid-cli@12.0.0" in command for command in commands)
 
 
 @pytest.fixture

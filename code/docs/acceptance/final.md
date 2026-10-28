@@ -2,13 +2,21 @@
 
 ## Status
 
-**Current T123 regressions pass; the required Windows documentation gate fails.** Observed
+**Current renderer launch-path repair is locally verified; changed-source CI is pending.**
+The user explicitly reopened timeout diagnosis. One exact-version Mermaid preparation now
+precedes offline-only rendering; bounded stage/index diagnostics retain process cleanup,
+sandboxing and all existing limits. Sixteen focused contracts and all 28 real local diagram
+renders pass. The original hosted stall did not reproduce; its cause is not certified.
+Existing run 40672760425 on 18195a2 passed before this repair, confirming intermittency rather
+than proving a root fix. Application behavior is unchanged; 113/129 tasks remain checked.
+
+**Earlier required Windows documentation failure.** Observed
 [run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195) on 2239345
 passes Ubuntu and Linux images. Both native platforms pass 448 runtime/413 management/165
 tooling cases and the 0/1/0 assertion/cleanup gate. Windows then times out in the actual
 Mermaid renderer after the unchanged 300 seconds; its later dependency audit does not run.
-Ubuntu completes all diagrams and audits. The renderer investigation remains parked under
-user direction, not certified repaired; merge/release remains blocked without retries,
+Ubuntu completes all diagrams and audits. At that checkpoint the investigation was parked
+under user direction, not certified repaired; merge/release stayed blocked without retries,
 budget increases, sandbox changes or waived assertions.
 
 An explicitly injected persistent authority now uses one bounded, Strong-read/ETag-protected

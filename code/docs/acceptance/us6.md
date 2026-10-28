@@ -1,6 +1,27 @@
 # US6 Local Scaling Acceptance
 
-## Current Hosted Cosmos-Adapter Verification: 2026-10-28
+## Current Renderer Investigation and Repair: 2026-10-28
+
+The user explicitly reopened the Windows timeout investigation. All 28 diagrams render on
+the local prepared browser, so the historical hosted timeout is not reproduced. Existing
+run 40672760425 on 18195a2 also passed before this change; success alone is not root-cause
+evidence. The fixed CI Chrome binary is not installed locally, so its exact launch cannot
+be claimed as a local reproduction.
+
+The launch path did perform online npm resolution inside every diagram's deadline. Three
+red-first orchestration cases reproduce that behavior and missing/wrong CLI-version denial.
+It now prepares exact Mermaid CLI 12.0.0 once, then requires `--offline` for every diagram.
+All 16 focused contracts and all 28 real offline renders pass. Fixed stage/index events and
+bounded content-free categories cover subprocess/psutil timeouts without raw logs or uploads.
+The final complete tooling suite passes 171 cases, all eight repository/type/Terraform/
+secret/publication gates pass, and all 33 documents/28 actual diagram renders pass.
+Preparation and each render use the existing 300-second cap; browser probes, sandbox flags,
+CI-job/application budgets, dependencies and application code are unchanged. This removes
+package networking from renders, not a proven explanation for every historical stall.
+Changed-source native/image verification remains pending; T123 and all sixteen open markers
+remain unchecked (113/129), with physical recovery and live qualification still missing.
+
+## Earlier Hosted Cosmos-Adapter Verification: 2026-10-28
 
 Observed [run 40669135195](https://github.com/marvinbuss/caller-ai/actions/runs/40669135195)
 on `2239345260e3734a87b2a36ba86112421bedbd6c` passes native Ubuntu and Linux images.
@@ -16,7 +37,7 @@ Windows fails the required documentation step: `verify_docs.py` main line 152 ca
 render budget. Its later dependency audit does not run. This is the actual Mermaid render,
 not an application test or the Chrome launch/version probe. The failure signature matches
 the previously parked renderer investigation; it does not establish a shared root cause.
-Under the user's move-on direction, no new diagnosis, CI rerun, timeout increase, sandbox
+At that checkpoint, under the user's move-on direction, no diagnosis, CI rerun, timeout increase, sandbox
 change or assertion waiver is performed. The investigation stays parked, while the actual
 Windows documentation gate remains failed and merge/release remains blocked.
 
