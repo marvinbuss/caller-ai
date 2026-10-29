@@ -1,21 +1,19 @@
 <!--
 Sync Impact Report (temporary review material; remove before committing)
-Version change: unversioned scaffold -> 1.0.0 (initial adoption)
-Modified principles:
-- PRINCIPLE_1_NAME (unfilled) -> I. Azure-First Platform
-- PRINCIPLE_2_NAME (unfilled) -> II. Security-First Engineering
-- PRINCIPLE_3_NAME (unfilled) -> III. Documentation as a Deliverable
-- PRINCIPLE_4_NAME (unfilled) -> IV. Bounded Microservices
-- PRINCIPLE_5_NAME (unfilled) -> V. Python Backend
+Version change: 2.0.0 -> 2.1.0
+Bump rationale: Add a core testing principle and expand verification guidance without removing
+or redefining existing principles.
+Modified principles: None; principles I through VIII are preserved.
 Added principles:
-- VI. Scalable Real-Time Call Handling
+- IX. Automated Tests for Functional Correctness
 Added sections:
-- Architecture and Operational Constraints (replaces SECTION_2_NAME placeholder)
-- Development Workflow and Quality Gates (replaces SECTION_3_NAME placeholder)
-- Governance rules and adoption metadata
+- Core principle section IX
+Updated sections:
+- Development Workflow and Quality Gates: nine-principle review and explicit test-result evidence
 Removed sections: None
 Deferred placeholders and follow-up TODOs: None
-Dependent templates and commands: Unchanged; read this constitution at runtime.
+Dependent templates, commands, and feature specifications: Unchanged; read this constitution
+at runtime and check compatibility during subsequent planning and review.
 -->
 # Caller AI Constitution
 
@@ -53,8 +51,12 @@ and security assumptions as applicable; non-obvious implementation decisions MUS
 Each feature MUST include behavior, configuration, usage, and failure or recovery documentation.
 Each service MUST maintain setup instructions, API or event contracts, dependencies, deployment
 and rollback procedures, and an operational runbook. Architectural decisions and trade-offs MUST
-be recorded. Reviews MUST reject missing or stale documentation so the system remains operable
-without relying on its original authors.
+be recorded. System and feature designs MUST be captured in version-controlled Markdown with
+Mermaid diagrams in fenced `mermaid` blocks. Diagrams MUST show the affected service boundaries,
+data flows, and interaction or handover sequences as applicable, and MUST be updated in the same
+change as the design. Reviews MUST verify diagram rendering and consistency with the design,
+and MUST reject missing or stale documentation so the system remains operable without relying
+on its original authors.
 
 ### IV. Bounded Microservices
 
@@ -66,15 +68,17 @@ Breaking contract changes MUST include a compatibility or migration plan. Servic
 MUST enable independent change, fault isolation, or scaling; arbitrary service fragmentation
 without one of these benefits MUST be rejected.
 
-### V. Python Backend
+### V. Python Backend and Reflex Frontends
 
 Application backend services, call orchestration, model integration, and backend workers MUST
-be written in Python. Each service MUST declare a supported Python version and reproducible
-dependencies, and MUST pass automated linting, type checking, and tests. Blocking I/O MUST NOT
-run on realtime asynchronous execution paths. Frontends MAY use another language or framework,
-but MUST integrate through the same documented service contracts. Infrastructure definitions
-and build tooling MAY use their native languages. A consistent backend language reduces
-maintenance overhead while preserving frontend flexibility.
+be written in Python. All application frontends MUST be developed in Python using Reflex and
+MUST integrate through the documented service contracts. Each backend service and frontend
+application MUST declare a supported Python version and reproducible dependencies, and MUST
+pass automated linting, type checking, and tests. Blocking I/O MUST NOT run on realtime
+asynchronous execution paths. Reflex-generated assets MAY use the framework's native output
+languages; this does not permit authoring frontend applications in another framework.
+Infrastructure definitions MUST follow Principle VIII; build tooling MAY use its native
+languages. A consistent Python application stack reduces maintenance overhead across apps.
 
 ### VI. Scalable Real-Time Call Handling
 
@@ -89,6 +93,60 @@ overload; and make retried side effects idempotent. Stateful sessions MUST have 
 routing, draining, and recovery behavior. Before release, load and failure tests MUST verify
 the declared targets, scale-out behavior, and overload handling. Capacity MUST be demonstrated
 with evidence rather than assumed from infrastructure settings.
+
+### VII. Structured Logging and Monitoring
+
+All backend services, frontend applications, workers, and integration components MUST emit
+application-owned logs using a documented structured event schema. Each event MUST include a
+UTC timestamp, severity, application or service name, environment, event name, and outcome,
+plus correlation and trace identifiers where available. Severity levels, event meanings, and
+error categories MUST be defined consistently across applications. Log context MUST support
+troubleshooting across app boundaries without exposing secrets or sensitive call content.
+
+Every application MUST expose health and failure signals and define monitoring for errors,
+latency, dependency failures, and resource saturation as applicable. Call-handling monitoring
+MUST also cover active sessions, call and handover failures, and quota exhaustion. Actionable
+alerts MUST have documented thresholds, an accountable owner, and a linked response runbook.
+Before release, tests MUST demonstrate event correlation, sensitive-data exclusion, and alert
+delivery for representative failures. These controls make issues detectable and diagnosable
+across the complete solution rather than only within individual services.
+
+### VIII. Terraform Infrastructure as Code
+
+All infrastructure as code MUST be defined in Terraform. Infrastructure configuration and
+reusable modules MUST be version controlled, with Terraform and provider version constraints
+and reproducible dependency selections. Infrastructure changes MUST pass formatting, validation,
+and security checks, and their Terraform plan MUST be reviewed before application. Changes
+MUST document operational impact and recovery procedures so infrastructure remains reproducible
+and auditable across environments.
+
+Terraform state MUST use an access-controlled remote backend with encryption and locking to
+prevent conflicting changes. State and plan artifacts MUST be treated as potentially sensitive
+and MUST NOT be committed to source control or exposed in application logs. Secrets MUST use
+the protections in Principle II. Alternative IaC authoring tools require a constitutional
+amendment rather than an undocumented exception.
+
+### IX. Automated Tests for Functional Correctness
+
+All new or modified executable application behavior MUST include automated code tests in the
+same change, covering backend and frontend functionality as applicable. Tests MUST assert
+expected results derived from requirements, including normal behavior, boundary conditions,
+and failure paths proportionate to risk. Unit tests MUST cover changed business logic;
+contract and integration tests MUST verify affected service interactions, and end-to-end
+tests MUST cover changed critical user journeys. Creating test files without meaningful
+assertions or executing them does not demonstrate functional correctness.
+
+Every bug fix MUST include a regression test that fails without the fix and passes with it.
+Generated tests MUST be reviewed for correct assertions and executed before the change is
+considered complete. Tests MUST use controlled data and isolate nondeterministic external
+dependencies where needed; integration tests MUST still verify the relevant real contracts.
+Test data and outputs MUST comply with the security and privacy rules in Principle II.
+
+Required automated tests MUST run in continuous integration, and their results MUST be
+available to reviewers. Missing or failing required tests MUST block merge and release.
+Tests MUST NOT be skipped, disabled, or weakened solely to obtain a passing build. These
+requirements make functional correctness and regression prevention verifiable rather than
+assumed from successful code generation or manual checks.
 
 ## Architecture and Operational Constraints
 
@@ -105,23 +163,27 @@ controls and security approval.
 Services MUST emit structured, privacy-preserving logs, metrics, and distributed traces with
 correlation identifiers across call and service boundaries. Operational metrics MUST cover
 active calls, call failures, latency, quota exhaustion, and resource saturation. Deployments
-MUST be reproducible using versioned infrastructure as code and configuration, include health
-checks, and define rollback and active-call draining procedures.
+MUST be reproducible using versioned Terraform infrastructure and configuration in accordance
+with Principle VIII, include health checks, and define rollback and active-call draining
+procedures. Logging and monitoring across all applications MUST comply with Principle VII.
 
 ## Development Workflow and Quality Gates
 
 1. Specifications MUST define feature behavior, data sensitivity, failure behavior, documentation
 	deliverables, and measurable acceptance criteria, including capacity targets for call paths.
-2. Plans MUST identify Azure dependencies and quotas, Python service boundaries, contracts,
-	threats and controls, and the tests that demonstrate compliance with all six principles.
-3. Changes MUST include automated tests proportionate to risk. Contract changes MUST include
-	contract tests; changes to call, model, or handoff paths MUST include integration tests and
-	applicable load or failure tests.
-4. Before merge, each change MUST pass code review, applicable linting and type checks, tests,
-	secret and dependency vulnerability scans, and a documentation completeness review.
+2. Plans MUST identify Azure dependencies and quotas, Python backend and Reflex frontend
+	boundaries, contracts, Terraform-managed resources, threats and controls, Markdown designs with
+	Mermaid diagrams, and the tests that demonstrate compliance with all nine principles.
+3. Changes MUST include automated tests proportionate to risk as required by Principle IX.
+	Contract changes MUST include contract tests; changes to call, model, or handoff paths MUST
+	include integration tests and applicable load or failure tests.
+4. Before merge, each change MUST pass code review, applicable linting and type checks, required
+	automated tests with recorded results, secret and dependency vulnerability scans, applicable
+	Terraform checks, and a documentation completeness review that includes Mermaid rendering
+	and design consistency.
 5. Before release, maintainers MUST verify security findings and approved mitigations, required
-	capacity evidence, observability, runbooks, and rollback readiness. Missing evidence MUST block
-	release of the affected functionality.
+	capacity evidence, structured-log correlation and privacy checks, alert delivery, runbooks,
+	and rollback readiness. Missing evidence MUST block release of the affected functionality.
 
 ## Governance
 
@@ -142,4 +204,4 @@ PATCH for non-semantic clarifications and corrections. The initial adoption is v
 Exceptions MUST follow an explicit approval path in the relevant principle. Any other deviation
 requires a constitutional amendment rather than an undocumented waiver.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-21 | **Last Amended**: 2026-10-21
+**Version**: 2.1.0 | **Ratified**: 2026-10-21 | **Last Amended**: 2026-10-22

@@ -1,0 +1,32 @@
+{
+  "vnet_id": "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-network-fixture/providers/Microsoft.Network/virtualNetworks/vnet-fixture",
+  "network_resource_group_name": "rg-network-fixture",
+  "vnet_name": "vnet-fixture",
+  "node_subnet_cidr": "10.50.1.0/24",
+  "private_endpoint_subnet_cidr": "10.50.2.0/24",
+  "firewall_subnet_cidr": "10.50.3.0/26",
+  "approved_external_fqdns": ["fixture-model.openai.azure.com", "login.microsoftonline.com"],
+  "private_dns_zone_ids": {
+    "cosmos": "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-network-fixture/providers/Microsoft.Network/privateDnsZones/privatelink.documents.azure.com",
+    "vault": "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-network-fixture/providers/Microsoft.Network/privateDnsZones/privatelink.vaultcore.azure.net",
+    "acr": "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-network-fixture/providers/Microsoft.Network/privateDnsZones/privatelink.azurecr.io",
+    "monitor": [
+      "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-network-fixture/providers/Microsoft.Network/privateDnsZones/privatelink.monitor.azure.com",
+      "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-network-fixture/providers/Microsoft.Network/privateDnsZones/privatelink.oms.opinsights.azure.com",
+      "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-network-fixture/providers/Microsoft.Network/privateDnsZones/privatelink.ods.opinsights.azure.com",
+      "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-network-fixture/providers/Microsoft.Network/privateDnsZones/privatelink.agentsvc.azure-automation.net",
+      "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-network-fixture/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+    ]
+  },
+  "workloads": {
+    "runtime": {"namespace": "caller-runtime", "service_account": "runtime"},
+    "management": {"namespace": "caller-management", "service_account": "management"},
+    "operations": {"namespace": "caller-operations", "service_account": "operations"}
+  },
+  "management_secret_names": ["fixture-public-tool-auth"],
+  "model_account_id": "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-model-fixture/providers/Microsoft.CognitiveServices/accounts/fixture-model",
+  "gateway_service_principal_id": "00000000-0000-4000-8000-000000000020",
+  "gateway_app_role_id": "00000000-0000-4000-8000-000000000021",
+  "operations_service_principal_id": "00000000-0000-4000-8000-000000000022",
+  "operations_app_role_id": "00000000-0000-4000-8000-000000000023"
+}

@@ -1,0 +1,25 @@
+{
+  "daily_cap_gb": 1,
+  "services": {
+    "runtime": {
+      "owner": "runtime-fixture-oncall",
+      "runbook_url": "https://example.invalid/caller/runbooks/monitoring.md",
+      "action_group_id": "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-monitor-fixture/providers/Microsoft.Insights/actionGroups/runtime-fixture",
+      "error_ratio": 0.05,
+      "mean_latency_seconds": 2,
+      "dependency_failures": 5,
+      "saturation_ratio": 0.8,
+      "minimum_requests": 20
+    },
+    "management": {
+      "owner": "management-fixture-oncall",
+      "runbook_url": "https://example.invalid/caller/runbooks/monitoring.md",
+      "action_group_id": "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-monitor-fixture/providers/Microsoft.Insights/actionGroups/management-fixture",
+      "error_ratio": 0.05,
+      "mean_latency_seconds": 1,
+      "dependency_failures": 5,
+      "saturation_ratio": 0.8,
+      "minimum_requests": 20
+    }
+  }
+}

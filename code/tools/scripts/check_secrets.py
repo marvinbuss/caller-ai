@@ -1,0 +1,42 @@
+"""Run offline secret detection with metadata-only failure output."""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    if not sys.argv[1:] or not all(Path(name).is_file() for name in sys.argv[1:]):
+        print("Secret scan requires existing files; no clean result is claimed.", file=sys.stderr)
+        return 1
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "detect_secrets.pre_commit_hook",
+            "--no-verify",
+            "--json",
+            *sys.argv[1:],
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return 0
+    if result.returncode == 1:
+        try:
+            findings = json.loads(result.stdout)["results"]
+            for filename, matches in findings.items():
+                for match in matches:
+                    print(f"{filename}:{match['line_number']}: {match['type']}", file=sys.stderr)
+        except (ValueError, KeyError, TypeError):
+            print("Secret scanner returned an invalid result.", file=sys.stderr)
+    else:
+        print("Secret scanner could not complete; no clean result is claimed.", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

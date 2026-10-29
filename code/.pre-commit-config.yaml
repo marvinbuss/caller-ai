@@ -1,0 +1,52 @@
+minimum_pre_commit_version: "4.7.0"
+exclude: '(^|/)(\.venv|\.web|node_modules|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache)/'
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Locked Python lint
+        entry: uv run --locked --project code/tools ruff check
+        language: system
+        types: [python]
+        files: ^code/
+      - id: ruff-format
+        name: Locked Python format check
+        entry: uv run --locked --project code/tools ruff format --check
+        language: system
+        types: [python]
+        files: ^code/
+      - id: backend-types
+        name: Locked runtime types
+        entry: uv run --locked --project code/backend mypy --config-file code/backend/pyproject.toml code/backend/src
+        language: system
+        pass_filenames: false
+        files: ^code/backend/.*\.py$
+      - id: management-types
+        name: Locked management types
+        entry: uv run --locked --project code/management mypy --config-file code/management/pyproject.toml code/management/management_app code/management/rxconfig.py
+        language: system
+        pass_filenames: false
+        files: ^code/management/.*\.py$
+      - id: whitespace
+        name: Portable whitespace check
+        entry: uv run --locked --project code/tools python code/tools/scripts/check_whitespace.py
+        language: system
+        types: [text]
+        exclude: ^code/management/reflex\.lock/package\.json$
+      - id: terraform
+        name: Locked credential-free Terraform checks
+        entry: uv run --locked --project code/tools python code/tools/scripts/verify_terraform.py check
+        language: system
+        pass_filenames: false
+        files: ^code/infra/terraform/
+      - id: secrets
+        name: Offline secret detection
+        entry: uv run --locked --project code/tools python code/tools/scripts/check_secrets.py
+        language: system
+        types: [text]
+      - id: publication-origins
+        name: Private package origin publication guard
+        entry: uv run --locked --project code/tools python code/tools/scripts/check_publication.py check
+        language: system
+        pass_filenames: false
+        always_run: true
