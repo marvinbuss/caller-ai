@@ -4,6 +4,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
@@ -22,6 +23,7 @@ from management_app.models.permissions import (
     PermissionConflict,
     RevocationRequest,
 )
+from management_app.services.audit import AuditRecord, revocation_record, validate_retention
 from management_app.services.configuration_publication import (
     ConfigurationRejected as ConfigurationRejected,
 )
@@ -39,6 +41,36 @@ Document = dict[str, Any]
 Publication = tuple[Document, str]
 BatchOperation = tuple[str, tuple[Any, ...]] | tuple[str, tuple[Any, ...], dict[str, Any]]
 COSMOS_METADATA = frozenset({"_rid", "_self", "_attachments", "_ts", "_etag"})
+
+
+def security_audit_document(authority: Document) -> Document:
+    record = revocation_record(authority).model_dump(mode="json")
+    return {
+        "id": record["id"],
+        "organizationId": "default",
+        "recordType": "security-audit-outbox-v1",
+        "record": record,
+        "ttl": -1,
+    }
+
+
+def security_audit_record(document: Document | None, identifier: str) -> Document:
+    if document is None:
+        raise RuntimeError("security_audit_unavailable")
+    clean = {key: value for key, value in document.items() if key not in COSMOS_METADATA}
+    if (
+        set(clean) != {"id", "organizationId", "recordType", "record", "ttl"}
+        or clean["id"] != identifier
+        or clean["organizationId"] != "default"
+        or clean["recordType"] != "security-audit-outbox-v1"
+        or type(clean["ttl"]) is not int
+        or (clean["ttl"] != -1 and not 3600 <= clean["ttl"] <= 2147483647)
+    ):
+        raise RuntimeError("security_audit_invalid")
+    record = AuditRecord.model_validate_json(encoded(clean["record"]))
+    if record.id != identifier or record.action != "security.revoke" or record.outcome != "success":
+        raise RuntimeError("security_audit_invalid")
+    return record.model_dump(mode="json")
 
 
 class ContainerPort(Protocol):
@@ -125,6 +157,7 @@ class LocalConfigurationRepository:
         self._state: tuple[bytes, bytes, bytes] | None = None
         self._revisions: dict[str, bytes] = {}
         self._admissions: list[bytes] = []
+        self._security_audits: dict[str, bytes] = {}
 
     async def read_active(self) -> Publication | None:
         state = self._state
@@ -178,9 +211,30 @@ class LocalConfigurationRepository:
                 revocations=revocations,
             )
             assert self._state is not None
+            audit = security_audit_document(document)
             document["_etag"] = '"local-' + uuid4().hex + '"'
             self._state = self._state[0], self._state[1], encoded(document)
+            self._security_audits[audit["id"]] = encoded(audit)
             return copy.deepcopy(document)
+
+    async def read_revocation_audit(self, identifier: str) -> Document:
+        if not re.fullmatch(r"audit-security-[1-9][0-9]{0,18}", identifier):
+            raise ValueError("invalid_security_audit_reference")
+        body = self._security_audits.get(identifier)
+        return security_audit_record(json.loads(body) if body is not None else None, identifier)
+
+    async def acknowledge_revocation_audit(
+        self, identifier: str, *, retention_seconds: int
+    ) -> None:
+        validate_retention(retention_seconds)
+        async with self._lock:
+            await self.read_revocation_audit(identifier)
+            body = json.loads(self._security_audits[identifier])
+            if body["ttl"] not in {-1, retention_seconds}:
+                raise ValueError("security_audit_retention_binding_conflict")
+            if body["ttl"] == -1:
+                body["ttl"] = retention_seconds
+                self._security_audits[identifier] = encoded(body)
 
     async def initialize(self, payload: Document, *, actor_id: str) -> Publication:
         async with self._lock:
@@ -296,6 +350,8 @@ class CosmosConfigurationRepository:
                             ({"id": admission.admission_id, "organizationId": "default", **body},),
                         )
                     )
+                if revocations is not None:
+                    operations.append(("create", (security_audit_document(document),)))
                 responses = await self.container.execute_item_batch(
                     batch_operations=operations, partition_key="default", retry_write=0
                 )
@@ -328,6 +384,46 @@ class CosmosConfigurationRepository:
             if_match=if_match, actor_id=actor_id, revocations=revocations
         )
         return document
+
+    async def read_revocation_audit(self, identifier: str) -> Document:
+        if not re.fullmatch(r"audit-security-[1-9][0-9]{0,18}", identifier):
+            raise ValueError("invalid_security_audit_reference")
+        try:
+            async with asyncio.timeout(5):
+                return security_audit_record(await self._read(identifier), identifier)
+        except Exception:
+            raise RuntimeError("security_audit_unavailable") from None
+
+    async def acknowledge_revocation_audit(
+        self, identifier: str, *, retention_seconds: int
+    ) -> None:
+        validate_retention(retention_seconds)
+        if not re.fullmatch(r"audit-security-[1-9][0-9]{0,18}", identifier):
+            raise ValueError("invalid_security_audit_reference")
+        try:
+            async with asyncio.timeout(5):
+                stored = await self._read(identifier)
+                security_audit_record(stored, identifier)
+                assert stored is not None
+                if stored["ttl"] not in {-1, retention_seconds}:
+                    raise ValueError("security_audit_retention_binding_conflict")
+                if stored["ttl"] == retention_seconds:
+                    return
+                if not isinstance(stored.get("_etag"), str):
+                    raise ValueError("security_audit_etag_required")
+                body = {key: value for key, value in stored.items() if key not in COSMOS_METADATA}
+                body["ttl"] = retention_seconds
+                responses = await self.container.execute_item_batch(
+                    batch_operations=[
+                        ("replace", (identifier, body), {"if_match_etag": stored["_etag"]})
+                    ],
+                    partition_key="default",
+                    retry_write=0,
+                )
+                if len(responses) != 1 or not isinstance(responses[0].get("eTag"), str):
+                    raise ValueError("invalid_security_audit_acknowledgement")
+        except Exception:
+            raise RuntimeError("security_audit_unavailable") from None
 
     async def initialize(self, payload: Document, *, actor_id: str) -> Publication:
         try:

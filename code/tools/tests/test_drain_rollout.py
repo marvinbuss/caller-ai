@@ -122,6 +122,269 @@ def run(case, *, budget=1):
     )
 
 
+def test_guarded_cluster_requires_enforcement_before_ledger_or_deletion(case):
+    import kubernetes_rollout
+
+    _module, request, _operations, _cluster, _deadlines = case
+    effects = []
+
+    class Guard:
+        async def verify(self, request, *, deadline):
+            effects.append("guard")
+            raise PermissionError("synthetic-enforcement-denial")
+
+    class Ledger:
+        async def reserve(self, request):
+            effects.append("reserve")
+            pytest.fail("denied_enforcement_must_precede_ledger_writes")
+
+    class Pods:
+        async def matches(self, request, *, deadline):
+            pytest.fail("denied_enforcement_must_precede_cluster_access")
+
+    async def exercise():
+        cluster = kubernetes_rollout.GuardedCluster(ledger=Ledger(), guard=Guard(), pods=Pods())
+        with pytest.raises(PermissionError):
+            await cluster.fence(request, deadline=asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+    assert effects == ["guard"]
+
+
+@pytest.mark.parametrize("violation", [None, "actor", "eviction", "uid", "force", "collection"])
+def test_native_admission_expression_denies_independent_or_forced_removal(case, violation):
+    import celpy
+    import kubernetes_rollout
+
+    policy, binding = kubernetes_rollout.admission_manifests(
+        "runtime", "retirement-controller", "retirement-guard"
+    )
+    assert policy["spec"]["failurePolicy"] == "Fail"
+    assert binding["spec"]["validationActions"] == ["Deny"]
+    incoming = {
+        "operation": "DELETE",
+        "subResource": "",
+        "name": "call-worker",
+        "namespace": "runtime",
+        "userInfo": {"username": "system:serviceaccount:runtime:retirement-controller"},
+        "options": {"preconditions": {"uid": "pod-uid-one"}},
+    }
+    if violation == "actor":
+        incoming["userInfo"]["username"] = "system:serviceaccount:runtime:independent-controller"
+    elif violation == "eviction":
+        incoming.update(operation="CREATE", subResource="eviction")
+    elif violation == "uid":
+        incoming["options"]["preconditions"] = {}
+    elif violation == "force":
+        incoming["options"]["gracePeriodSeconds"] = 0
+    elif violation == "collection":
+        incoming["name"] = ""
+    environment = celpy.Environment()
+    compiled = environment.compile(policy["spec"]["validations"][0]["expression"])
+    assert bool(
+        environment.program(compiled).evaluate({"request": celpy.json_to_cel(incoming)})
+    ) is (violation is None)
+
+
+@pytest.fixture
+def kubernetes_case(case):
+    import copy
+
+    import httpx
+    import kubernetes_rollout
+
+    module, request, operations, _cluster, deadlines = case
+    effects, outgoing = [], []
+    policy, binding = kubernetes_rollout.admission_manifests(
+        "runtime", "retirement-controller", "retirement-guard"
+    )
+    for index, document in enumerate((policy, binding)):
+        document["metadata"].update(uid=f"guard-uid-{index}", generation=1)
+    policy["status"] = {"observedGeneration": 1, "typeChecking": {}}
+    state = {
+        "subject": "system:serviceaccount:runtime:retirement-controller",
+        "policy": policy,
+        "binding": binding,
+        "removed": False,
+        "delete_lost": False,
+        "accepted_only": False,
+        "pod": {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": request.target.pod_name,
+                "namespace": "runtime",
+                "uid": request.target.pod_uid,
+                "labels": {
+                    "caller.ai/owner-id": request.target.owner_id,
+                    "app.kubernetes.io/name": "calls",
+                },
+            },
+        },
+    }
+
+    class Credentials:
+        async def bearer_token(self, *, origin, deadline):
+            assert origin == "https://cluster.example.invalid"
+            deadlines.append(deadline)
+            return "synthetic-cluster-credential"
+
+    def respond(value):
+        outgoing.append(value)
+        assert value.headers["authorization"] == "Bearer synthetic-cluster-credential"
+        assert "x-ambient-context" not in value.headers
+        assert "cookie" not in value.headers and "?" not in str(value.url)
+        if "validatingadmissionpolicies/" in value.url.path:
+            return httpx.Response(200, json=state["policy"])
+        if "validatingadmissionpolicybindings/" in value.url.path:
+            return httpx.Response(200, json=state["binding"])
+        if value.url.path.endswith("/selfsubjectreviews"):
+            return httpx.Response(
+                201, json={"status": {"userInfo": {"username": state["subject"]}}}
+            )
+        assert value.url.path == "/api/v1/namespaces/runtime/pods/call-worker"
+        if value.method == "DELETE":
+            document = json.loads(value.content)
+            assert document == {
+                "apiVersion": "v1",
+                "kind": "DeleteOptions",
+                "preconditions": {"uid": request.target.pod_uid},
+                "propagationPolicy": "Foreground",
+            }
+            effects.append("delete")
+            state["removed"] = not state["accepted_only"]
+            if state["delete_lost"]:
+                raise httpx.ReadError("synthetic-sensitive-lost-response")
+            return httpx.Response(
+                202, json={"apiVersion": "v1", "kind": "Status", "status": "Success"}
+            )
+        assert value.method == "GET"
+        return httpx.Response(404) if state["removed"] else httpx.Response(200, json=state["pod"])
+
+    class Ledger:
+        def __init__(self):
+            self.entry = None
+
+        async def reserve(self, value):
+            from types import SimpleNamespace
+
+            if self.entry is not None:
+                assert self.entry.request == value
+            else:
+                self.entry = SimpleNamespace(
+                    request=copy.deepcopy(value), phase="requested", fence_reference=None
+                )
+            return copy.deepcopy(self.entry)
+
+        async def inspect(self, value):
+            assert self.entry.request == value
+            return copy.deepcopy(self.entry)
+
+        async def record_fence(self, value, *, fence_reference):
+            assert self.entry.request == value and self.entry.phase == "requested"
+            self.entry.phase, self.entry.fence_reference = "fenced", fence_reference
+            return copy.deepcopy(self.entry)
+
+        async def begin_retirement(self, value, *, fence_reference):
+            assert self.entry.request == value and self.entry.fence_reference == fence_reference
+            if self.entry.phase == "submitted":
+                return "uncertain"
+            if self.entry.phase == "retired":
+                return "already_retired"
+            assert self.entry.phase == "fenced"
+            self.entry.phase = "submitted"
+            return "submit"
+
+        async def confirm_retired(self, value, *, fence_reference):
+            assert self.entry.request == value and self.entry.phase == "submitted"
+            assert self.entry.fence_reference == fence_reference and state["removed"]
+            self.entry.phase = "retired"
+
+    ledger = Ledger()
+
+    async def client_scenario(scenario):
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(respond),
+            headers={"X-Ambient-Context": "must-not-be-forwarded"},
+            cookies={"ambient": "must-not-be-forwarded"},
+        ) as http:
+            api = kubernetes_rollout.KubernetesRetirementClient(
+                cluster_ref=request.target.cluster_ref,
+                origin="https://cluster.example.invalid",
+                namespace="runtime",
+                controller="retirement-controller",
+                policy_name="retirement-guard",
+                credentials=Credentials(),
+                client=http,
+            )
+            cluster = kubernetes_rollout.GuardedCluster(ledger=ledger, guard=api, pods=api)
+            await scenario(cluster, api)
+
+    return module, request, operations, ledger, state, effects, outgoing, client_scenario
+
+
+@pytest.mark.parametrize(
+    "violation", ["subject", "warn_only", "ignore", "stale", "typing", "deleting", "scope"]
+)
+def test_concrete_kubernetes_guard_denies_unqualified_policy_before_ledger(
+    kubernetes_case, violation
+):
+    _module, request, _operations, ledger, state, effects, _outgoing, scenario = kubernetes_case
+    if violation == "subject":
+        state["subject"] = "independent-actor"
+    elif violation == "warn_only":
+        state["binding"]["spec"]["validationActions"] = ["Warn"]
+    elif violation == "ignore":
+        state["policy"]["spec"]["failurePolicy"] = "Ignore"
+    elif violation == "stale":
+        state["policy"]["status"]["observedGeneration"] = 0
+    elif violation == "typing":
+        state["policy"]["status"]["typeChecking"] = {"expressionWarnings": [{"warning": "invalid"}]}
+    elif violation == "deleting":
+        state["policy"]["metadata"]["deletionTimestamp"] = "2026-10-28T00:00:00Z"
+    elif violation == "scope":
+        request = replace(request, target=replace(request.target, namespace="foreign"))
+
+    async def exercise(cluster, api):
+        with pytest.raises(PermissionError):
+            await cluster.fence(request, deadline=asyncio.get_running_loop().time() + 2)
+
+    asyncio.run(scenario(exercise))
+    assert ledger.entry is None and not effects
+
+
+@pytest.mark.parametrize("failure", ["normal", "lost_reply", "accepted_only"])
+def test_guarded_retirement_observes_completion_and_never_replays_submission(
+    kubernetes_case, failure
+):
+    import kubernetes_rollout
+
+    module, request, operations, ledger, state, effects, outgoing, scenario = kubernetes_case
+    operations.active = False
+    state["delete_lost"] = failure == "lost_reply"
+    state["accepted_only"] = failure == "accepted_only"
+
+    async def exercise(cluster, api):
+        first = await module.orchestrate(request, operations=operations, cluster=cluster)
+        assert first.outcome == ("retired" if failure == "normal" else "uncertain")
+        assert effects == ["delete"]
+        assert ledger.entry.phase == ("retired" if failure == "normal" else "submitted")
+        restored = kubernetes_rollout.GuardedCluster(ledger=ledger, guard=api, pods=api)
+        if failure == "lost_reply":
+            operations.failure = "status"
+        second = await module.orchestrate(request, operations=operations, cluster=restored)
+        assert (
+            second.outcome
+            == {"normal": "already_retired", "lost_reply": "retired", "accepted_only": "uncertain"}[
+                failure
+            ]
+        )
+        assert effects == ["delete"]
+
+    asyncio.run(scenario(exercise))
+    assert sum(value.method == "DELETE" for value in outgoing) == 1
+
+
 def test_authenticated_operations_http_client_preserves_deadline_and_wire_contract(case):
     import httpx
 

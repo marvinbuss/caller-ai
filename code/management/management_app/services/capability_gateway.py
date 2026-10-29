@@ -29,8 +29,9 @@ ERROR_CODES = {
 
 
 class GatewayError(RuntimeError):
-    def __init__(self, status: int) -> None:
+    def __init__(self, status: int, *, revision_id: str | None = None) -> None:
         self.status = status
+        self.revision_id = revision_id
         self.code = ERROR_CODES[status]
         super().__init__(self.code)
 
@@ -90,6 +91,7 @@ class CapabilityGateway:
             raise GatewayError(504)
         deadline = loop.time() + remaining
         dependency = "configuration_store"
+        verified_revision: str | None = None
         with self._telemetry.span("capability.execute"):
             try:
                 async with asyncio.timeout_at(deadline):
@@ -101,6 +103,8 @@ class CapabilityGateway:
                         pinned = await self._repository.read_revision(request.pinned_revision_id)
                         if active is None or pinned is None:
                             raise GatewayError(403)
+                        if pinned.get("id") == request.pinned_revision_id:
+                            verified_revision = request.pinned_revision_id
                         selected = self._policy.authorize(
                             request, pinned=pinned, current=active[0], authority=authority
                         )
@@ -138,9 +142,9 @@ class CapabilityGateway:
                     )
                 raise
             except CapabilityInputRejected:
-                raise GatewayError(422) from None
+                raise GatewayError(422, revision_id=verified_revision) from None
             except PermissionError:
-                raise GatewayError(403) from None
+                raise GatewayError(403, revision_id=verified_revision) from None
             except TimeoutError:
                 if self._metrics is not None:
                     self._metrics.dependency_failure(dependency, "deadline")

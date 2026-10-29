@@ -14,6 +14,12 @@ from management_app.services.ports import ReadinessPort
 from management_app.settings import Settings
 
 if TYPE_CHECKING:
+    from management_app.composition import (
+        ManagedApplication,
+        ManagementAuthority,
+        ManagementRequest,
+        ManagementResourcesFactory,
+    )
     from management_app.state.configuration_editor import EditorServices
 
 
@@ -153,7 +159,24 @@ def create_app(
     return application
 
 
-def editor_asgi(application: rx.App) -> ASGIApp:
+async def create_managed_app(
+    settings: Settings | None = None,
+    *,
+    resources: "ManagementResourcesFactory",
+    authority: "ManagementAuthority | None",
+    request: "ManagementRequest | None" = None,
+) -> "ManagedApplication":
+    """Explicit reviewed-resource composition; no setting or fixture enables it by default."""
+    if authority is None or resources is None:
+        raise ValueError("explicit_management_composition_authority_required")
+    from management_app.composition import compose_management
+
+    return await compose_management(
+        settings or Settings(), request=request, resources=resources, authority=authority
+    )
+
+
+def editor_asgi(application: rx.App, *, additional_paths: frozenset[str] = frozenset()) -> ASGIApp:
     from management_app.security import ProtectedReflexBoundary, install_reflex_security
     from management_app.state.configuration_editor import EditorServices
 
@@ -165,7 +188,7 @@ def editor_asgi(application: rx.App) -> ASGIApp:
     RegistrationContext.set(application._registration_context)
     asgi = application()
     install_reflex_security(application, guard=api.state.editor_services.guard)
-    return ProtectedReflexBoundary(asgi)
+    return ProtectedReflexBoundary(asgi, additional_paths=additional_paths)
 
 
 app = create_app()

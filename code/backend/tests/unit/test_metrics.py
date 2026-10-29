@@ -199,6 +199,37 @@ def test_runtime_exports_bounded_operational_signals(measured):
     }
 
 
+def test_physical_call_observations_count_bound_connections_not_reservations(measured):
+    from caller_runtime.metrics import PhysicalCallObservations
+
+    metrics, reader = measured
+    observed = PhysicalCallObservations(metrics=metrics, maximum_calls=2)
+    observed.opened("session-observed", "owner-observed", 1)
+    observed.opened("session-observed", "owner-observed", 1)
+    metrics.reservations(9)
+    values = points(reader)
+    assert values["caller.active.calls"][0].value == 1
+    assert values["caller.active.reservations"][0].value == 9
+    assert observed.closed("session-observed", "foreign-owner", 1) is False
+    assert points(reader)["caller.active.calls"][0].value == 1
+    assert observed.closed("session-observed", "owner-observed", 1) is True
+    assert points(reader)["caller.active.calls"][0].value == 0
+    assert "session-observed" not in repr(reader.get_metrics_data())
+
+
+def test_physical_observation_limit_and_conflicting_owner_fail_closed(measured):
+    from caller_runtime.metrics import PhysicalCallObservations
+
+    metrics, reader = measured
+    observed = PhysicalCallObservations(metrics=metrics, maximum_calls=1)
+    observed.opened("session-one", "owner-one", 1)
+    with pytest.raises(PermissionError):
+        observed.opened("session-one", "owner-two", 2)
+    with pytest.raises(RuntimeError):
+        observed.opened("session-two", "owner-one", 1)
+    assert points(reader)["caller.active.calls"][0].value == 1
+
+
 @pytest.mark.parametrize(
     "kind", ["request", "admission", "handover", "dependency", "reason", "resource"]
 )

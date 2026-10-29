@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
@@ -16,6 +18,7 @@ from management_app.models.permissions import (
     RevocationRequest,
 )
 from management_app.observability import Telemetry, sanitize_correlation_id
+from management_app.services.audit import AuditRecord, validate_retention
 from management_app.services.capability_gateway import GatewayError
 from management_app.services.configuration_validation import encoded
 
@@ -47,6 +50,18 @@ class RevocationRepository(Protocol):
     async def revoke_capabilities(
         self, revocations: dict[str, Any], *, if_match: str, actor_id: str
     ) -> dict[str, Any]: ...
+
+    async def read_revocation_audit(self, identifier: str) -> dict[str, Any]: ...
+
+    async def acknowledge_revocation_audit(
+        self, identifier: str, *, retention_seconds: int
+    ) -> None: ...
+
+
+class SecurityAuditPort(Protocol):
+    async def record(self, record: AuditRecord) -> bool: ...
+
+    async def recover_security(self, committed_record: dict[str, Any]) -> bool: ...
 
 
 def problem(status: int, correlation: str) -> JSONResponse:
@@ -92,17 +107,55 @@ def create_router(
     runtime_identity: RuntimeIdentityPort,
     manager_identity: ManagerIdentityPort,
     telemetry: Telemetry,
+    audit: SecurityAuditPort,
+    audit_retention_seconds: int,
 ) -> APIRouter:
+    validate_retention(audit_retention_seconds)
     if any(
         port is None
-        for port in (gateway, repository, runtime_identity, manager_identity, telemetry)
+        for port in (gateway, repository, runtime_identity, manager_identity, telemetry, audit)
     ):
         raise ValueError("explicit_capability_ports_required")
     router = APIRouter()
 
+    async def audited_denial(
+        status: int,
+        correlation: str,
+        actor: str | None,
+        deadline: float,
+        revision_id: str | None = None,
+        action: Literal["capability.denied", "security.revoke"] = "capability.denied",
+    ) -> JSONResponse:
+        response = problem(status, correlation)
+        if status not in {401, 403, 412, 413, 422, 428}:
+            return response
+        try:
+            async with asyncio.timeout_at(deadline):
+                await audit.record(
+                    AuditRecord(
+                        id="audit-" + uuid4().hex,
+                        timestamp=datetime.now(UTC),
+                        action=action if actor is not None else "authorization.check",
+                        outcome="denied",
+                        actor_ref=actor if actor is not None else "anonymous",
+                        revision_id=revision_id,
+                        correlation_id=correlation,
+                        reason_code="permission_denied"
+                        if status in {401, 403}
+                        else "request_rejected",
+                    )
+                )
+            response.headers["X-Audit-Status"] = "recorded"
+        except Exception:
+            response.headers["X-Audit-Status"] = "pending"
+        return response
+
     @router.post("/v1/runtime/capabilities/execute")
     async def execute(request: Request) -> JSONResponse:
         correlation = sanitize_correlation_id(request.headers.get("X-Correlation-ID"))
+        deadline = asyncio.get_running_loop().time() + 10
+        actor = None
+        verified_revision = None
         with telemetry.span("http.request", headers=request.headers):
             try:
                 async with asyncio.timeout(10):
@@ -120,6 +173,7 @@ def create_router(
                     )
             except GatewayError as error:
                 status = error.status
+                verified_revision = error.revision_id
             except HTTPException as error:
                 status = error.status_code if error.status_code in ERROR_CODES else 503
             except TimeoutError:
@@ -127,14 +181,16 @@ def create_router(
             except Exception:
                 status = 503
             telemetry.event("request", "failure", correlation_id=correlation)
-            return problem(status, correlation)
+            return await audited_denial(status, correlation, actor, deadline, verified_revision)
 
     @router.put("/v1/security/revocations")
     async def revoke(request: Request) -> JSONResponse:
         correlation = sanitize_correlation_id(request.headers.get("X-Correlation-ID"))
+        deadline = asyncio.get_running_loop().time() + 10
+        actor = None
         with telemetry.span("http.request", headers=request.headers):
             try:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout_at(deadline - 2):
                     actor = await manager_identity.require_manager(request)
                     etags = request.headers.getlist("if-match")
                     if not etags:
@@ -151,15 +207,31 @@ def create_router(
                     )
                     if not ETAG.fullmatch(result["_etag"]):
                         raise RuntimeError("invalid_authority_response")
-                    telemetry.event("request", "success", correlation_id=correlation)
-                    return JSONResponse(
-                        {"policyVersion": result["policyVersion"]},
-                        headers={
-                            "ETag": result["_etag"],
-                            "Cache-Control": "no-store",
-                            "X-Correlation-ID": correlation,
-                        },
-                    )
+                    if type(result.get("policyVersion")) is not int or result["policyVersion"] < 2:
+                        raise RuntimeError("invalid_authority_response")
+                audit_status = "pending"
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        record = await repository.read_revocation_audit(
+                            "audit-security-" + str(result["policyVersion"])
+                        )
+                        await audit.recover_security(record)
+                        await repository.acknowledge_revocation_audit(
+                            record["id"], retention_seconds=audit_retention_seconds
+                        )
+                    audit_status = "recorded"
+                except Exception:
+                    pass
+                telemetry.event("request", "success", correlation_id=correlation)
+                return JSONResponse(
+                    {"policyVersion": result["policyVersion"]},
+                    headers={
+                        "ETag": result["_etag"],
+                        "Cache-Control": "no-store",
+                        "X-Correlation-ID": correlation,
+                        "X-Audit-Status": audit_status,
+                    },
+                )
             except PermissionConflict:
                 status = 412
             except HTTPException as error:
@@ -169,6 +241,8 @@ def create_router(
             except Exception:
                 status = 503
             telemetry.event("request", "failure", correlation_id=correlation)
-            return problem(status, correlation)
+            return await audited_denial(
+                status, correlation, actor, deadline, action="security.revoke"
+            )
 
     return router

@@ -1,17 +1,5 @@
 # Release Gates
 
-## Current Deferral Decision
-
-On 2026-10-28 the user explicitly deferred all remaining unchecked tasks to future phases.
-No remaining implementation is active in the current phase. The [future-phase index](../../../specs/001-call-center-agents/tasks.md#future-phases-deferred-backlog)
-retains all fifteen task IDs, requirements, dependencies and unchecked states; completion
-stays 114/129. T123 is complete and T124 remains unfinished. Reopen only through an explicit
-request for a named task or phase, preserving its original prerequisites and approvals.
-
-Deferral does not waive any release gate, accept unavailable live evidence, remove a
-requirement or authorize cloud/provider/cluster actions. Full-feature/live/release acceptance
-remains ungranted, with telephony, enforcement and live environment work still deferred.
-
 ## Remaining Work and Confirmed Scope
 
 On 2026-10-28, after asking to implement the remaining tasks, the user explicitly selected
@@ -50,7 +38,7 @@ historical root cause. No CI retry, deadline/sandbox change, waived assertion or
 is performed. Stop at this checkpoint and retain the merge/release block. T123 stays checked,
 T124 partial and completion 114/129, with all fifteen other open markers unchanged.
 
-| Deferred tasks | Future work or required authorization |
+| Open tasks | Remaining work or required authorization |
 |------------|------------------------------------------|
 | T042, T120 | Supported provider/scenario approval and qualified wire adapter; telephony remains deferred |
 | T121, T122 | Runtime/media and guarded management production compositions still require implementation and contract verification; live activation remains separate |

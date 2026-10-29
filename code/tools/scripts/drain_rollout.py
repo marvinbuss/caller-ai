@@ -263,6 +263,15 @@ async def orchestrate(
     attempted = False
     try:
         async with asyncio.timeout_at(deadline):
+            reconcile = getattr(cluster, "reconcile", None)
+            if reconcile is not None:
+                attempted = True
+                recovered = await reconcile(request, deadline=deadline)
+                if recovered in {"retired", "already_retired"}:
+                    return result(recovered, "removal_confirmed")
+                if recovered != "pending":
+                    return result("uncertain", "removal_not_confirmed")
+                attempted = False
             owner = request.target.owner_id
             snapshot(await operations.status(owner, deadline=deadline), owner, "status")
             fence = await cluster.fence(request, deadline=deadline)

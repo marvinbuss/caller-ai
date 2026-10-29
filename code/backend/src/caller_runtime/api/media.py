@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from caller_runtime.api.provider_webhooks import AdmissionPort
 from caller_runtime.domain.cleanup import terminal_cleanup
+from caller_runtime.metrics import PhysicalCallObservations
 
 
 class MediaProviderPort(Protocol):
@@ -50,11 +51,13 @@ def create_router(
     audio: AudioPort | None = None,
     maximum_connections: int = 1024,
     operation_budget: float = 10,
+    observations: PhysicalCallObservations | None = None,
 ) -> APIRouter:
     """No audio port means explicit local transport validation only, not a working call agent."""
     if (
         provider is None
         or admission is None
+        or (observations is not None and audio is None)
         or type(maximum_connections) is not int
         or not 1 <= maximum_connections <= 10000
         or type(operation_budget) not in (int, float)
@@ -70,6 +73,7 @@ def create_router(
     async def media(websocket: WebSocket, session_id: str) -> None:
         registered = False
         accepted = False
+        observed = False
         provider_call_ref = ""
         code = 1011
         reason = "media_unavailable"
@@ -99,6 +103,11 @@ def create_router(
                     registered = True
                 await websocket.accept()
                 accepted = True
+                if observations is not None:
+                    observations.opened(
+                        session_id, metadata["physical_owner_id"], metadata["connection_epoch"]
+                    )
+                    observed = True
             while True:
                 message = await websocket.receive()
                 if message["type"] == "websocket.disconnect":
@@ -241,6 +250,10 @@ def create_router(
                 result = await terminal_cleanup(
                     context=None, hangup=hangup, end=end, deadline=deadline
                 )
+                if observed and observations is not None and result.hangup_acknowledged:
+                    observations.closed(
+                        session_id, metadata["physical_owner_id"], metadata["connection_epoch"]
+                    )
                 if code == 1000 and not (
                     disposed and result.hangup_acknowledged and result.terminal_confirmed
                 ):

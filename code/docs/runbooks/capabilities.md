@@ -15,6 +15,9 @@ Management owns configuration, current permission authority, admission metadata 
 execution. Runtime uses only authenticated contracts and never opens management's private
 Cosmos container. Explicit API composition supplies the gateway, repository, runtime identity,
 manager identity and metadata telemetry; the foundation mounts neither endpoint by default.
+The capability router also requires the management audit service and an explicitly reviewed
+audit-retention duration. The guarded management request fingerprints that duration together
+with the identity/resource/review scope; no default duration grants production approval.
 
 `POST /v1/runtime/capabilities/execute` requires the distinct runtime audience, the configured
 application role, `idtyp=app`, no delegated scope, and an administrator-approved `azp` client ID.
@@ -96,6 +99,75 @@ from the ordinary configuration cache. An already admitted in-flight public read
 after revocation; every new attempt, including retry, needs a fresh conditional admission.
 Gateway attempts are bounded to three, retain the request ID/deadline, and reauthorize each time.
 No new grant can expand an active call's pinned assignments.
+
+## Recoverable Security Audit
+
+Standalone revocation now creates an immutable `audit-security-<policyVersion>` outbox item
+in the same Strong `default`-partition transaction as the conditional authority update. Later
+revocations, admissions and publications cannot overwrite that event's actor/time/action/outcome.
+It contains only the existing allowlisted audit model, not submitted revocation payloads,
+capability inputs/results, prompts, credentials or conversation content. Audit failure cannot
+revert or replay the committed permission change.
+
+The API reads the immutable record, copies it idempotently into the management-owned audit
+container, then conditionally acknowledges the outbox. Cloud audit writes explicitly include
+the UTC `dayBucket` matching the declared `/dayBucket` partition key and the reviewed per-item
+TTL. On a duplicate ID the adapter performs a Strong same-day point read and compares exact
+metadata; a changed actor, action, timestamp or retention policy is not idempotent success.
+SDK write retries remain disabled and duplicate verification shares the original two-second
+audit operation budget.
+
+Pending outbox rows retain `ttl=-1` so uncertain audit delivery cannot expire their evidence.
+Only after a confirmed audit copy may a trusted recovery caller invoke
+`acknowledge_revocation_audit(id, retention_seconds=reviewed_duration)`. It changes only retention
+under the outbox ETag, never immutable event metadata or current authority. The approved duration
+is an integral 3600-2147483647 seconds, bound to the reviewed host request. Repeating the same
+acknowledgement performs no replacement and cannot renew TTL; another duration requires an
+independent retention/migration review. Pending rows require monitored, reviewed recovery and
+capacity planning, not automatic deletion. Item TTL does not establish backup deletion or legal
+retention compliance.
+
+`PUT /v1/security/revocations` returns the committed policy version and ETag with
+`X-Audit-Status: recorded` only after copying and acknowledging metadata. `pending` means the
+permission change is already committed and its immutable source remains recoverable. Recovery
+uses `read_revocation_audit(id)` and `AuditService.recover_security(record)`, then acknowledges
+retention after the copy is confirmed; it never resubmits the revocation. A failed or canceled
+reply may still have committed: inspect authoritative metadata before taking any action.
+The original API ten-second budget includes recovery; two seconds are reserved after mutation.
+
+```mermaid
+sequenceDiagram
+  participant Manager as Authorized manager
+  participant API as Management security API
+  participant Config as Strong configuration partition
+  participant Audit as Management audit container
+  Manager->>API: Conditional authenticated revocation
+  API->>Config: Atomic authority update and immutable audit-outbox create
+  Config-->>API: Committed policy version and ETag
+  API->>Config: Read exact immutable event
+  API->>Audit: Idempotent metadata append with UTC day and reviewed TTL
+  alt Copy confirmed
+    API->>Config: Conditional retention acknowledgement
+    API-->>Manager: 200 with audit recorded
+  else Copy or acknowledgement unavailable
+    API-->>Manager: 200 with audit pending
+    Note over API,Config: Recover metadata, never replay the permission change
+  end
+```
+
+Rejected execution/revocation authentication, authorization, payload, size and precondition
+checks emit content-free audit records. Only a verified principal supplies an actor; otherwise
+the actor is `anonymous`/unverified. A pinned revision is included only when read and confirmed
+by the gateway repository. Guessed request/session/agent/tool/revision values and rejected
+payloads are never copied. Audit outages preserve the original denial, dispatch no new effect,
+expose no exception text and report audit `pending`; they are not successful audit delivery.
+
+Before approved use against an existing audit store, independently inventory its partitioning
+and retention. Older code could omit `dayBucket`; undefined-partition legacy rows are not
+silently treated as migrated or verified by the new adapter. Review a migration or prove an
+approved empty target, preserving audit history and unresolved outbox records. This change does
+not perform cloud inventory, migration or qualification; T131/T134/T136/T137 own those separate
+host, environment and real-durability gates. Foundation startup remains credential-free.
 
 ## Reviewed Onboarding and Network Controls
 

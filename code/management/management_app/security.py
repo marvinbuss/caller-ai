@@ -670,13 +670,21 @@ def install_reflex_security(application: "App", *, guard: ReflexEventGuard) -> N
 
 
 class ProtectedReflexBoundary:
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, additional_paths: frozenset[str] = frozenset()) -> None:
+        if not additional_paths <= {"/v1/runtime/capabilities/execute", "/v1/security/revocations"}:
+            raise ValueError("unreviewed_business_ingress")
         self.app = app
+        self.allowed = {
+            "/auth/callback",
+            "/auth/logout",
+            "/v1/configuration",
+            "/_event",
+            "/_event/",
+        } | additional_paths
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and scope["method"] not in {"GET", "HEAD", "OPTIONS"}:
-            allowed = {"/auth/callback", "/auth/logout", "/v1/configuration", "/_event", "/_event/"}
-            if scope["path"] not in allowed:
+            if scope["path"] not in self.allowed:
                 response = JSONResponse(
                     {"error": "unreviewed_ingress_prohibited"},
                     status_code=403,

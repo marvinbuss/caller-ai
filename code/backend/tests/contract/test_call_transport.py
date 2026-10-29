@@ -142,6 +142,77 @@ def admit(client: TestClient) -> None:
     assert 200 <= response.status_code < 300
 
 
+@pytest.mark.parametrize("acknowledged", [True, False])
+def test_explicit_audio_router_observes_physical_calls_until_verified_closure(acknowledged):
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    from caller_runtime.api.media import MediaOutput, create_router
+    from caller_runtime.metrics import PhysicalCallObservations, RuntimeMetrics
+
+    class Admission(AdmissionDouble):
+        async def read(self, session_id):
+            value = await super().read(session_id)
+            return (
+                {
+                    **value,
+                    "physical_owner_id": "owner-observed",
+                    "connection_epoch": 1,
+                    "agent_epoch": 1,
+                }
+                if value is not None
+                else None
+            )
+
+    class Phone(PhoneAdapterDouble):
+        async def decode_frame(self, frame):
+            value = await super().decode_frame(frame)
+            if value.get("type") == "audio":
+                value["duration_ms"] = 20
+            return value
+
+    class Audio:
+        async def receive(self, session_id, audio, metadata):
+            return (MediaOutput(b"synthetic-observed-output", "owner-observed", 1, 1),)
+
+        async def dispose(self, session_id, *, deadline):
+            return None
+
+    reader = InMemoryMetricReader()
+    metrics = RuntimeMetrics(mode="local", reader=reader)
+    observations = PhysicalCallObservations(metrics=metrics)
+    phone, admission = Phone(hangup_acknowledged=acknowledged), Admission(admitted=True)
+    application = FastAPI()
+    application.include_router(
+        create_router(provider=phone, admission=admission, audio=Audio(), observations=observations)
+    )
+
+    def values():
+        document = reader.get_metrics_data()
+        assert document is not None
+        return {
+            metric.name: metric.data.data_points
+            for resource in document.resource_metrics
+            for scope in resource.scope_metrics
+            for metric in scope.metrics
+        }
+
+    try:
+        with TestClient(application) as client:
+            with client.websocket_connect(MEDIA_PATH, headers=AUTHORIZATION) as websocket:
+                websocket.send_bytes(b"fixture-audio")
+                assert websocket.receive_bytes() == b"synthetic-observed-output"
+                assert values()["caller.active.calls"][0].value == 1
+                websocket.send_bytes(b"fixture-stop")
+                with pytest.raises(WebSocketDisconnect):
+                    websocket.receive_bytes()
+            assert values()["caller.active.calls"][0].value == (0 if acknowledged else 1)
+            assert "caller.speech.delay" not in values()
+            assert SESSION_ID not in repr(reader.get_metrics_data())
+        assert phone.hangups == [PROVIDER_CALL_REF]
+    finally:
+        metrics.close()
+
+
 @pytest.mark.parametrize("rejection", [None, "issuer", "audience", "signature", "expired"])
 def test_invalid_provider_callback_is_denied_before_admission(
     callbacks, rejection: str | None

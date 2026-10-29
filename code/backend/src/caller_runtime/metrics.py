@@ -1,6 +1,8 @@
 """Runtime-owned bounded aggregate metrics; no call content or implicit network exporter."""
 
 import math
+import re
+from threading import Lock
 from typing import Any
 
 from opentelemetry.sdk.metrics import AlwaysOffExemplarFilter, Counter, Histogram, MeterProvider
@@ -240,3 +242,48 @@ class RuntimeMetrics:
         if not self._closed:
             self._closed = True
             self._provider.shutdown()
+
+
+class PhysicalCallObservations:
+    """Process-local physical counts; retain unknown closure, never infer from reservations."""
+
+    def __init__(self, *, metrics: RuntimeMetrics, maximum_calls: int = 10000) -> None:
+        if metrics is None or type(maximum_calls) is not int or not 1 <= maximum_calls <= 10000:
+            raise ValueError("explicit_physical_observation_metrics_required")
+        self._metrics, self._maximum = metrics, maximum_calls
+        self._bindings: dict[str, tuple[str, int]] = {}
+        self._lock = Lock()
+
+    @staticmethod
+    def _binding(session_id: str, owner_id: str, epoch: int) -> tuple[str, int]:
+        if (
+            any(
+                not isinstance(value, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value)
+                for value in (session_id, owner_id)
+            )
+            or type(epoch) is not int
+            or epoch < 1
+        ):
+            raise ValueError("invalid_physical_observation_binding")
+        return owner_id, epoch
+
+    def opened(self, session_id: str, owner_id: str, epoch: int) -> None:
+        binding = self._binding(session_id, owner_id, epoch)
+        with self._lock:
+            previous = self._bindings.get(session_id)
+            if previous is not None and previous != binding:
+                raise PermissionError("physical_observation_binding_conflict")
+            if previous is None and len(self._bindings) >= self._maximum:
+                raise RuntimeError("physical_observation_capacity_exhausted")
+            self._bindings[session_id] = binding
+            self._metrics.active_calls(len(self._bindings))
+
+    def closed(self, session_id: str, owner_id: str, epoch: int) -> bool:
+        binding = self._binding(session_id, owner_id, epoch)
+        with self._lock:
+            if self._bindings.get(session_id) != binding:
+                return False
+            del self._bindings[session_id]
+            self._metrics.active_calls(len(self._bindings))
+            return True

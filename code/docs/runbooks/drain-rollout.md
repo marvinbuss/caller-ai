@@ -1,5 +1,48 @@
 # Local Drain Rollout Controls
 
+## T124 Reopened Local Enforcement Increment
+
+The user explicitly reopened T124-T129 and selected local opt-in Kubernetes admission-guard
+implementation. This does not authorize cluster access, Terraform deployment, actual pod
+deletion, provider/model calls, image publication or live acceptance. Existing hosted results
+below remain historical and do not qualify this new code.
+
+[kubernetes_rollout.py](../../tools/scripts/kubernetes_rollout.py) now composes explicit
+enforcement, pod and durable-ledger ports through `GuardedCluster`. The concrete
+`KubernetesRetirementClient` uses only supplied origin-scoped credentials and an HTTPX client;
+its TLS/identity/network configuration remains a separately reviewed trust boundary. It reads
+the exact installed policy/binding, generation and completed type-check status, and verifies
+the current dedicated controller subject through Kubernetes SelfSubjectReview. It never installs
+a policy, discovers credentials or turns on CLI execution.
+
+The single Terraform-owned [policy template](../../infra/terraform/modules/platform/templates/retirement-guard.json.tftpl)
+is consumed by both the client and the [review-only Terraform output](../../infra/terraform/modules/platform/retirement.tf).
+The output is null by default and is not an installation resource. A matching installed policy
+must use failurePolicy Fail and a Deny binding, cover the exact namespace without editable pod
+selectors, and permit only the dedicated controller's UID-precondition DELETE. Independent
+actors, eviction, force deletion and collection deletion are denied by the tested CEL rule.
+Namespace/service-account ownership, prevention of controller impersonation or unauthorized
+service-account use, API-server enforcement support and authority to modify the policy require
+independent RBAC/environment review. A supplied HTTP response is not proof of those live facts.
+
+Submission is durably recorded before DELETE. Kubernetes acceptance is not removal; only a
+fresh authoritative GET showing the old UID absent can confirm retirement. Lost/canceled
+submission replies remain submitted, and reconstruction observes rather than replaying DELETE.
+Reconciliation precedes runtime lookup so a removed owner need not answer its old endpoint.
+Every step retains the original at-most-ten-second orchestration deadline; no force, polling,
+fence expiry or automatic uncertain-record eviction is added.
+
+Local verification passes 73 rollout cases, including evaluation by the pinned maintained CEL
+engine rather than a hand-written policy simulator, plus three real Cosmos-ledger composition
+cases on the existing SDK double. Strict typing passes for both tooling modules. Credential-free
+Terraform validation passes all three roots and 32 native tests. Actual admission installation,
+RBAC/identity qualification, a reviewed execution host and real cluster/Cosmos verification
+remain outstanding; T124 is still partial, not live-qualified or checked complete.
+
+The final local checkpoint passes the full 552-case backend and 220-case tooling suites,
+all eight repository gates, the strict 68-package tooling audit with zero known findings,
+and all 33 documents/30 actual sandboxed diagram renders. These are local results only.
+
 ## Scope and Authorization
 
 On 2026-10-26 the user selected **Continue local T098 controls**, authorizing an isolated
@@ -111,7 +154,13 @@ sequenceDiagram
     participant HTTP as Explicit authenticated HTTP client
     participant Identity as Injected origin-scoped credentials
     participant Runtime as Authenticated drain API
-    participant Cluster as Trusted fenced retirement port
+    participant Cluster as Guarded retirement adapter
+    participant Policy as Installed native admission policy
+    participant Ledger as Runtime-owned durable removal ledger
+    Tool->>Cluster: Observe-only durable recovery before runtime lookup
+    Cluster->>Policy: Verify exact definition, generation and controller identity
+    Cluster->>Ledger: Inspect exact operation and submitted phase
+    Note over Cluster,Ledger: Submitted work is observed, never re-deleted
     Operator->>Tool: Exact cluster, workload, owner, pod UID and operation ID
     Tool->>HTTP: Status with original deadline
     HTTP->>Identity: Resolve token for exact configured origin and deadline
@@ -131,7 +180,10 @@ sequenceDiagram
     else Drain complete
         Tool->>Runtime: Fresh drained and canTerminate check
         Tool->>Cluster: Conditional UID-bound retirement with current drain proof
-        Cluster->>Cluster: Atomically recheck guard, binding and idempotent operation
+        Cluster->>Policy: Recheck installed guard and authenticated controller
+        Cluster->>Ledger: Conditionally persist submitted before DELETE
+        Cluster->>Cluster: UID-conditional non-forced DELETE, then observe old UID absence
+        Cluster->>Ledger: Confirm only independently observed retirement
         Cluster-->>Tool: Confirmed, postponed or uncertain
         Tool-->>Operator: Safe structured outcome
     end

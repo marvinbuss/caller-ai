@@ -4,6 +4,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Protocol
 
 from fastapi import FastAPI, Request
 from starlette.middleware.base import RequestResponseEndpoint
@@ -13,6 +14,12 @@ from management_app.metrics import METHODS, ManagementMetrics
 from management_app.observability import Telemetry, sanitize_correlation_id
 from management_app.services.ports import LocalDependencies, ReadinessPort
 from management_app.settings import Settings
+
+
+class ManagementStartup(Protocol):
+    async def require(self, settings: Settings) -> None: ...
+
+    async def shutdown(self) -> None: ...
 
 
 def create_health_api(
@@ -64,7 +71,12 @@ def create_health_api(
                 "service": "management",
                 "mode": settings.mode,
                 "version": "0.1.0",
-                "capabilities": {"live_calls": False, "management_configuration": False},
+                "capabilities": {
+                    "live_calls": False,
+                    "management_configuration": bool(
+                        ready and getattr(api.state, "management_configuration", False)
+                    ),
+                },
                 "reason_codes": [] if ready else [reason],
             },
             status_code=200 if ready else 503,
@@ -104,8 +116,27 @@ def create_health_api(
 
 @asynccontextmanager
 async def lifecycle(api: FastAPI, settings: Settings) -> AsyncIterator[None]:
-    settings.validate_startup()
-    telemetry = Telemetry("management", settings.mode)
+    startup: ManagementStartup | None = getattr(api.state, "management_startup", None)
+    try:
+        if startup is None:
+            settings.validate_startup()
+        else:
+            await startup.require(settings)
+    except BaseException:
+        try:
+            if startup is not None:
+                await startup.shutdown()
+        finally:
+            telemetry_on_failure: Telemetry | None = getattr(api.state, "telemetry", None)
+            if telemetry_on_failure is not None:
+                telemetry_on_failure.close()
+            metrics_on_failure: ManagementMetrics | None = api.state.metrics
+            if metrics_on_failure is not None:
+                metrics_on_failure.close()
+        raise
+    telemetry: Telemetry = getattr(api.state, "telemetry", None) or Telemetry(
+        "management", settings.mode
+    )
     api.state.telemetry = telemetry
     metrics: ManagementMetrics = api.state.metrics or ManagementMetrics(mode=settings.mode)
     api.state.metrics = metrics
@@ -119,3 +150,5 @@ async def lifecycle(api: FastAPI, settings: Settings) -> AsyncIterator[None]:
         telemetry.close()
         metrics.close()
         api.state.metrics = None
+        if startup is not None:
+            await startup.shutdown()

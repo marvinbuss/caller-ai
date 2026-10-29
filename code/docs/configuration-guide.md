@@ -9,10 +9,12 @@ APIs, never its private Cosmos containers. Relationships configure handover perm
 which same-community peers an ordinary agent can discover.
 
 Default local startup remains the credential-free foundation shell. The configuration editor
-is an explicit composition using `create_app(editor=EditorServices(...))` and
-`editor_asgi(application)`. Those services require the configured identity, same-origin
-session guard, management API and reviewed capability registry; none is inferred from a
-browser header. Live mode still fails closed pending the separate qualification gates.
+has an explicit guarded non-test factory, `create_managed_app`, separate from the default
+module application. It requires reviewed resources and independent authorization; neither a
+browser header nor an environment flag supplies that authorization. The lower-level
+`create_app(editor=EditorServices(...))` and `editor_asgi(application)` remain available for
+explicit assembly and the synthetic test host. Actual live composition remains unconfigured
+and blocked by the separate qualification gates.
 
 For synthetic local editing from the repository root:
 
@@ -30,6 +32,93 @@ Dependency preparation uses the Microsoft Python/npm proxies described in
 Normal SSR export, isolated generated directories, a 180-second build budget and a 120-second
 readiness budget are retained. A healthy foundation probe is not proof of live editor or call
 readiness. See [US2 evidence](acceptance/us2.md) for measured results and remaining limits.
+
+## Guarded Management Composition
+
+The non-test entry is implemented in
+[management_app.py](../management/management_app/management_app.py) and
+[composition.py](../management/management_app/composition.py). It returns a `ManagedApplication`
+that is directly callable as ASGI, with the Reflex event guard and ingress boundary already
+installed. Its `reflex_app` and `api` attributes support explicit host integration; do not
+serve an unwrapped underlying app instead. No default startup, environment toggle or test
+login route selects this factory.
+
+Prepare the frontend separately, then use Reflex's normal backend-host configuration
+(`__REFLEX_SKIP_COMPILE=true`, also used by the local smoke host) to avoid package installation
+and frontend compilation during backend construction. This framework control does not grant
+composition authority or disable any identity, review or storage checks. Controlled backend
+tests reject frontend-install attempts; the separate browser suite retains its normal build.
+
+A deployment-owned `ManagementRequest` binds opaque environment, configuration-container,
+audit-container and review references to the Entra policy and distinct runtime audience,
+role and permitted workload clients. Settings and request form a canonical SHA-256
+fingerprint, excluding the transient process instance ID. A trusted `ManagementAuthority`
+must independently verify actual resource/review scope and return an exact-bound UTC grant
+valid for at most five minutes. Supplying reference strings or constructing a grant in
+application code is not independent environment qualification.
+
+Authorization precedes resource construction and is rechecked before protected-role
+bootstrap, after bootstrap and at ASGI lifespan startup. Construction shares one ten-second
+deadline; teardown has a separate bounded ten-second budget. Denial, expiry, binding changes,
+construction failures and cancellation cannot fall back to local storage or fixture login.
+Once returned, resources close exactly once on failed startup or normal shutdown. A caller
+that abandons an unstarted handle must explicitly close its supplied resources. A resource
+factory owns cleanup of partial allocations if it fails before returning them. Provider
+exception details are replaced with fixed composition errors.
+
+The trusted `ManagementResourcesFactory` supplies management-owned Cosmos configuration and
+audit ports, `EntraSigningKeys` and `MsalCodeFlow` from the existing Entra adapter, immutable
+reviewed capabilities, secret-detection policy, approved destination/credential references,
+explicit readiness and resource cleanup. It is responsible for independently qualified
+identity, container ownership, consistency, network and TLS configuration; the composition
+does not discover credentials, provision resources or certify these facts itself.
+The factory reuses the actual Cosmos repositories, bootstrap/audit services, authenticated
+configuration/runtime/capability routers and session-bound `EditorServices`. Only approved
+`secret://` aliases reach the credential resolver. Direct public-read and maintained MCP
+transports retain pinned public DNS/TLS, reviewed schemas/actions, output allowlists and
+current-policy revocation checks. The extra write ingress is limited to the existing
+authenticated capability and revocation endpoints, not arbitrary business paths.
+
+```mermaid
+sequenceDiagram
+    participant Host as Explicit reviewed host
+    participant Factory as Management composition
+    participant Authority as Independent review authority
+    participant Resources as Approved resource factory
+    participant Store as Management-owned Cosmos ports
+    participant ASGI as Guarded Reflex and API
+    Host->>Factory: Request, settings, authority and resource factory
+    Factory->>Authority: Verify scope and exact fingerprint before effects
+    Authority-->>Factory: Short-lived bound startup grant
+    Factory->>Resources: Construct explicit ports within original deadline
+    Resources-->>Factory: Bound resources and cleanup
+    Factory->>Authority: Recheck before bootstrap
+    Factory->>Store: Idempotent protected-role bootstrap
+    Factory->>Authority: Recheck after bootstrap
+    Factory-->>Host: Initialized guarded ASGI handle
+    Host->>ASGI: Lifespan startup
+    ASGI->>Authority: Fresh startup authorization
+    Host->>ASGI: Lifespan shutdown
+    ASGI->>Resources: Close once
+```
+
+The focused local contracts use the existing Entra/MSAL and MCP adapters with controlled
+HTTP transports, real signed test JWTs and a Cosmos SDK double. They check authenticated
+HTTP and session-bound Reflex draft editing, complete publication, conflict preservation,
+runtime consumption, public-read execution, revocation and cleanup. They are not actual
+Entra login, cloud resource validation, physical process restart or real-Cosmos durability.
+The default health shell remains credential-free, with management configuration and live
+calls false. A successfully authorized composed lifespan may report management configuration
+true after its supplied readiness probe succeeds; `live_calls` remains false.
+
+T122 local verification: all 17 focused composition cases and all 430 management tests,
+including the existing real-browser editor regressions, pass on Windows. The required local
+repository gates pass, including strict management/runtime typing, credential-free Terraform
+validation, secret/publication guards and all 203 tooling tests. All 33 documents validate
+and all 30 Mermaid diagrams render with the unchanged sandboxed validator. The final focused
+run also verifies isolated backend work directories and rejects frontend-install attempts;
+the tracked frontend lock and private-feed configuration are unchanged. These are local
+results, not new hosted CI, image publication or live-environment acceptance.
 
 ## Identity and Permissions
 

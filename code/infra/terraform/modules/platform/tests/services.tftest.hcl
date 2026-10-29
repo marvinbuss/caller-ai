@@ -69,6 +69,35 @@ run "private_cluster_and_fixed_call_pool" {
   }
 }
 
+run "retirement_guard_default_is_disabled" {
+  command = plan
+  assert {
+    condition     = output.retirement_guard_manifests == null
+    error_message = "A default plan must not enable or install retirement enforcement."
+  }
+}
+
+run "explicit_retirement_guard_requires_controller_uid_and_deny_binding" {
+  command = plan
+  variables {
+    retirement_guard = {
+      namespace   = "runtime"
+      controller  = "retirement-controller"
+      policy_name = "retirement-guard"
+    }
+  }
+  assert {
+    condition = (
+      output.retirement_guard_manifests[0].spec.failurePolicy == "Fail" &&
+      output.retirement_guard_manifests[0].spec.matchConditions[0].expression == "request.namespace == 'runtime'" &&
+      strcontains(output.retirement_guard_manifests[0].spec.validations[0].expression, "system:serviceaccount:runtime:retirement-controller") &&
+      strcontains(output.retirement_guard_manifests[0].spec.validations[0].expression, "request.options.preconditions.uid != ''") &&
+      output.retirement_guard_manifests[1].spec.validationActions[0] == "Deny"
+    )
+    error_message = "Definitions must fail closed for exact namespace/controller, UID-precondition deletion and denial rather than warning."
+  }
+}
+
 run "both_service_alerts_are_explicit_private_and_disabled_pending_delivery" {
   command = plan
   assert {

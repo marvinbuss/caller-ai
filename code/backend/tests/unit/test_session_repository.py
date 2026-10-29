@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import json
 import multiprocessing
 import threading
 from dataclasses import dataclass, field
@@ -175,6 +176,80 @@ async def test_removal_ledger_survives_reconstruction_without_repeating_uncertai
     )
     assert (await third.reserve(request)).phase == "retired"
     assert await third.initialize() is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["lost_reply", "canceled_reply", "accepted_only"])
+async def test_guarded_cluster_recovers_real_cosmos_ledger_without_delete_replay(
+    monkeypatch, failure
+):
+    import importlib
+    from pathlib import Path
+
+    from caller_runtime.adapters.rollout_repository import CosmosRemovalLedger
+
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[3] / "tools/scripts"))
+    rollout = importlib.import_module("drain_rollout")
+    kubernetes = importlib.import_module("kubernetes_rollout")
+    request = rollout.parse_request(json.dumps(removal_request()).encode())
+    container, deleted = ContainerDouble(), []
+    ledger = CosmosRemovalLedger(container, utc_now=removal_instant)
+    assert await ledger.initialize()
+
+    class Guard:
+        async def verify(self, request, *, deadline):
+            return "fence-fixture"
+
+    class Pods:
+        closed = False
+
+        async def matches(self, request, *, deadline):
+            return not self.closed
+
+        async def delete(self, request, *, deadline):
+            deleted.append(request.target.pod_uid)
+            self.closed = failure != "accepted_only"
+            if failure == "lost_reply":
+                raise RuntimeError("synthetic-lost-cluster-reply")
+            if failure == "canceled_reply":
+                raise asyncio.CancelledError
+
+        async def removed(self, request, *, deadline):
+            return self.closed
+
+    class Operations:
+        unavailable = False
+
+        async def status(self, owner_id, *, deadline):
+            if self.unavailable:
+                pytest.fail("reconciliation_must_not_depend_on_removed_runtime")
+            return {"ownerId": owner_id, "state": "drained", "canTerminate": True}
+
+        async def begin(self, owner_id, *, deadline):
+            return {**await self.status(owner_id, deadline=deadline), "outcome": "drained"}
+
+        async def complete(self, owner_id, *, deadline):
+            return {**await self.status(owner_id, deadline=deadline), "outcome": "drained"}
+
+    pods, operations = Pods(), Operations()
+    cluster = kubernetes.GuardedCluster(ledger=ledger, guard=Guard(), pods=pods)
+    if failure == "canceled_reply":
+        with pytest.raises(asyncio.CancelledError):
+            await rollout.orchestrate(request, operations=operations, cluster=cluster)
+    else:
+        assert (
+            await rollout.orchestrate(request, operations=operations, cluster=cluster)
+        ).outcome == "uncertain"
+    assert (await ledger.inspect(removal_request())).phase == "submitted"
+    operations.unavailable = True
+    restored = CosmosRemovalLedger(container, utc_now=removal_instant)
+    reconstructed = kubernetes.GuardedCluster(ledger=restored, guard=Guard(), pods=pods)
+    result = await rollout.orchestrate(request, operations=operations, cluster=reconstructed)
+    assert result.outcome == ("uncertain" if failure == "accepted_only" else "retired")
+    assert deleted == [request.target.pod_uid]
+    assert (await restored.inspect(removal_request())).phase == (
+        "submitted" if failure == "accepted_only" else "retired"
+    )
 
 
 @pytest.mark.anyio

@@ -18,6 +18,8 @@ Metrics do not authorize capabilities, allocate ownership, renew leases or ackno
 ```mermaid
 flowchart LR
     Runtime[Runtime HTTP and local controllers] --> RuntimeMeter[Runtime bounded aggregate meter]
+   Media[Authenticated explicit audio media router] --> Physical[Owner and epoch bound physical observations]
+   Physical --> RuntimeMeter
     Management[Management HTTP and capability gateway] --> ManagementMeter[Management bounded aggregate meter]
     RuntimeMeter --> Local[Real OTel in-memory collection tests]
     ManagementMeter --> Local
@@ -44,7 +46,33 @@ flowchart LR
 | `caller.active.reservations` | Conservative local capacity reservations, including ambiguous session creation; not verified active physical calls |
 | `caller.admissions` | Actual local admission outcomes: admitted, duplicate or unavailable |
 | `caller.handovers`, `caller.handover.duration` | Actual ordinary transfer control outcomes and elapsed decision time; not first resumed audio or all protected terminal transitions |
-| `caller.active.calls`, `caller.speech.delay` | Validated metric ports only; no physical/media producer is wired while T043 is missing |
+| `caller.active.calls` | Explicit audio-media router's verified connection observations, retained until acknowledged provider closure; process-local and not a reservation or fleet measurement |
+| `caller.speech.delay` | Validated port only; no verified input-turn-end/playback-start producer exists while provider/runtime composition remains missing |
+
+## T125 Physical Observation Increment
+
+The reopened local increment adds `PhysicalCallObservations` in the runtime
+[metrics module](../../backend/src/caller_runtime/metrics.py), supplied explicitly through the
+[media router](../../backend/src/caller_runtime/api/media.py). Default/foundation mode does not
+construct it, and transport-validation-only mode cannot request physical observations without
+an audio port. Use one shared observer for a process's media routers rather than separate
+observers overwriting one gauge. Collection performs no exporter I/O in media execution.
+
+An authenticated accepted audio connection records its exact session/physical-owner/connection
+epoch once. Repeating the same observation is idempotent; another owner/epoch cannot adopt it.
+Only the provider port's acknowledged hangup removes the observation. Disconnect, disposal,
+terminal metadata or an unacknowledged provider response cannot imply physical closure.
+Uncertainty remains conservatively counted and bounded; saturation rejects new observation
+bindings instead of evicting unknown calls. A separately trusted physical recovery observer
+may report a verified exact closure through the same bound interface.
+
+Bindings are volatile bounded control metadata, never metric dimensions. The gauge is distinct
+from reservation counts, and does not reconstruct across process restart or establish fleet
+accuracy. Two unit contracts and two actual authenticated WebSocket contracts verify exact
+binding/counts, retained uncertain closure, no session labels and no speech-delay sample.
+No input-turn-end or playback-start timestamp is invented: model/control timing and WebSocket
+send completion do not establish resumed speech. T125 stays partial for that producer,
+qualified both-service exporter/delivery and actual Azure ingestion/query/notification evidence.
 
 Runtime ratios are capped at one after quota reductions; zero model quota reports saturation
 even with no reservations. Ambiguous persistence keeps its conservative reservation. A

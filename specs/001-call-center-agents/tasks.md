@@ -1090,7 +1090,7 @@ waived assertion or live operation is used; evidence applies only to the exact s
 
 - [ ] T120 [US1] CRITICAL F1: Implement the qualified provider adapter in `code/backend/src/caller_runtime/adapters/telephony.py` after explicit supported-scenario approval, reusing `api/provider_webhooks.py` and `api/media.py` contracts; pin and test real callback/media authentication, codec/framing, answer, bidirectional send, playback clear and acknowledged hangup, preserving the no-network fake and disabled default/live admission until T099. Stop rather than invent unsupported wire operations per FR-001, FR-004, FR-012, US1/AC1-4, plan: qualified telephony, and existing T035/T042 (missing).
 - [ ] T121 [US1] CRITICAL F2: Implement an explicitly gated runtime composition in `code/backend/src/caller_runtime/main.py` and `settings.py`, plus concrete `AgentPort`/`AudioPort` integration across `adapters/agents_sdk.py`, `api/media.py`, `domain/call_lifecycle.py` and `services/configuration_activation.py`; connect approved provider media to fresh Azure realtime SDK sessions, pinned revisions, current-authority tools, owner/epoch fencing, independent bounded read/model/write work, interruption, Goodbye, terminal cleanup and safe audit. Test the composed boundary with controlled transports, including interruption while model work is pending and no post-terminal output; retain credential-free defaults and reject unqualified live composition per FR-001, FR-002, FR-004, FR-009-FR-012, FR-018-FR-024, US1/AC1-5, plan: runtime orchestration, and existing T038-T044/T085-T086/T108 (missing).
-- [ ] T122 [US2] CRITICAL F3: Add a guarded non-test management composition in `code/management/management_app/management_app.py` and `settings.py` that reuses `adapters/entra_oidc.py`, `security.py`, management-owned Cosmos repositories, bootstrap/audit services, authenticated configuration/runtime/capability routers and `EditorServices`; supply approved credential-reference resolution and public read-only transports without constructing clients in default local mode or allowing an environment flag to bypass qualification. Test authenticated HTTP and Reflex editing, denied access, conflict preservation, complete publication and runtime contract consumption through the composed app; qualify actual restart durability separately per FR-003, FR-013-FR-017, FR-019-FR-025, FR-033-FR-034, US2/AC1-7, plan: management ownership/identity, and existing T054-T058/T062/T081-T084/T106/T109 (missing).
+- [X] T122 [US2] CRITICAL F3: Add a guarded non-test management composition in `code/management/management_app/management_app.py` and `settings.py` that reuses `adapters/entra_oidc.py`, `security.py`, management-owned Cosmos repositories, bootstrap/audit services, authenticated configuration/runtime/capability routers and `EditorServices`; supply approved credential-reference resolution and public read-only transports without constructing clients in default local mode or allowing an environment flag to bypass qualification. Test authenticated HTTP and Reflex editing, denied access, conflict preservation, complete publication and runtime contract consumption through the composed app; qualify actual restart durability separately per FR-003, FR-013-FR-017, FR-019-FR-025, FR-033-FR-034, US2/AC1-7, plan: management ownership/identity, and existing T054-T058/T062/T081-T084/T106/T109 (complete over controlled ports; actual environment/restart durability remains T099/T118).
 - [X] T123 [US6] HIGH F4: Complete shared admission/quota authority around `code/backend/src/caller_runtime/services/capacity.py`, `services/owner_routing.py` and runtime-owned session storage instead of treating process-local `_owners`, `_active`, `_extra_models` and locks as cluster-global limits. Atomically bound call and overlapping model-session reservations across independent controllers, fence stale leases, recover conservatively after restart and release only after verified closure; test concurrent replicas, quota exhaustion, authority loss and duplicate admission without changing the ten-second outcome budget or claiming socket migration per FR-002, FR-026-FR-027, SC-002-SC-003, SC-010, US6/AC1/3/4, plan: call-aware horizontal scaling, and existing T092/T100 (complete; live qualification remains T099/T118).
 - [ ] T124 [US6] HIGH F5: Implement authenticated operations and durable cluster adapters for `code/tools/scripts/drain_rollout.py` and `code/backend/src/caller_runtime/api/operations.py`, with reviewed enforcement definitions under `code/infra/terraform/`; make the existing fence/retire contract actually prevent independent planned deletion, bind exact pod UID and operation identity, retain fences on uncertainty, and reconcile controller restart without forced call termination. Add independent-actor and recovery tests, preserve the validation-only default, and require separate authorization plus T099/T118 evidence before real cluster changes per FR-026-FR-027, SC-003/SC-010, US6/AC2-4, plan: application-controlled pre-drain, and existing T093/T096/T098 (partial).
 - [ ] T125 [US6] HIGH F6: Complete real call/speech metric producers and explicitly configured approved telemetry delivery in `code/backend/src/caller_runtime/metrics.py`, `observability.py`, `code/management/management_app/metrics.py`, `observability.py` and their composition boundaries; wire physical-call and resumed-speech observations rather than reservation/control timing, preserve bounded labels/content exclusions and disabled-by-default SDK tracing, and keep exporter I/O off realtime execution paths. Qualify Azure delta/count/resource mapping and all both-service queries/actions in `code/infra/terraform/modules/platform/monitoring.tf`, including owners, thresholds, runbooks, missing-data behavior, representative alert receipt and recovery before enabling rules per FR-028, SC-013-SC-014, plan: both-service observability, Constitution VII, and existing T017/T097 (partial).
@@ -1099,31 +1099,172 @@ waived assertion or live operation is used; evidence applies only to the exact s
 - [ ] T128 HIGH F9: Implement executable opt-in qualified live profiles behind `code/tools/scripts/verify_release.py`, reusing the planned call/configuration/revision/capacity/drain/privacy test modules instead of only profile metadata and unconditional live refusal. Require fresh authorized T099 evidence and applicable T117 prerequisites before dispatch, assert actual provider/model/Cosmos and integrated policy behavior, collect bounded noncontent measurements, and fail missing/empty/skipped/partial/nonzero results rather than silently promoting synthetic fixtures. Default local execution must remain credential-free and never invoke these profiles per FR-001-FR-028, SC-001-SC-007, SC-009-SC-014, SC-018-SC-019, all six stories' live acceptance scenarios, plan: staged verification, Constitution IX, and existing T046/T063/T089/T100/T110/T112/T118 (partial).
 - [ ] T129 HIGH F10: After T120-T128 and separately authorized live access, execute and review the deferred acceptance obligations: 200 eligible journeys, measured 100-to-200-call sustain/scale/drain, interruption/closure/failure limits, twenty revision/revocation changes, real restart durability, privacy/cleanup and both-service alert correlation, plus ten operator diagnosis cases within five minutes. Record actual model cost/Cosmos RU/quota budgets in `code/docs/capacity.md` and immutable scoped results, accountable privacy/environment approvals and release decisions in `code/docs/acceptance/live-environment.md`, `release-gates.md` and `final.md`; keep any unavailable/failed obligation blocked and SC-008 deferred, never claim production readiness from doubles or task markers per SC-001-SC-007, SC-010-SC-014, SC-018-SC-019, plan: live qualification/release, Constitution I/II/VI/VII/VIII/IX, and existing T116/T118/T119 (partial).
 
-## Future Phases: Deferred Backlog
+### Reopened T124-T129 Local Checkpoint
 
-**Authoritative execution disposition, 2026-10-28**: at the user's explicit direction,
-all fifteen remaining unchecked tasks are deferred to future phases. No remaining task is
-scheduled for implementation in the current phase. This disposition supersedes earlier
-requests to continue or complete that backlog; resume only after an explicit request to
-reopen a named task or future phase, with its original prerequisites and approvals satisfied.
+The user explicitly reopened T124-T129 and selected local opt-in Kubernetes admission-guard
+implementation. Cluster access/installation, Terraform apply/deployment, actual pod deletion,
+provider/model calls, image publication and live acceptance remain unauthorized. This reopens
+local engineering, not T120/T121 or environment/release approval. Existing T122/T123 completion
+and all six T124-T129 unchecked markers are preserved; local increments are not full completion.
 
-Deferral means postponed, not implemented, canceled, accepted or waived. All original task
-IDs, descriptions, dependencies, checkbox states and historical evidence above are retained.
-Progress stays **114/129 complete, 15 deferred**; T123 remains complete, T124 remains partial,
-and SC-008 remains separately deferred. Full-feature, live and release acceptance are not
-granted by closing the current work phase.
+- T124 now has a concrete authenticated Kubernetes policy/pod client and durable guarded cluster
+  adapter. The Terraform-owned CEL policy/template has disabled-by-default review-only output,
+  not an installation resource. Actual CEL tests cover independent actors, eviction, force and
+  collection deletion; recovery observes submitted operations without replaying DELETE or
+  requiring a removed runtime to respond. Existing Cosmos-ledger composition tests cover lost,
+  canceled and accepted-only replies. Installation, reviewed RBAC/controller identity, a reviewed
+  execution host and real cluster/Cosmos qualification remain missing or unqualified.
+- T125 now has bounded physical-call observations wired into the explicit authenticated audio
+  router, distinct from reservations and retaining unknown provider closure. Actual WebSocket
+  tests cover acknowledged/unacknowledged closure. Verified speech-turn/playback observations,
+  qualified both-service cloud delivery and Azure alert receipt/recovery remain unbuilt/unqualified.
+- T126 still lacks concrete approved resource/probe bindings for all eleven actual environment
+  checks; the existing trusted-port observation harness is not that implementation or a live grant.
+- T127 still lacks concrete qualified protected authority, remote-plan and immutable-publication
+  adapters plus reviewed repository/environment controls; its CLI remains blocked. No sensitive
+  remote plan, image publication, release or workflow activation has been performed.
+- T128 still lacks qualified provider/model/Cosmos live profile drivers and executable profiles;
+  existing local regression execution cannot be relabeled live acceptance. T120/T121 and fresh
+  T099 evidence remain prerequisites, rather than a reason to run scripted doubles as live tests.
+- T129 cannot execute before T120-T128 and separate live access/approvals. No acceptance, cost/RU,
+  quota, privacy, alert-delivery or release evidence is fabricated from local checks.
 
-| Future phase | Deferred tasks | Re-entry requirements |
-|--------------|----------------|-----------------------|
-| 11: Supported integrations and composition | T042, T120, T121, T122 | Explicit reopening, supported provider/scenario approval where applicable, guarded composition contracts and unchanged credential-free defaults |
-| 12: Operations, enforcement and telemetry | T097, T124, T125 | Explicit reopening, cluster-enforcement design approval, remaining adapters/producer implementation and relevant monitoring/qualification evidence |
-| 13: Environment and protected delivery | T099, T117, T126, T127 | Explicit reopening, approved environment and least-privileged identities, accountable privacy/resource reviews and separately authorized protected operations |
-| 14: Live acceptance and final release | T118, T119, T128, T129 | Explicit reopening, completed upstream requirements, fresh T099/T117 evidence, authorized real measurements and reviewed release decisions |
+See [drain rollout](../../code/docs/runbooks/drain-rollout.md) and
+[monitoring](../../code/docs/runbooks/monitoring.md) for implemented contracts and limitations.
 
-These are planning groups, not new implementation tasks or replacement dependency rules.
-Original prerequisites remain authoritative; engineering and environment work may need to
-be interleaved when those prerequisites require it. Existing test/security gates stay in
-force. Telephony, cluster enforcement and live environment work remain deferred; no cloud
-authentication, provisioning, deployment, image publication, real calls or release is
-authorized. Deferred work must not be automatically resumed by a generic implementation
-invocation without explicit reopening scope.
+This local checkpoint passes all 552 backend tests, all 220 tooling tests and all eight
+repository/type/Terraform/secret/publication gates. The 68-package strict tooling dependency
+audit reports zero known vulnerabilities. Pinned Terraform 1.17.0 validates all three roots
+and 32 native tests; all 33 documents/30 actual Mermaid renders pass unchanged sandbox/budget
+checks. Management application code is unchanged in this increment and was not retested;
+its earlier 430-case T122 result is historical, not a new hosted/image/live result. No task
+checkbox is advanced: 115/129 remain checked, with T124-T129 still partial or blocked.
+
+## Phase 11: Convergence
+
+### Scope and Assessment
+
+Latest user direction (2026-10-28): **defer all telephony integration; it will be done later**.
+This phase adds non-telephony remediation only. Do not select or research a phone provider,
+implement provider answer/media/codec/playback-clear/hangup integration, connect physical phone
+media to the realtime runtime, or execute actual phone calls while implementing this phase.
+T042/T120/T121 and phone-dependent portions of T125/T126/T128/T129 and T118 remain deferred,
+not completed or canceled. Resumed-speech timing, real call journeys, phone interruption/closure,
+phone/model call load/scale/drain acceptance and phone-dependent operator cases remain future
+work requiring explicit reopening. Preserve their original requirements, limits and task IDs.
+SC-008's participant study remains separately deferred; automated management checks are not.
+
+Independent management, storage, security, observability and delivery work must not wait for
+the deferred phone integration merely because an older aggregate profile includes it. Equally,
+a non-telephony subset must never confer full environment, live-call or release qualification.
+Report phone-dependent checks as deferred/pending and retain global live/release blocks where
+they are still required. This assessment authorizes no cloud login, resource access, provisioning,
+Terraform apply/deployment, actual pod deletion, image publication, release, or live activation.
+Implement local adapters and controlled tests first; real operations need separate scoped approval.
+
+The present-state inventory covers FR-001-FR-034, 18 non-study success criteria plus deferred
+SC-008, all 30 acceptance scenarios, all 129 existing tasks regardless of checkbox, 12 plan
+decisions and all nine constitution principles. The plan decisions assessed are independent
+Python service packaging; FastAPI/WebSocket and Reflex ownership; Azure Agents SDK boundaries;
+single-organization protected-role/community rules; management-owned Strong Cosmos publication;
+runtime-owned metadata/CAS authority; authenticated configuration and revocation contracts;
+privacy-safe volatile context and tracing; bounded ownership/recovery; application-controlled
+AKS drain; Terraform/private identity/protected delivery; and cross-platform tested observability.
+Eight actionable findings remain: two missing and six partial, all HIGH. No additional active
+contradiction or unrequested feature was established. This is code/test-definition inspection,
+not a new application-test, hosted-CI, image or live qualification result. Existing T122/T123
+controlled-port completion is retained; the tasks below do not invalidate those narrower results.
+
+### Remaining Non-Telephony Work
+
+- [X] T130 [US5] HIGH F1: Complete recoverable metadata-only security audit coverage in `code/management/management_app/api/capabilities.py`, `services/capability_gateway.py`, `services/audit.py` and `adapters/configuration_repository.py`, reusing the existing management-owned audit repository. Standalone revocations currently replace mutable authority metadata, and rejected capability/authentication attempts emit generic request telemetry without equivalent durable actor/session/revision/action/outcome records. Record exact trusted references when known, anonymous/unverified classification otherwise, UTC time and correlation without arguments, results, credential candidates or raw rejected input; retain revocation history across subsequent authority changes, bound retention/failure behavior, and recover committed mutations without repeating their effects. Add denial, repeated-revocation, lost-audit-reply, outage and privacy regressions plus same-change documentation per FR-024, US5/AC2, plan: security/audit ownership, and existing T056/T079/T081/T084 (complete over controlled ports; actual approved host/store migration and qualification remain T131/T134/T136/T137).
+- [ ] T131 [US2] HIGH F2: Complete explicitly authorized non-telephony management resource/host integration around `code/management/management_app/composition.py`, `management_app.py`, `settings.py`, `adapters/entra_oidc.py` and the existing Cosmos/audit adapters. Supply concrete independently reviewed authority, managed/workload identity, Strong-consistency management-owned containers, approved secret-reference resolution, readiness and deterministic cleanup through a non-test host; do not rebuild or bypass the existing guarded factory, signed-token/session checks, publication logic or Reflex guard. Test denial before client effects, stale/wrong scope, partial construction and host shutdown with controlled transports, preserve credential-free defaults and the completed T122 controlled-port behavior, and expose the integration to the later standalone durability profile without requiring phone/model calls per FR-013-FR-017, FR-020/022/033, US2/AC1-7, SC-012/018, plan: management ownership/identity, and existing T054-T058/T099/T122 (partial).
+- [ ] T132 [US6] HIGH F3: Complete opt-in Terraform-owned admission installation/RBAC definitions and an explicitly authorized retirement-controller execution host under `code/infra/terraform/`, `code/tools/scripts/kubernetes_rollout.py`, `drain_rollout.py` and `code/backend/src/caller_runtime/api/operations.py`. Reuse the canonical native policy and durable no-replay ledger; the current review-only output is not installed enforcement. Restrict controller identity, pod-delete/eviction and policy-modification privileges, prevent unauthorized service-account use/impersonation, bind the reviewed operations audience and exact cluster/namespace/workload/owner/pod UID/operation, and retain fences on uncertain results. Add native/controlled independent-actor, policy-removal, controller-restart, authority-loss and replacement-UID tests without actual calls, force deletion or expanded time budgets; separately gate any real installation or deletion per FR-026/027, SC-003/010, US6/AC2-4, plan: application-controlled pre-drain, Constitution II/VI/VIII, and existing T093/T096/T098/T124 (partial).
+- [ ] T133 [US6] HIGH F4: Complete explicitly approved both-service metadata trace/metric delivery in `code/backend/src/caller_runtime/observability.py`, `metrics.py`, `code/management/management_app/observability.py`, `metrics.py` and their guarded host boundaries, retaining the current bounded physical-observation producer and distinct reservation gauge. Add qualified destination/identity adapters, bounded off-realtime collection, visible sticky delivery failures, cleanup and safe default-off composition; test actual SDK batches and cross-service correlation against controlled transports. Qualify Azure temporality/count/histogram/resource mapping and all both-service queries, missing-data behavior, owners, action targets, receipt and recovery in `code/infra/terraform/modules/platform/monitoring.tf` before enabling rules. Keep physical phone speech-turn/playback producers and their latency qualification explicitly deferred; neither control timing nor a partial metric set may count as speech/live qualification per FR-028, SC-013/014, plan: both-service observability, Constitution VII, and existing T017/T097/T125 (partial).
+- [ ] T134 [US6] HIGH F5: Implement concrete independently authorized read-only resource/review adapters and guarded scoped dispatch in `code/tools/scripts/qualify_environment.py` for approved non-telephony deployment/image, workload identity, private network, storage ownership, model availability/quota metadata, privacy, monitoring and rollout observations. Bind exact resources/revisions/digests, review authority, freshness and the declared observation scope; exclude model inference and phone-provider operations. Preserve the existing eleven-check aggregate contract or explicitly version scope-specific reports so deferred phone checks remain pending and cannot mint full qualification. Test denied/expired/revoked grants, partial/foreign observations, unavailable resources and metadata-only outputs; keep offline defaults and no automatic credential discovery or provisioning per plan: authorized-environment gate, Constitution I/II/VI/VII/VIII, and existing T099/T126 (missing).
+- [ ] T135 HIGH F6: Complete `.github/workflows/release.yml` and concrete protected authority, sensitive remote-state plan/review and immutable image-publication adapters in `code/tools/scripts/release_checks.py`. Authenticate least-privileged Azure-compatible identity only after independently observed repository/environment/reviewer approval, bind exact source/digests and fresh scoped evidence, and reconcile ambiguous publication without repeating or replacing immutable artifacts. Add controlled denied/unprotected invocation, expired approval, missing gates, plan confidentiality, partial publication and restart tests; preserve full-SHA action pins, unprivileged PR checks, blocked defaults and the distinction between image publication, Terraform apply, deployment and full feature acceptance. Telephony deferral is not a waiver of required release evidence; real planning/publication remains separately authorized per plan: protected delivery, Constitution II/VIII/IX, and existing T117/T127 (partial).
+- [ ] T136 HIGH F7: Implement executable independently selectable non-telephony qualification profiles and guarded dispatch in `code/tools/scripts/verify_release.py`, reusing `code/management/tests/integration/test_configuration_persistence.py`, `test_configuration_publication.py`, `test_audit_privacy.py` and `code/backend/tests/integration/test_revision_activation.py` where appropriate. Replace declarative-only `us2-real-cosmos-v1` coverage with real process-restart/storage/API assertions after T131/T134, without phone/model calls or a blanket dependency on deferred T120/T121. Exercise saved-revision durability, stale/invalid-save nonactivation, authenticated runtime consumption, current-policy revocation, audit recovery and privacy over dedicated approved targets. Require fresh exact-scope authority and applicable protected-delivery prerequisites; reject empty/skipped/partial/nonzero results and aggregate neither synthetic nor subset passes into global live acceptance. Keep phone/provider journeys, speech/load profiles and default local runs separate per FR-015/018-024, SC-006/007/012/013/018/019, US2/AC1-7, US4/AC1-4, plan: staged verification, Constitution IX, and existing T063/T110/T112/T118/T128 (missing).
+- [ ] T137 HIGH F8: After the non-telephony adapters/profiles and separate environment/access approvals exist, execute and independently review only their approved management/storage/security/privacy/monitoring qualification, including actual restart and safe operator diagnosis for applicable non-phone cases. Record immutable scoped results, failures, accountable reviews and remaining prerequisites in `code/docs/acceptance/live-environment.md`, `us2.md`, `requirements.md`, `release-gates.md` and `final.md`, with any observed non-phone cost/RU/quota limits in `code/docs/capacity.md`. Keep unavailable evidence blocked, retain historical results as historical, and do not certify an entire mixed criterion from a subset. Explicitly defer all phone integration and phone-dependent journey/speech/load/scale/drain/diagnosis evidence until separately reopened; do not mark T118/T119/T129 or full feature/release acceptance complete from this scope per SC-007/012/013/014/018/019, plan: staged verification and live qualification, Constitution I/II/VI/VII/VIII/IX, and existing T099/T116/T118/T119/T129 (partial).
+
+### T130 Local Verification
+
+Recoverable security audit now records immutable revocation metadata in the same Strong Cosmos
+transaction as the authority update, classifies denied requests without retaining rejected
+payloads, and copies/acknowledges audit metadata without mutation replay. Explicit reviewed
+retention is bound to the guarded request; pending outbox records do not expire, acknowledged
+records receive bounded TTL without renewal on retry, and cloud audit writes use UTC dayBucket
+plus exact duplicate-content verification. Legacy undefined-partition data requires independent
+inventory/migration review; no cloud migration or resource access was performed.
+
+All 444 management tests, including browser regressions, pass. Strict typing covers 33 management
+sources; all eight repository gates and all 220 tooling tests pass. All 33 documents/31 actual
+Mermaid renders pass with unchanged sandbox/deadline settings. These are local results, not
+new hosted/image/cloud qualification. T130 is complete over controlled ports; T131-T137 remain
+open, telephony stays deferred, and the task inventory is 116/137 checked. Existing user edits
+and earlier T122/T123 work are preserved; nothing is staged, committed, pushed or activated.
+
+### Current Direction: All Open Tasks Deferred
+
+On 2026-10-29 the user directed: **Defer all open tasks**. Implementation is paused.
+This supersedes earlier instructions to continue T124-T129 or T130-T137 and includes the
+separately deferred T131 approval-contract decision. Do not resume implementation from a
+generic implement invocation; require explicit reopening of a named task or phase first.
+
+All 21 currently unchecked tasks are deferred:
+T042, T097, T099, T117, T118, T119, T120, T121, T124, T125, T126, T127, T128, T129,
+T131, T132, T133, T134, T135, T136 and T137.
+
+Deferral is not completion, cancellation or a waiver of prerequisites. All existing task
+descriptions, IDs, dependencies and checkboxes remain unchanged: 116/137 are checked;
+T122, T123 and T130 retain their recorded controlled-port completion. Preserve existing
+application code, tests, documentation and user edits. Telephony integration, qualification,
+cloud/resource access, deployment, actual deletion, image publication and release remain
+deferred or blocked; no new execution or approval is implied. Resume only the explicitly
+reopened scope with its original security, testing, review and environment gates intact.
+
+## Phase 12: Convergence
+
+### User Acceptance and Follow-Up Disposition
+
+On 2026-10-29 the user provided the following decision:
+**Full feature acceptance provided. Deferred tasks will be completed in follow-up specs.**
+
+Disposition: **Accepted by the user; current-spec delivery finalized with deferred work
+assigned to follow-up specifications.** This supersedes earlier statements that user feature
+acceptance was pending or blocked. It does not reopen implementation in this specification.
+
+Retain the existing backlog unchanged as the traceable source for follow-up specification
+scope. Do not duplicate the remaining implementation tasks, mark them complete, or silently
+remove their requirements, dependencies, security assumptions or acceptance criteria. No
+follow-up specification IDs, approved resources or implementation dates are invented here.
+Create and approve follow-up specifications separately before resuming the relevant work;
+a generic implement invocation must not reactivate this accepted, paused delivery.
+
+### Retained Follow-Up References
+
+All 21 existing unchecked tasks carry forward to follow-up specifications:
+T042, T097, T099, T117, T118, T119, T120, T121, T124, T125, T126, T127, T128, T129,
+T131, T132, T133, T134, T135, T136 and T137.
+
+These retain the deferred telephony/provider/runtime integration, remaining observability,
+management host/resource approval, cluster enforcement/host integration, environment probes,
+protected delivery, independent qualification profiles and actual qualification/evidence work.
+SC-008's participant study remains separately deferred. T122, T123 and T130 retain their
+recorded controlled-port completion. No existing task ID, description or checkbox is changed;
+the implementation inventory remains **116/137 complete, 21 deferred**.
+
+### Verification and Approval Boundary
+
+User feature acceptance is recorded as a decision, not as evidence that unperformed tests,
+missing adapters or unavailable environments have passed. Historical local, hosted and image
+results retain their original scope; this documentation-only disposition executes no new
+application tests, live calls, cloud/resource observations, migration or qualification.
+The implementation is not relabeled fully converged merely because deferred work is accepted
+for follow-up. Constitution-required security, privacy, environment, test and operational
+gates remain applicable before any affected functionality is released or activated.
+
+No cloud login, provisioning, Terraform plan/apply/deployment, actual pod deletion, image
+publication, release or live activation is authorized by this acceptance record. Existing
+source, tests, specification, plan, constitution and reviewer checklists remain untouched.
+No further current-spec implementation is scheduled; follow-up work requires its own approved
+scope and applicable operational authorizations.

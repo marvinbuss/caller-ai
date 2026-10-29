@@ -199,6 +199,26 @@ def gateway_case(validator, capability_graph):
 
 
 @pytest.mark.anyio
+async def test_denial_preserves_only_the_repository_verified_revision_for_audit(
+    gateway_case, capability_graph
+):
+    from management_app.services.capability_gateway import GatewayError
+
+    gateway, repository, transport, _telemetry = gateway_case
+    snapshot, _ = await repository.initialize(capability_graph, actor_id="manager-fixture")
+    authority = await repository.read_authority()
+    await repository.revoke_capabilities(
+        {"disabledToolIds": ["tool-public"], "disabledConnectionIds": [], "revokedAssignments": []},
+        if_match=authority["_etag"],
+        actor_id="manager-fixture",
+    )
+    with pytest.raises(GatewayError) as failure:
+        await gateway.execute(attempt(pinnedRevisionId=snapshot["id"]), actor_id="runtime-fixture")
+    assert failure.value.status == 403 and failure.value.revision_id == snapshot["id"]
+    assert not transport.calls
+
+
+@pytest.mark.anyio
 async def test_gateway_returns_only_allowlisted_public_fields_after_admission(
     gateway_case, capability_graph
 ):
