@@ -1933,3 +1933,33 @@ and strict typing of the executor module. References validate across 53 document
 real identity, cloud model, physical device, alert sink or endurance run is claimed for
 this tools-only increment. The concrete live-probe gap and all 11 blocked markers remain.
 
+### 2026-11-02: Concrete Exact-Binding Azure Metadata Probe
+
+Local-only implementation now includes `AzureDeploymentMetadataProbe` for the
+`existing_bindings` check, using documented API-version-2024-10-01 account/deployment GETs
+at fixed Azure management origin. Both reviewed bindings include explicit account resource
+IDs, origins, deployment/model/version/region/SKU; a separate authorization fingerprint binds
+these exact resources as well as the original qualification request. Constructor I/O,
+resource discovery/provisioning, role grants and default credentials are absent.
+
+Controlled tests first failed before the concrete binding/probe existed. Eighteen focused
+cases now pass for exact mapping, independent approval, revocation after token acquisition,
+expired/wrong grants, unsafe paths, identity/endpoint/model/version/region/SKU/state mismatches,
+HTTP denial/redirects/compression, oversized/duplicate JSON, deadline capping and no replay.
+A red-first deadline test repaired a real gap: all child approval/HTTP calls now receive the
+capped scope deadline, not merely an outer timeout. All requests remain read-only and bounded.
+
+Only deployment-mapping evidence is implemented here. ARM access does not prove model access,
+SKU capacity is not available quota, and location/state do not prove residency, lifecycle,
+retention or speech closure. The other eight checks remain unavailable. Real use requires
+explicit ARM resource IDs, reviewed management-read access and final execution authorization;
+no local secret, Azure identity, cloud model, physical device or live sink was used. No
+qualification marker is completed by controlled responses or metadata-only disposal.
+
+Final local validation passes all 319 tools tests (79.91 seconds), changed-file lint/format
+and strict typing of the complete qualification module. All eighteen concrete metadata
+cases pass. This is controlled HTTP/identity evidence only: no local secret was read or used,
+no Azure request or resource enumeration occurred, and all actual qualification states remain
+pending. Real binding still needs explicit account ARM IDs and reviewed management-read
+permission, separately from model invocation permission and final execution authorization.
+

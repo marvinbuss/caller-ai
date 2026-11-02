@@ -126,6 +126,35 @@ probe implementations cannot be replaced with review labels, synthetic observati
 default endpoint. The CLI remains offline-only; paid use requires separately scoped final
 authorization and a reviewed concrete factory/probe binding. No such live run is implied.
 
+### Concrete Azure Deployment Metadata Probe
+
+`AzureDeploymentMetadataProbe` implements only `existing_bindings` using the documented
+[account GET](https://learn.microsoft.com/en-us/rest/api/aiservices/accountmanagement/accounts/get?view=rest-aiservices-accountmanagement-2024-10-01)
+and [deployment GET](https://learn.microsoft.com/en-us/rest/api/aiservices/accountmanagement/deployments/get?view=rest-aiservices-accountmanagement-2024-10-01)
+operations at fixed `management.azure.com`, API version `2024-10-01`. Supply explicit
+`AzureDeploymentBinding` objects for Live and text: account ARM resource ID, exact resource
+origin, deployment name, expected model/version, region and SKU. Live remains the reviewed
+`gpt-live-1` binding; text is the separately reviewed reasoning deployment.
+
+Its separate metadata authorization binds the original request fingerprint and both complete
+resource bindings, rather than authorizing arbitrary resources through an endpoint alone.
+It rechecks approval before credentials, before each GET and before emitting evidence. A
+supplied lazy credential requests only `https://management.azure.com/.default`; management
+read permission must be independently reviewed. There is no constructor I/O, resource listing,
+provisioning, permission grant, default credential or implicit endpoint selection.
+
+Each response is at most 64 KiB before JSON parsing, with duplicate/nonfinite JSON rejected,
+normal TLS, no environment proxy, redirects, compression or retries. The one-shot probe
+requires exact resource identities, endpoint, model/version, region, SKU and successful
+provisioning state. It emits only a digest/fixed observation, not raw ARM records. Local
+HTTP clients are disposed per read; the provider factory owns the supplied credential.
+
+Every other qualification check remains unavailable in this probe. An ARM GET does not
+prove model-invocation permission; SKU capacity is not unused Live quota; account location
+is not processing residency; deployment state is not lifecycle/retention approval or
+authenticated speech closure. Those probes still need implementation/binding and separately
+approved execution. Failed/unknown metadata is never retried or upgraded to qualification.
+
 ## Current Verification Profiles
 
 ```powershell

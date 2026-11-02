@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Literal, Never, Protocol, TypeGuard
 from urllib.parse import urlsplit
 
+import httpx
+
 CHECKS = (
     "existing_bindings",
     "workload_identity",
@@ -495,6 +497,280 @@ async def execute_provider_scope(
     finally:
         logging.disable(disabled)
     return report
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class AzureDeploymentBinding:
+    account_resource_id: str
+    endpoint: str
+    deployment: str
+    model: str
+    version: str
+    region: str
+    sku: str
+
+    def __post_init__(self) -> None:
+        resource = (
+            r"/subscriptions/[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}"
+            r"/resourceGroups/[A-Za-z0-9_.()-]{1,90}/providers/Microsoft\.CognitiveServices"
+            r"/accounts/[A-Za-z0-9][A-Za-z0-9_.-]{1,63}"
+        )
+        try:
+            endpoint = urlsplit(self.endpoint)
+            if (
+                not isinstance(self.account_resource_id, str)
+                or re.fullmatch(resource, self.account_resource_id, re.IGNORECASE) is None
+                or any(
+                    not isinstance(value, str)
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value) is None
+                    for value in (self.deployment, self.model, self.version, self.region, self.sku)
+                )
+                or endpoint.scheme != "https"
+                or not endpoint.hostname
+                or not endpoint.hostname.endswith((".openai.azure.com", ".services.ai.azure.com"))
+                or endpoint.username is not None
+                or endpoint.password is not None
+                or endpoint.port not in {None, 443}
+                or endpoint.path not in {"", "/"}
+                or endpoint.query
+                or endpoint.fragment
+                or "\\" in self.endpoint
+                or any(ord(character) < 33 for character in self.endpoint)
+            ):
+                raise ValueError()
+        except Exception:
+            raise ValueError("invalid_azure_deployment_binding") from None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class AzureMetadataScope:
+    request_fingerprint: str
+    live: AzureDeploymentBinding
+    text: AzureDeploymentBinding
+
+    @property
+    def fingerprint(self) -> str:
+        return hashlib.sha256(
+            json.dumps(asdict(self), sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+
+class AzureMetadataAuthorizationPort(Protocol):
+    async def authorize(
+        self, scope: AzureMetadataScope, *, deadline: float
+    ) -> Authorization | None: ...
+
+
+class MetadataAccessToken(Protocol):
+    token: str
+    expires_on: float
+
+
+class AzureMetadataCredential(Protocol):
+    async def get_token(self, scope: str) -> MetadataAccessToken: ...
+
+
+class AzureDeploymentMetadataProbe:
+    def __init__(
+        self,
+        request: MultimodalRequest,
+        *,
+        live: AzureDeploymentBinding,
+        text: AzureDeploymentBinding,
+        authorization: AzureMetadataAuthorizationPort,
+        credential: AzureMetadataCredential,
+        transport: httpx.AsyncBaseTransport | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        if (
+            not isinstance(request, MultimodalRequest)
+            or not isinstance(live, AzureDeploymentBinding)
+            or not isinstance(text, AzureDeploymentBinding)
+            or authorization is None
+            or credential is None
+            or live.endpoint.rstrip("/") != request.live_endpoint.rstrip("/")
+            or text.endpoint.rstrip("/") != request.text_endpoint.rstrip("/")
+            or live.model != request.live_model
+            or live.version != request.live_model_version
+            or live.region != request.live_region
+            or live.sku != "GlobalStandard"
+            or text.deployment != request.text_deployment
+            or text.model == request.live_model
+        ):
+            raise ValueError("reviewed_metadata_bindings_required")
+        self._request = request
+        self._scope = AzureMetadataScope(request.fingerprint, live, text)
+        self._authorization, self._credential = authorization, credential
+        self._transport, self._now = transport, now
+        self._closed = self._started = self._active = False
+        self._last_now: datetime | None = None
+
+    def _instant(self) -> datetime:
+        current = self._now()
+        if (
+            not isinstance(current, datetime)
+            or current.tzinfo is None
+            or current.utcoffset() != UTC.utcoffset(current)
+            or self._last_now is not None
+            and current < self._last_now
+        ):
+            raise ValueError("invalid_metadata_clock")
+        self._last_now = current
+        return current
+
+    async def _approve(self, deadline: float) -> tuple[datetime, float]:
+        grant = await self._authorization.authorize(self._scope, deadline=deadline)
+        current = self._instant()
+        if (
+            self._closed
+            or not isinstance(grant, Authorization)
+            or grant.fingerprint != self._scope.fingerprint
+            or not isinstance(grant.expires_at, datetime)
+            or grant.expires_at.tzinfo is None
+            or grant.expires_at.utcoffset() != UTC.utcoffset(grant.expires_at)
+            or grant.expires_at <= current
+        ):
+            raise PermissionError("metadata_not_authorized")
+        return current, min(
+            deadline,
+            asyncio.get_running_loop().time() + (grant.expires_at - current).total_seconds(),
+        )
+
+    async def _get(self, resource_id: str, deadline: float) -> dict[str, Any]:
+        current, boundary = await self._approve(deadline)
+        async with asyncio.timeout_at(boundary):
+            token = await self._credential.get_token("https://management.azure.com/.default")
+        if (
+            not isinstance(token.token, str)
+            or not token.token
+            or len(token.token) > 16384
+            or type(token.expires_on) not in (int, float)
+            or not math.isfinite(token.expires_on)
+            or token.expires_on
+            <= current.timestamp() + max(0, deadline - asyncio.get_running_loop().time())
+        ):
+            raise PermissionError("metadata_token_not_current")
+        _current, dispatch = await self._approve(deadline)
+        async with asyncio.timeout_at(min(boundary, dispatch)):
+            async with httpx.AsyncClient(
+                transport=self._transport,
+                verify=True,
+                trust_env=False,
+                follow_redirects=False,
+                timeout=max(0.001, deadline - asyncio.get_running_loop().time()),
+            ) as client:
+                async with client.stream(
+                    "GET",
+                    "https://management.azure.com" + resource_id,
+                    params={"api-version": "2024-10-01"},
+                    headers={
+                        "Authorization": "Bearer " + token.token,
+                        "Accept-Encoding": "identity",
+                    },
+                ) as response:
+                    if (
+                        response.status_code != 200
+                        or response.headers.get("content-encoding", "identity") != "identity"
+                    ):
+                        raise ValueError("metadata_response_unavailable")
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(body) + len(chunk) > 65536:
+                            raise ValueError("metadata_response_too_large")
+                        body.extend(chunk)
+        document = json.loads(
+            body,
+            object_pairs_hook=unique_object,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        )
+        if not isinstance(document, dict):
+            raise ValueError("invalid_metadata_document")
+        return document
+
+    async def observe(
+        self, check: str, request: MultimodalRequest, *, deadline: float, max_cost_usd: float
+    ) -> Observation:
+        if (
+            not isinstance(request, MultimodalRequest)
+            or request.fingerprint != self._request.fingerprint
+            or check not in CHECKS
+            or type(deadline) not in (int, float)
+            or not math.isfinite(deadline)
+            or type(max_cost_usd) not in (int, float)
+            or not math.isfinite(max_cost_usd)
+            or not 0 < max_cost_usd <= request.max_cost_usd
+        ):
+            raise ValueError("invalid_metadata_observation_scope")
+        unavailable = Observation(
+            check,
+            request.fingerprint,
+            self._instant(),
+            "unavailable",
+            confirmed=False,
+            cost_usd=0.0,
+        )
+        if check != "existing_bindings" or self._closed or self._started:
+            return unavailable
+        deadline = min(deadline, asyncio.get_running_loop().time() + request.max_seconds)
+        self._started = self._active = True
+        evidence = []
+        try:
+            async with asyncio.timeout_at(deadline):
+                for binding in (self._scope.live, self._scope.text):
+                    account = await self._get(binding.account_resource_id, deadline)
+                    properties = account.get("properties", {})
+                    endpoints = [properties.get("endpoint")]
+                    if isinstance(properties.get("endpoints"), dict):
+                        endpoints.extend(properties["endpoints"].values())
+                    if (
+                        str(account.get("id", "")).lower() != binding.account_resource_id.lower()
+                        or account.get("type", "").lower() != "microsoft.cognitiveservices/accounts"
+                        or account.get("kind") not in {"OpenAI", "AIServices"}
+                        or account.get("location") != binding.region
+                        or properties.get("provisioningState") != "Succeeded"
+                        or not any(
+                            isinstance(endpoint, str)
+                            and endpoint.rstrip("/") == binding.endpoint.rstrip("/")
+                            for endpoint in endpoints
+                        )
+                    ):
+                        return unavailable
+                    identifier = binding.account_resource_id + "/deployments/" + binding.deployment
+                    deployment = await self._get(identifier, deadline)
+                    properties = deployment.get("properties", {})
+                    model = properties.get("model", {})
+                    if (
+                        str(deployment.get("id", "")).lower() != identifier.lower()
+                        or deployment.get("name") != binding.deployment
+                        or deployment.get("type", "").lower()
+                        != "microsoft.cognitiveservices/accounts/deployments"
+                        or deployment.get("sku", {}).get("name") != binding.sku
+                        or properties.get("provisioningState") != "Succeeded"
+                        or model.get("format") != "OpenAI"
+                        or model.get("name") != binding.model
+                        or model.get("version") != binding.version
+                    ):
+                        return unavailable
+                    evidence.append({"binding": asdict(binding), "state": "Succeeded"})
+                await self._approve(deadline)
+                return Observation(
+                    check,
+                    request.fingerprint,
+                    self._instant(),
+                    "passed",
+                    cost_usd=0.0,
+                    evidence_digest=hashlib.sha256(
+                        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+                    ).hexdigest(),
+                )
+        except Exception:
+            return unavailable
+        finally:
+            self._active = False
+
+    async def close(self, *, deadline: float) -> bool:
+        self._closed = True
+        return not self._active and asyncio.get_running_loop().time() < deadline
 
 
 BROWSER_CHECKS = (

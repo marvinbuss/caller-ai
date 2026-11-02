@@ -600,6 +600,299 @@ def test_qualification_child_deadline_cannot_extend_original_scope(observed):
     assert report["live_qualification"] == "pending"
 
 
+@pytest.fixture
+def azure_metadata_case(case):
+    from types import SimpleNamespace
+
+    import httpx
+
+    module, manifest, request, now = case
+    account = (
+        "/subscriptions/11111111-2222-4333-8444-555555555555/resourceGroups/fixture-group"
+        "/providers/Microsoft.CognitiveServices/accounts/fixture-account"
+    )
+    live = module.AzureDeploymentBinding(
+        account_resource_id=account,
+        endpoint=request.live_endpoint,
+        deployment="live-fixture",
+        model=request.live_model,
+        version=request.live_model_version,
+        region=request.live_region,
+        sku="GlobalStandard",
+    )
+    text = module.AzureDeploymentBinding(
+        account_resource_id=account,
+        endpoint=request.text_endpoint,
+        deployment=request.text_deployment,
+        model="reasoning-model-fixture",
+        version="1",
+        region=request.live_region,
+        sku="GlobalStandard",
+    )
+    sent, grants, tokens = [], [], []
+
+    class Authority:
+        async def authorize(self, scope, *, deadline):
+            assert scope.request_fingerprint == request.fingerprint
+            assert scope.live == live and scope.text == text
+            assert scope.fingerprint != request.fingerprint
+            grants.append(scope.fingerprint)
+            return module.Authorization(scope.fingerprint, now + timedelta(seconds=60))
+
+    class Credential:
+        async def get_token(self, scope):
+            tokens.append(scope)
+            return SimpleNamespace(token="synthetic-access", expires_on=now.timestamp() + 3600)
+
+    def respond(outgoing):
+        assert outgoing.method == "GET" and outgoing.url.host == "management.azure.com"
+        assert dict(outgoing.url.params) == {"api-version": "2024-10-01"}
+        assert outgoing.headers["authorization"] == "Bearer synthetic-access"
+        sent.append(outgoing.url.path)
+        if "/deployments/" not in outgoing.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "id": account,
+                    "name": "fixture-account",
+                    "type": "Microsoft.CognitiveServices/accounts",
+                    "kind": "OpenAI",
+                    "location": request.live_region,
+                    "properties": {
+                        "endpoint": request.live_endpoint,
+                        "provisioningState": "Succeeded",
+                    },
+                },
+            )
+        binding = live if outgoing.url.path.endswith("/live-fixture") else text
+        return httpx.Response(
+            200,
+            json={
+                "id": account + "/deployments/" + binding.deployment,
+                "name": binding.deployment,
+                "type": "Microsoft.CognitiveServices/accounts/deployments",
+                "sku": {"name": binding.sku},
+                "properties": {
+                    "provisioningState": "Succeeded",
+                    "model": {
+                        "format": "OpenAI",
+                        "name": binding.model,
+                        "version": binding.version,
+                    },
+                },
+            },
+        )
+
+    probe = module.AzureDeploymentMetadataProbe(
+        request,
+        live=live,
+        text=text,
+        authorization=Authority(),
+        credential=Credential(),
+        transport=httpx.MockTransport(respond),
+        now=lambda: now,
+    )
+    assert not sent and not grants and not tokens
+    return SimpleNamespace(
+        module=module,
+        request=request,
+        now=now,
+        live=live,
+        text=text,
+        account=account,
+        sent=sent,
+        grants=grants,
+        tokens=tokens,
+        probe=probe,
+        authority_type=Authority,
+        credential_type=Credential,
+        respond=respond,
+    )
+
+
+def test_azure_deployment_probe_reads_only_reviewed_exact_bindings(azure_metadata_case):
+    fixture = azure_metadata_case
+    request, probe = fixture.request, fixture.probe
+
+    async def scenario():
+        deadline = asyncio.get_running_loop().time() + 5
+        observation = await probe.observe(
+            "existing_bindings", request, deadline=deadline, max_cost_usd=request.max_cost_usd
+        )
+        unavailable = await probe.observe(
+            "workload_identity", request, deadline=deadline, max_cost_usd=request.max_cost_usd
+        )
+        assert await probe.close(deadline=deadline) is True
+        return observation, unavailable
+
+    observation, unavailable = asyncio.run(scenario())
+    assert observation.outcome == "passed" and observation.confirmed is True
+    assert observation.fingerprint == request.fingerprint and observation.cost_usd == 0
+    assert len(observation.evidence_digest) == 64
+    assert unavailable.outcome == "unavailable" and unavailable.confirmed is False
+    assert fixture.sent == [
+        fixture.account,
+        fixture.account + "/deployments/live-fixture",
+        fixture.account,
+        fixture.account + "/deployments/" + request.text_deployment,
+    ]
+    assert len(fixture.grants) == 9
+    assert fixture.tokens == ["https://management.azure.com/.default"] * 4
+    assert fixture.account not in str(observation) and request.live_endpoint not in str(observation)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "no-approval",
+        "wrong-approval",
+        "expired",
+        "revoked-after-token",
+        "wrong-id",
+        "wrong-region",
+        "wrong-model",
+        "wrong-version",
+        "wrong-sku",
+        "not-ready",
+        "foreign-endpoint",
+        "forbidden",
+        "redirect",
+        "oversized",
+        "duplicate",
+        "compressed",
+    ],
+)
+def test_azure_deployment_probe_denies_unknown_or_unreviewed_evidence(
+    azure_metadata_case, fault, capsys
+):
+    import httpx
+
+    fixture = azure_metadata_case
+    module, request, now = fixture.module, fixture.request, fixture.now
+    revoked, sent = [False], []
+
+    class Authority:
+        async def authorize(self, scope, *, deadline):
+            if fault == "no-approval" or revoked[0]:
+                return None
+            return module.Authorization(
+                "b" * 64 if fault == "wrong-approval" else scope.fingerprint,
+                now + timedelta(seconds=-1 if fault == "expired" else 60),
+            )
+
+    class Credential(fixture.credential_type):
+        async def get_token(self, scope):
+            if fault == "revoked-after-token":
+                revoked[0] = True
+            return await super().get_token(scope)
+
+    class OuterAuthority:
+        async def authorize(self, scope, *, deadline):
+            return module.Authorization(scope.fingerprint, now + timedelta(seconds=60))
+
+    def respond(outgoing):
+        sent.append(outgoing.url.path)
+        if fault == "forbidden":
+            return httpx.Response(403, json={"error": "synthetic-private-provider-body"})
+        if fault == "redirect":
+            return httpx.Response(302, headers={"Location": "https://foreign.example.invalid/"})
+        if fault == "oversized":
+            return httpx.Response(200, content=b" " * 65537)
+        if fault == "duplicate":
+            return httpx.Response(200, content=b'{"id":"one","id":"two"}')
+        if fault == "compressed":
+            return httpx.Response(200, content=b"", headers={"Content-Encoding": "gzip"})
+        document = fixture.respond(outgoing).json()
+        deployment = "/deployments/" in outgoing.url.path
+        if fault == "wrong-id":
+            document["id"] += "-foreign"
+        elif fault == "wrong-region":
+            document["location"] = "foreign-region"
+        elif fault == "foreign-endpoint":
+            document["properties"]["endpoint"] = "https://foreign.openai.azure.com"
+        elif fault == "not-ready":
+            document["properties"]["provisioningState"] = "Failed"
+        elif deployment and fault == "wrong-model":
+            document["properties"]["model"]["name"] = "different-model"
+        elif deployment and fault == "wrong-version":
+            document["properties"]["model"]["version"] = "different-version"
+        elif deployment and fault == "wrong-sku":
+            document["sku"]["name"] = "Standard"
+        return httpx.Response(200, json=document)
+
+    probe = module.AzureDeploymentMetadataProbe(
+        request,
+        live=fixture.live,
+        text=fixture.text,
+        authorization=Authority(),
+        credential=Credential(),
+        transport=httpx.MockTransport(respond),
+        now=lambda: now,
+    )
+    report = asyncio.run(
+        module.qualify(request, authorization=OuterAuthority(), probe=probe, now=lambda: now)
+    ).to_dict()
+    assert report["status"] == report["live_qualification"] == "pending"
+    assert report["checks"]["existing_bindings"]["outcome"] == "unavailable"
+    assert all(value["outcome"] == "unavailable" for value in report["checks"].values())
+    if fault in {"no-approval", "wrong-approval", "expired", "revoked-after-token"}:
+        assert not sent
+    else:
+        assert 1 <= len(sent) <= 2
+    output = capsys.readouterr()
+    assert "synthetic-private" not in output.out + output.err + json.dumps(report)
+
+
+def test_azure_metadata_deadline_is_capped_and_resource_paths_reject_before_io(azure_metadata_case):
+    from dataclasses import replace
+
+    import httpx
+
+    fixture = azure_metadata_case
+    module, request, deadlines = fixture.module, fixture.request, []
+
+    class Authority(fixture.authority_type):
+        async def authorize(self, scope, *, deadline):
+            deadlines.append(deadline)
+            return await super().authorize(scope, deadline=deadline)
+
+    with pytest.raises(ValueError):
+        replace(fixture.live, account_resource_id=fixture.account + "/../foreign")
+    assert not fixture.sent and not fixture.tokens
+    probe = module.AzureDeploymentMetadataProbe(
+        request,
+        live=fixture.live,
+        text=fixture.text,
+        authorization=Authority(),
+        credential=fixture.credential_type(),
+        transport=httpx.MockTransport(fixture.respond),
+        now=lambda: fixture.now,
+    )
+
+    async def scenario():
+        caller_deadline = asyncio.get_running_loop().time() + request.max_seconds + 100
+        observation = await probe.observe(
+            "existing_bindings",
+            request,
+            deadline=caller_deadline,
+            max_cost_usd=request.max_cost_usd,
+        )
+        assert observation.outcome == "passed"
+        assert deadlines and max(deadlines) < caller_deadline
+        assert max(deadlines) <= asyncio.get_running_loop().time() + request.max_seconds
+        count = len(fixture.sent)
+        replay = await probe.observe(
+            "existing_bindings",
+            request,
+            deadline=caller_deadline,
+            max_cost_usd=request.max_cost_usd,
+        )
+        assert replay.outcome == "unavailable" and len(fixture.sent) == count
+        assert await probe.close(deadline=caller_deadline) is True
+
+    asyncio.run(scenario())
+
+
 def test_authorized_observations_are_bound_bounded_and_not_blanket_live_qualification(observed):
     module, request, now, authority, probe = observed
     report = asyncio.run(
