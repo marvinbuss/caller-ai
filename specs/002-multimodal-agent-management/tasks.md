@@ -1906,3 +1906,30 @@ the ten new region cases preserve existing-region compatibility, unknown-region 
 and independent approval gates. Actual provider/device/endurance/sink acceptance remains
 unqualified; task status stays 103/114.
 
+### 2026-11-02: Local Guarded Provider Factory Executor
+
+The operator explicitly selected local-only executor construction instead of client-secret
+authentication. A redacted current-input check still reports valid 120-second/10-USD metadata,
+all execution flags false and the execution-approval window unset. No credential was used.
+
+`execute_provider_scope` now authorizes an exact request fingerprint before invoking an
+explicit `ProviderProbeFactory`, passes construction and observations the same original
+deadline/cost scope, and rechecks authorization before observing. It owns bounded one-way
+cleanup after attempted construction, contains private construction/disposal output, propagates
+cancellation and reports uncertain disposal as pending rather than observed success.
+The existing qualification coordinator accepts only a capped child deadline, never a renewal.
+
+Four initial factory/lifecycle cases failed before the entry point existed and passed after
+implementation. Failure-path tests exposed and repaired missing not-started cleanup metadata
+for authorization exceptions. All twelve focused executor/deadline cases pass, including
+wrong/expired/absent grants, revocation, stalled/failed construction, cancellation, private
+errors and unknown cleanup. Concrete authoritative Azure and live protocol probes remain
+unimplemented/unbound; this local executor boundary is not actual T062/T110 qualification.
+The CLI stays offline-only and private inputs are not auto-loaded or execution approvals.
+
+Final local validation passes all 301 tools tests (91.98 seconds), changed-file lint/format
+and strict typing of the executor module. References validate across 53 documents with
+42 unchanged diagram sources; no new rendering is claimed. No backend/frontend suite,
+real identity, cloud model, physical device, alert sink or endurance run is claimed for
+this tools-only increment. The concrete live-probe gap and all 11 blocked markers remain.
+

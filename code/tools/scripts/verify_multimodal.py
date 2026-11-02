@@ -197,6 +197,18 @@ class ProbePort(Protocol):
         ...
 
 
+class ProviderProbeFactory(Protocol):
+    async def create(
+        self, request: MultimodalRequest, *, deadline: float, max_cost_usd: float
+    ) -> ProbePort:
+        """Bind reviewed ports only; charged provider operations belong in observe()."""
+        ...
+
+    async def close(self, *, deadline: float) -> bool:
+        """Dispose owned resources, including failed construction; not provider closure proof."""
+        ...
+
+
 def pending(
     request: MultimodalRequest | None = None, *, reason: str = "authorization_required"
 ) -> QualificationReport:
@@ -238,12 +250,18 @@ async def qualify(
     authorization: AuthorizationPort | None = None,
     probe: ProbePort | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    deadline: float | None = None,
 ) -> QualificationReport:
     if not isinstance(request, MultimodalRequest):
         return pending(reason="invalid_manifest")
     if authorization is None or probe is None:
         return pending(request)
-    deadline = asyncio.get_running_loop().time() + request.max_seconds
+    maximum = asyncio.get_running_loop().time() + request.max_seconds
+    if deadline is not None and (
+        type(deadline) not in (int, float) or not math.isfinite(deadline) or deadline <= 0
+    ):
+        return pending(request, reason="invalid_manifest")
+    deadline = min(maximum, deadline) if deadline is not None else maximum
     checks: list[CheckResult] = []
     spent = 0.0
     previous: datetime | None = None
@@ -390,6 +408,93 @@ async def qualify(
         return finish("deadline")
     except Exception:
         return finish("authorization_unavailable")
+
+
+async def execute_provider_scope(
+    request: MultimodalRequest,
+    *,
+    authorization: AuthorizationPort | None = None,
+    factory: ProviderProbeFactory | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> dict[str, Any]:
+    report = pending(request if isinstance(request, MultimodalRequest) else None).to_dict()
+    report["cleanup_status"] = "not_started"
+    if not isinstance(request, MultimodalRequest) or authorization is None or factory is None:
+        return report
+    deadline = asyncio.get_running_loop().time() + request.max_seconds
+    attempted = False
+
+    class Discard(TextIOBase):
+        def write(self, text: str) -> int:
+            return len(text)
+
+    disabled = logging.root.manager.disable
+    try:
+        logging.disable(logging.CRITICAL)
+        with Discard() as sink, redirect_stdout(sink), redirect_stderr(sink):
+            try:
+                async with asyncio.timeout_at(deadline):
+                    grant = await authorization.authorize(request, deadline=deadline)
+                    current = now()
+                    if (
+                        not isinstance(grant, Authorization)
+                        or grant.fingerprint != request.fingerprint
+                        or not isinstance(current, datetime)
+                        or current.tzinfo is None
+                        or current.utcoffset() != UTC.utcoffset(current)
+                        or not isinstance(grant.expires_at, datetime)
+                        or grant.expires_at.tzinfo is None
+                        or grant.expires_at.utcoffset() != UTC.utcoffset(grant.expires_at)
+                        or grant.expires_at <= current
+                    ):
+                        return report
+                    boundary = min(
+                        deadline,
+                        asyncio.get_running_loop().time()
+                        + (grant.expires_at - current).total_seconds(),
+                    )
+                    attempted = True
+                    async with asyncio.timeout_at(boundary):
+                        probe = await factory.create(
+                            request, deadline=deadline, max_cost_usd=request.max_cost_usd
+                        )
+                    observed = now()
+                    if observed < current or observed >= grant.expires_at:
+                        report = pending(request, reason="authorization_required").to_dict()
+                    else:
+                        report = (
+                            await qualify(
+                                request,
+                                authorization=authorization,
+                                probe=probe,
+                                now=now,
+                                deadline=deadline,
+                            )
+                        ).to_dict()
+            except TimeoutError:
+                report = pending(request, reason="deadline").to_dict()
+            except Exception:
+                report = pending(
+                    request,
+                    reason="probe_unavailable" if attempted else "authorization_unavailable",
+                ).to_dict()
+            finally:
+                if attempted:
+                    report["cleanup_status"] = "pending"
+                    try:
+                        cleanup_deadline = asyncio.get_running_loop().time() + 10
+                        async with asyncio.timeout_at(cleanup_deadline):
+                            if await factory.close(deadline=cleanup_deadline) is True:
+                                report["cleanup_status"] = "complete"
+                    except Exception:
+                        pass
+                    if report["cleanup_status"] != "complete" and report["status"] == "observed":
+                        report["status"] = "pending"
+                else:
+                    report["cleanup_status"] = "not_started"
+    finally:
+        logging.disable(disabled)
+    return report
 
 
 BROWSER_CHECKS = (

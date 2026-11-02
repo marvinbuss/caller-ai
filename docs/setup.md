@@ -103,6 +103,29 @@ time/cost bounds together. Keep incomplete review references blank rather than i
 approved labels. Initial review is offline; using credentials or making provider calls needs
 separate explicit authorization after scope confirmation.
 
+### Guarded Provider Executor Boundary
+
+`verify_multimodal.execute_provider_scope` accepts only an explicit reviewed request,
+independent authorization port and `ProviderProbeFactory`. No defaults load the local TOML,
+discover credentials, construct a cloud client or run inference. The factory constructor
+must be side-effect free. Its `create` call occurs only after fresh exact-fingerprint approval;
+it binds reviewed ports without charged operations, which belong in the probe's `observe`.
+
+Construction and observations share the original execution deadline and cost-scope contract;
+expiry/revocation is checked again before observations. A factory must honor cancellation
+and the supplied limits. Once construction starts, the executor attempts disposal even on
+failure/cancellation, under a separate one-way cleanup budget of at most ten seconds.
+Only explicit `True` confirms local disposal. Unknown disposal remains pending and prevents
+an observed-success result; local disposal is not authenticated provider-session closure.
+Private provider/factory/cleanup output is suppressed, and cancellation still propagates.
+
+This boundary is locally tested infrastructure, not a complete actual Foundry qualification
+driver. Concrete probes must still obtain authoritative deployment/access/quota/lifecycle/
+retention evidence and exercise the real text/client-delegation/closure contracts. Missing
+probe implementations cannot be replaced with review labels, synthetic observations or a
+default endpoint. The CLI remains offline-only; paid use requires separately scoped final
+authorization and a reviewed concrete factory/probe binding. No such live run is implied.
+
 ## Current Verification Profiles
 
 ```powershell

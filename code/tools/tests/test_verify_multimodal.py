@@ -451,6 +451,155 @@ def observed(case):
     return module, request, now, Authority(), Probe()
 
 
+@pytest.mark.parametrize("approval", ["absent", "wrong-scope", "expired", "approved"])
+def test_provider_executor_authorizes_before_constructing_and_owns_cleanup(observed, approval):
+    module, request, now, authority, probe = observed
+    created, closed = [], []
+
+    class Factory:
+        async def create(self, scope, *, deadline, max_cost_usd):
+            assert scope.fingerprint == request.fingerprint
+            assert max_cost_usd == request.max_cost_usd
+            created.append(deadline)
+            return probe
+
+        async def close(self, *, deadline):
+            assert deadline > asyncio.get_running_loop().time()
+            closed.append(True)
+            return True
+
+    if approval == "wrong-scope":
+        authority.fingerprint = "b" * 64
+    elif approval == "expired":
+        authority.expires_at = now - timedelta(seconds=1)
+    report = asyncio.run(
+        module.execute_provider_scope(
+            request,
+            authorization=None if approval == "absent" else authority,
+            factory=Factory(),
+            now=lambda: now,
+        )
+    )
+    assert report["live_qualification"] == "pending"
+    if approval != "approved":
+        assert not created and not closed and not probe.calls
+        assert report["cleanup_status"] == "not_started"
+        return
+    assert report["status"] == "observed" and report["cleanup_status"] == "complete"
+    assert len(created) == len(closed) == 1
+    assert [check for check, _deadline in probe.calls] == list(module.CHECKS)
+    assert set(authority.calls + created + [deadline for _, deadline in probe.calls]) == {
+        created[0]
+    }
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "authorization-error",
+        "construction-error",
+        "stalled-construction",
+        "revoked",
+        "cleanup-error",
+        "cleanup-unknown",
+        "cancelled",
+    ],
+)
+def test_provider_executor_failure_cleanup_and_private_output(observed, fault, capsys):
+    module, request, now, authority, probe = observed
+    effects = []
+
+    class Factory:
+        async def create(self, scope, *, deadline, max_cost_usd):
+            effects.append("create")
+            if fault == "construction-error":
+                print("synthetic-private-executor-body")
+                raise RuntimeError("synthetic-private-executor-error")
+            if fault == "stalled-construction":
+                await asyncio.Event().wait()
+            if fault == "revoked":
+                authority.expires_at = now - timedelta(seconds=1)
+            if fault == "cancelled":
+                raise asyncio.CancelledError
+            return probe
+
+        async def close(self, *, deadline):
+            effects.append("close")
+            if fault == "cleanup-error":
+                print("synthetic-private-cleanup-body")
+                raise RuntimeError("synthetic-private-cleanup-error")
+            return fault != "cleanup-unknown"
+
+    class BrokenAuthority:
+        async def authorize(self, scope, *, deadline):
+            print("synthetic-private-authority-body")
+            raise RuntimeError("synthetic-private-authority-error")
+
+    if fault == "stalled-construction":
+        authority.expires_at = now + timedelta(seconds=0.03)
+
+    async def scenario():
+        started = asyncio.get_running_loop().time()
+        report = await module.execute_provider_scope(
+            request,
+            authorization=BrokenAuthority() if fault == "authorization-error" else authority,
+            factory=Factory(),
+            now=lambda: now,
+        )
+        if fault == "stalled-construction":
+            assert asyncio.get_running_loop().time() - started < 0.5
+        return report
+
+    if fault == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(scenario())
+        assert effects == ["create", "close"]
+    else:
+        report = asyncio.run(scenario())
+        assert report["status"] == report["live_qualification"] == "pending"
+        expected = (
+            "not_started"
+            if fault == "authorization-error"
+            else ("pending" if fault in {"cleanup-error", "cleanup-unknown"} else "complete")
+        )
+        assert report["cleanup_status"] == expected
+        assert effects == ([] if fault == "authorization-error" else ["create", "close"])
+        if fault in {
+            "authorization-error",
+            "construction-error",
+            "stalled-construction",
+            "revoked",
+        }:
+            assert not probe.calls
+        assert "synthetic-private" not in json.dumps(report)
+    output = capsys.readouterr()
+    assert "synthetic-private" not in output.out + output.err
+
+
+def test_qualification_child_deadline_cannot_extend_original_scope(observed):
+    module, request, now, authority, original = observed
+    deadlines = []
+
+    class Probe:
+        async def observe(self, check, scope, *, deadline, max_cost_usd):
+            deadlines.append(deadline)
+            await asyncio.Event().wait()
+
+    async def scenario():
+        started = asyncio.get_running_loop().time()
+        deadline = started + 0.03
+        report = await module.qualify(
+            request, authorization=authority, probe=Probe(), now=lambda: now, deadline=deadline
+        )
+        assert asyncio.get_running_loop().time() - started < 0.5
+        assert deadlines == [deadline] and set(authority.calls) == {deadline}
+        return report.to_dict()
+
+    report = asyncio.run(scenario())
+    assert report["checks"][module.CHECKS[0]]["reason"] == "deadline"
+    assert report["live_qualification"] == "pending"
+
+
 def test_authorized_observations_are_bound_bounded_and_not_blanket_live_qualification(observed):
     module, request, now, authority, probe = observed
     report = asyncio.run(
