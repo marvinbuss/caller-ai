@@ -1852,3 +1852,20 @@ The approved mirror again returns 404 for fixed minimatch 11.0.1 and root packag
 omits it; the mirror-only policy and advisory gate remain unchanged. No private inputs were
 read, and no live qualification, merge or deployment occurred.
 
+### 2026-11-02: Fit-to-View Completion Follow-Up
+
+Actionability-only source `0cc25b701f628f0a22700e02bab98aaa3366c53b` / run 41472458285
+completed failed. Windows again passed 852 runtime/719 management/284 tools and actual
+53-document rendering before the minimatch audit failure. Linux image smoke passed before
+the same audit failure. Ubuntu passed 852 runtime, then management 718 passed/one failed:
+the 360-pixel journey's immediate post-fit containment assertion at line 674. The earlier
+768-pixel drag-status failure did not recur; no global root-cause repair is inferred.
+
+The same browser journey now waits at most 5000ms for exactly two graph nodes to satisfy
+its original size/containment predicates after fit-to-view, then keeps every original
+bounding-box assertion. This waits for viewport completion rather than sampling a transient
+layout; it adds no sleep, retry, application component change or enlarged deadline.
+All three compiled widths pass locally (226.49 seconds), and 360/1440 screenshots were
+inspected with both nodes contained. Fresh native validation remains pending; historical
+failures, advisory blocking, private-input exclusion and all 11 unchecked states remain.
+

@@ -664,6 +664,20 @@ def test_us1_community_graph_publication_navigation_and_presentation(
         ):
             assert dragged[field] == saved[field]
         graph.locator(".react-flow__controls-fitview").click()
+        page.wait_for_function(
+            """element => {
+                const frame = element.getBoundingClientRect();
+                const nodes = [...element.querySelectorAll('.react-flow__node')];
+                return nodes.length === 2 && nodes.every(node => {
+                    const box = node.getBoundingClientRect();
+                    return box.width > 40 && box.height > 20 &&
+                        box.x >= frame.x - 1 && box.y >= frame.y - 1 &&
+                        box.right <= frame.right + 1 && box.bottom <= frame.bottom + 1;
+                });
+            }""",
+            arg=graph.element_handle(),
+            timeout=5000,
+        )
         frame = graph.bounding_box()
         assert frame is not None
         for node in graph.locator(".react-flow__node").all():

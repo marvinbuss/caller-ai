@@ -67,6 +67,20 @@ bounded test-actionability improvement, not proof of the earlier Ubuntu failure'
 The complete 852/719/284 local profile below predates this test-only follow-up; fresh native
 results remain required and no failed gate is waived. T101/T114 remain unchecked.
 
+The actionability-only commit `0cc25b701f628f0a22700e02bab98aaa3366c53b` was exercised by
+[run 41472458285](https://github.com/marvinbuss/caller-ai/actions/runs/41472458285).
+Windows again passed 852/719/284 tests and 53-document rendering before the same advisory
+failure; Linux image smoke passed before that audit failure. Ubuntu passed 852 runtime
+tests, then management had 718 passed and one different failure: the 360-pixel journey's
+immediate post-fit geometry assertion, not the earlier drag-status assertion. Later native
+gates remained unexecuted. That failed checkpoint is retained, not counted as a pass.
+
+The next test-only follow-up waits at most five seconds for exactly two nodes to satisfy
+the original size/containment limits after fit-to-view, then executes all original bounding-box
+assertions. It adds no sleep, application change, retry or larger timeout. The same three
+compiled widths pass locally (226.49 seconds); 360/1440 screenshots were inspected with
+both nodes contained. Native validation of this combined synchronization remains pending.
+
 The current frontend dependency advisory gate is **failed/blocked** by Moderate
 `minimatch` 10.2.6 / GHSA-g3hv-75wg-m249. Its reported fixed release 11.0.1 is absent from
 the approved mirror; the canonical registry was unreachable under normal TLS. No pin,
