@@ -56,7 +56,7 @@ class ConfigurationClient:
             self._audience = str(UUID(audience))
         except (ValueError, TypeError):
             raise ValueError("invalid_configuration_client") from None
-        self._url = endpoint.rstrip("/") + "/v1/runtime/configuration"
+        self._url = endpoint.rstrip("/") + "/v2/runtime/configuration"
         self._credential, self._transport, self._cache = credential, transport, cache
         self._monotonic, self._metrics = monotonic, metrics
         self._due = float("-inf")
@@ -67,14 +67,17 @@ class ConfigurationClient:
     def cache(self) -> RevisionCache:
         return self._cache
 
-    async def refresh(self) -> bool:
+    async def refresh(self, *, require_current: bool = False) -> bool:
+        if type(require_current) is not bool:
+            return False
         deadline = asyncio.get_running_loop().time() + 10
         try:
             async with asyncio.timeout_at(deadline):
                 async with self._lock:
-                    if self._monotonic() < self._due:
+                    observed = self._monotonic()
+                    if not require_current and observed < self._due:
                         return self._last_ok
-                    self._due = self._monotonic() + 30
+                    self._due = observed + 30
                     self._last_ok = False
                     current = self._cache.current
                     remaining = deadline - asyncio.get_running_loop().time()
@@ -96,6 +99,7 @@ class ConfigurationClient:
                             if response.status_code == 304:
                                 if current is None or etag != current.etag:
                                     raise ValueError("unsolicited_configuration_not_modified")
+                                self._cache.revalidate(current, validated_at=observed)
                             elif response.status_code == 200:
                                 content = bytearray()
                                 async for chunk in response.aiter_bytes():
@@ -105,7 +109,7 @@ class ConfigurationClient:
                                 document = json.loads(content, object_pairs_hook=unique_object)
                                 if not isinstance(document, dict):
                                     raise ValueError("invalid_configuration_response")
-                                self._cache.install(document, etag=etag)
+                                self._cache.install(document, etag=etag, validated_at=observed)
                             else:
                                 raise ValueError("configuration_request_rejected")
                     self._last_ok = True

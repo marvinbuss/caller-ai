@@ -201,6 +201,7 @@ def main() -> int:
         timeout=30,
     )
     paths = [ROOT / value for value in result.stdout.decode("utf-8").split("\0") if value]
+    paths = [path for path in paths if path.exists() or path.is_symlink()]
     if not paths:
         return 1
     return max(check_paths(paths, ROOT), check_git(ROOT))

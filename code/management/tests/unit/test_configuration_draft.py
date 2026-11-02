@@ -16,11 +16,351 @@ def draft(configuration_graph):
     return EditorDraft.from_revision({**configuration_graph, "id": "revision-one"}, '"etag-one"')
 
 
+def test_us2_agent_position_is_local_presentation_and_delete_cleans_it(draft, validator):
+    peer = draft.add_agent("community-alpha", "Alpha graph peer", "Synthetic peer prompt")
+    draft.add_relationship("agent-alpha", peer)
+    before = copy.deepcopy(draft.graph)
+    draft.set_agent_position("community-alpha", peer, 140.5, -20)
+    assert draft.graph["layout"]["agentsByCommunity"]["community-alpha"] == [
+        {"nodeId": peer, "x": 140.5, "y": -20}
+    ]
+    assert {key: value for key, value in draft.graph.items() if key != "layout"} == {
+        key: value for key, value in before.items() if key != "layout"
+    }
+    assert validator.validate(draft.graph) == []
+    draft.delete_agent(peer)
+    assert draft.graph["layout"]["agentsByCommunity"]["community-alpha"] == []
+    assert draft.graph["relationships"] == []
+    assert validator.validate(draft.graph) == []
+
+
+@pytest.mark.parametrize(
+    "agent,community,x",
+    [
+        ("agent-beta", "community-alpha", 10),
+        ("agent-welcome", "community-alpha", 10),
+        ("agent-alpha", "missing", 10),
+        ("agent-alpha", "community-alpha", float("inf")),
+    ],
+)
+def test_us2_foreign_protected_and_unbounded_positions_preserve_draft(draft, agent, community, x):
+    before = copy.deepcopy(draft.graph)
+    with pytest.raises(ValueError):
+        draft.set_agent_position(community, agent, x, 0)
+    assert draft.graph == before
+
+
+def test_us2_membership_change_requires_semantic_edge_repair(draft, validator):
+    peer = draft.add_agent("community-alpha", "Movable peer", "Synthetic peer prompt")
+    edge = draft.add_relationship("agent-alpha", peer)
+    before = copy.deepcopy(draft.graph)
+    with pytest.raises(ValueError, match="agent_connections_require_repair"):
+        draft.edit_agent(peer, "communityId", "community-beta")
+    assert draft.graph == before
+    draft.delete_relationship(edge)
+    draft.set_agent_position("community-alpha", peer, 80, 90)
+    draft.edit_agent(peer, "communityId", "community-beta")
+    assert draft.graph["layout"]["agentsByCommunity"]["community-alpha"] == []
+    assert validator.validate(draft.graph) == []
+
+
+def test_us1_directed_community_connections_require_explicit_inverse(draft, validator):
+    identifier = draft.add_community_connection("community-alpha", "community-beta")
+    edge = draft.graph["communityConnections"][0]
+    assert edge["connectionId"] == identifier
+    assert edge["sourceCommunityId"] == "community-alpha"
+    assert edge["targetCommunityId"] == "community-beta"
+    assert edge["allowedContextFields"] == ["request_summary", "transfer_reason"]
+    assert len(draft.graph["communityConnections"]) == 1
+    assert validator.validate(draft.graph) == []
+    with pytest.raises(ValueError, match="duplicate_community_connection"):
+        draft.add_community_connection("community-alpha", "community-beta")
+    draft.add_community_connection("community-beta", "community-alpha")
+    assert len(draft.graph["communityConnections"]) == 2
+    draft.delete_community_connection(identifier)
+    assert len(draft.graph["communityConnections"]) == 1
+    assert draft.graph["communityConnections"][0]["sourceCommunityId"] == "community-beta"
+    assert validator.validate(draft.graph) == []
+
+
+@pytest.mark.parametrize(
+    "source,target", [("community-alpha", "community-alpha"), ("community-alpha", "missing")]
+)
+def test_us1_invalid_community_connections_preserve_draft(draft, source, target):
+    before = copy.deepcopy(draft.graph)
+    with pytest.raises(ValueError):
+        draft.add_community_connection(source, target)
+    assert draft.graph == before
+
+
+def test_us1_community_position_changes_only_presentation(draft, validator):
+    draft.add_community_connection("community-alpha", "community-beta")
+    before = copy.deepcopy(draft.graph)
+    draft.set_community_position("community-alpha", 123.5, -30)
+    assert draft.graph["layout"]["communities"] == [
+        {"nodeId": "community-alpha", "x": 123.5, "y": -30}
+    ]
+    draft.set_community_position("community-alpha", 240, 40)
+    assert draft.graph["layout"]["communities"] == [
+        {"nodeId": "community-alpha", "x": 240, "y": 40}
+    ]
+    assert {key: value for key, value in draft.graph.items() if key != "layout"} == {
+        key: value for key, value in before.items() if key != "layout"
+    }
+    assert validator.validate(draft.graph) == []
+
+
+@pytest.mark.parametrize("coordinate", [float("inf"), float("nan"), True, 100001])
+def test_us1_invalid_positions_do_not_partially_mutate_draft(draft, coordinate):
+    before = copy.deepcopy(draft.graph)
+    with pytest.raises(ValueError):
+        draft.set_community_position("community-alpha", coordinate, 0)
+    assert draft.graph == before
+
+
+def test_us1_referenced_community_delete_requires_confirmation_and_cleans_layout(draft, validator):
+    draft.add_community_connection("community-alpha", "community-beta")
+    draft.set_community_position("community-alpha", 10, 20)
+    before = copy.deepcopy(draft.graph)
+    with pytest.raises(ValueError, match="community_connections_require_confirmation"):
+        draft.delete_community("community-alpha")
+    assert draft.graph == before
+    draft.delete_community("community-alpha", confirmed=True)
+    assert draft.graph["communityConnections"] == []
+    assert draft.graph["layout"]["communities"] == []
+    assert validator.validate(draft.graph) == []
+
+
+def test_us1_save_acknowledgement_retains_newer_edits_without_claiming_them_saved(draft):
+    from types import SimpleNamespace
+
+    import httpx
+
+    from management_app.state.configuration_editor import ConfigurationEditorState
+
+    draft.edit_agent("agent-alpha", "prompt", "Synthetic submitted edit")
+    payloads = []
+
+    async def request(*arguments, **keywords):
+        payloads.append(copy.deepcopy(keywords["graph"]))
+        return httpx.Response(
+            200, json={**payloads[-1], "id": "revision-two"}, headers={"ETag": '"etag-two"'}
+        )
+
+    state = SimpleNamespace(
+        busy=False,
+        status="Unsaved",
+        errors={},
+        error="",
+        generation=0,
+        router=SimpleNamespace(
+            session=SimpleNamespace(session_id="fixture-sid", client_token="fixture-token")
+        ),
+        _editing=lambda: draft,
+        _services=lambda: SimpleNamespace(request=request),
+    )
+
+    async def scenario():
+        submission = ConfigurationEditorState.save.fn(state)
+        await anext(submission)
+        draft.edit_agent("agent-alpha", "prompt", "Synthetic newer unsaved edit")
+        state.generation += 1
+        with pytest.raises(StopAsyncIteration):
+            await anext(submission)
+        assert payloads[0]["agents"][3]["prompt"] == "Synthetic submitted edit"
+        assert draft.graph["agents"][3]["prompt"] == "Synthetic newer unsaved edit"
+        assert draft.etag == '"etag-two"' and state.status == "Unsaved"
+        assert not state.busy and not state.error
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("replacement", ["state-copy", "explicit-reload"])
+def test_us1_save_acknowledgement_tracks_logical_draft_across_framework_copies(draft, replacement):
+    from types import SimpleNamespace
+
+    import httpx
+
+    from management_app.state.configuration_editor import ConfigurationEditorState, EditorDraft
+
+    current = [draft]
+
+    async def request(*arguments, **keywords):
+        return httpx.Response(
+            200,
+            json={**copy.deepcopy(keywords["graph"]), "id": "revision-two"},
+            headers={"ETag": '"etag-two"'},
+        )
+
+    state = SimpleNamespace(
+        busy=False,
+        status="Unsaved",
+        errors={},
+        error="",
+        generation=0,
+        router=SimpleNamespace(
+            session=SimpleNamespace(session_id="fixture-sid", client_token="fixture-token")
+        ),
+        _editing=lambda: current[0],
+        _services=lambda: SimpleNamespace(request=request),
+    )
+
+    async def scenario():
+        submission = ConfigurationEditorState.save.fn(state)
+        await anext(submission)
+        if replacement == "state-copy":
+            current[0] = copy.deepcopy(draft)
+        else:
+            current[0] = EditorDraft.from_revision(copy.deepcopy(draft.graph), '"etag-reloaded"')
+            state.generation += 1
+            state.status = ""
+        with pytest.raises(StopAsyncIteration):
+            await anext(submission)
+        if replacement == "state-copy":
+            assert current[0].etag == '"etag-two"' and state.status == "Saved"
+        else:
+            assert current[0].etag == '"etag-reloaded"' and state.status == ""
+        assert not state.busy
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("selected", ["community-alpha", "community-beta", "missing"])
+def test_us1_child_entry_preserves_shared_unsaved_draft_without_reloading(draft, selected):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from management_app.state.configuration_editor import ConfigurationEditorState
+
+    draft.edit_agent("agent-alpha", "prompt", "Synthetic retained navigation edit")
+    services = Mock()
+    state = SimpleNamespace(
+        _draft=draft,
+        authorized=True,
+        status="Unsaved",
+        error="",
+        errors={},
+        generation=7,
+        selected_community_id="",
+        selection_error="",
+        _services=services,
+        load=AsyncMock(),
+        router=SimpleNamespace(page=SimpleNamespace(params={"community_id": selected})),
+    )
+    asyncio.run(ConfigurationEditorState.enter_view.fn(state))
+    state.load.assert_not_awaited()
+    services.assert_called_once()
+    assert state._draft is draft and draft.etag == '"etag-one"'
+    assert draft.graph["agents"][3]["prompt"] == "Synthetic retained navigation edit"
+    assert state.status == "Unsaved" and state.generation == 7
+    assert state.selected_community_id == selected
+    assert state.selection_error == ("Community unavailable" if selected == "missing" else "")
+
+
+def test_us1_child_entry_rechecks_authorization_before_exposing_shared_draft(draft):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from management_app.state.configuration_editor import ConfigurationEditorState
+
+    state = SimpleNamespace(
+        _draft=draft,
+        authorized=True,
+        status="Unsaved",
+        error="",
+        errors={},
+        generation=7,
+        selected_community_id="",
+        selection_error="",
+        _services=Mock(side_effect=PermissionError("synthetic-private-denial")),
+        load=AsyncMock(),
+        router=SimpleNamespace(page=SimpleNamespace(params={"community_id": "community-alpha"})),
+    )
+    asyncio.run(ConfigurationEditorState.enter_view.fn(state))
+    assert state.authorized is False and state._draft is None
+    state.load.assert_not_awaited()
+    assert "synthetic-private" not in state.error + state.selection_error
+
+
+def test_us1_graph_wrapper_constructs_with_typed_bounded_callbacks():
+    import reflex as rx
+
+    from management_app.components.configuration_graph import ConfigurationGraph
+
+    component = ConfigurationGraph.create(nodes=[], edges=[], view_key="communities", dirty=False)
+    assert isinstance(component, rx.Component)
+    imports = component.add_imports()
+    assert "@xyflow/react@12.12.0" in imports
+    assert "@xyflow/react/dist/style.css" in imports
+    assert {"on_move", "on_link", "on_pick"} <= component.get_event_triggers().keys()
+    code = "\n".join(component.add_custom_code())
+    assert "useNodesState" in code and "useEffect" in code
+
+
+def test_us1_dirty_guard_constructs_without_rendering_an_extra_canvas():
+    import reflex as rx
+
+    from management_app.components.configuration_graph import ConfigurationLeaveGuard
+
+    component = ConfigurationLeaveGuard.create(dirty=True)
+    assert isinstance(component, rx.Component)
+    assert set(component.add_imports()) == {"react"}
+    code = "\n".join(component.add_custom_code())
+    assert "beforeunload" in code and "useEffect" in code
+
+
+def test_us1_graph_bridge_deduplicates_unchanged_and_repeated_final_positions():
+    import shutil
+    import subprocess
+
+    from management_app.components.configuration_graph import GRAPH_CODE, LEAVE_CODE
+
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    harness = """
+const useNodesState = nodes => [nodes, () => {}, () => {}];
+const useRef = value => ({current: value});
+const useEffect = () => {};
+const createElement = (tag, props, ...children) => ({tag, props, children});
+const ReactFlow = "flow", Background = "background", Controls = "controls";
+"""
+    scenario = """
+const moves = [];
+CallerConfigurationLeaveGuard({dirty: true});
+const tree = CallerConfigurationGraph({
+    nodes: [{id: "community-alpha", position: {x: 40, y: 40}}], edges: [],
+    viewKey: "communities", dirty: false, onMove: (...values) => moves.push(values)
+});
+const changed = tree.children[0].props.onNodesChange;
+const change = (x, dragging = false) => changed([
+    {type: "position", id: "community-alpha", position: {x, y: 40}, dragging}
+]);
+change(40);
+if (moves.length !== 0) throw new Error("unchanged_position_was_dispatched");
+change(80);
+change(80);
+if (moves.length !== 1) throw new Error("duplicate_final_position_was_dispatched");
+change(100, true);
+if (moves.length !== 1) throw new Error("intermediate_drag_was_dispatched");
+change(100);
+if (moves.length !== 2) throw new Error("new_final_position_not_dispatched");
+"""
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness + LEAVE_CODE + GRAPH_CODE + scenario,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_draft_is_detached_and_conflict_retains_unsaved_values(draft, configuration_graph) -> None:
     original = copy.deepcopy(configuration_graph)
     draft.edit_agent("agent-alpha", "prompt", "Synthetic unsaved edit")
     before = json.dumps(draft.graph, sort_keys=True)
-    draft.rejected(412, {"code": "configuration_conflict"})
+    draft.rejected(409, {"code": "configuration_conflict"})
     assert json.dumps(draft.graph, sort_keys=True) == before
     assert draft.etag == '"etag-one"' and draft.conflict
     assert configuration_graph == original
@@ -70,7 +410,7 @@ def test_field_errors_do_not_replace_other_unsaved_edits(draft) -> None:
     assert draft.graph["agents"][3]["prompt"] == "Retained synthetic edit"
 
 
-def test_new_community_and_entry_have_required_lifecycle_paths(draft, validator) -> None:
+def test_new_community_and_entry_do_not_create_lifecycle_edges(draft, validator) -> None:
     community_id = draft.add_community(
         "New community", "Synthetic routing", "New entry", "Synthetic prompt"
     )
@@ -81,6 +421,7 @@ def test_new_community_and_entry_have_required_lifecycle_paths(draft, validator)
         item for item in draft.graph["agents"] if item["agentId"] == community["entryAgentId"]
     )
     assert entry["communityId"] == community_id and entry["role"] == "ordinary"
+    assert draft.graph["relationships"] == []
     assert validator.validate(draft.graph) == []
 
 
@@ -136,39 +477,43 @@ def test_forbidden_relationships_do_not_mutate_draft(draft, source, target) -> N
     assert draft.graph == before
 
 
-def test_required_lifecycle_paths_cannot_be_deleted(draft) -> None:
-    required = draft.required_relationship_ids
-    assert len(required) == 8
+def test_lifecycle_transitions_are_not_editable_relationships(draft) -> None:
+    assert draft.required_relationship_ids == set()
     before = copy.deepcopy(draft.graph)
-    for identifier in required:
-        with pytest.raises(ValueError, match="required_lifecycle_path"):
-            draft.delete_relationship(identifier)
+    for source, target in (
+        ("agent-welcome", "agent-routing"),
+        ("agent-routing", "agent-alpha"),
+        ("agent-alpha", "agent-goodbye"),
+    ):
+        with pytest.raises(ValueError, match="relationship_prohibited"):
+            draft.add_relationship(source, target)
     assert draft.graph == before
 
 
-def test_routing_targets_entry_only_and_required_paths_follow_enabled_community(
-    draft, validator
-) -> None:
+def test_routing_entry_and_enabled_edits_do_not_create_lifecycle_edges(draft, validator) -> None:
     peer = draft.add_agent("community-alpha", "Alpha peer", "Synthetic peer prompt")
+    assert validator.validate(draft.graph) == []
     with pytest.raises(ValueError, match="relationship_prohibited"):
         draft.add_relationship("agent-routing", peer)
-    entry_path = next(
-        item
-        for item in draft.graph["relationships"]
-        if item["sourceAgentId"] == "agent-routing" and item["targetAgentId"] == "agent-alpha"
-    )
-    assert entry_path["relationshipId"] in draft.required_relationship_ids
+    before = copy.deepcopy(draft.graph["relationships"])
+    draft.edit_community("community-alpha", "entryAgentId", peer)
+    assert draft.graph["relationships"] == before
+    assert validator.validate(draft.graph) == []
     draft.edit_community("community-alpha", "enabled", False)
-    assert entry_path["relationshipId"] not in draft.required_relationship_ids
-    draft.delete_relationship(entry_path["relationshipId"])
+    assert draft.graph["relationships"] == before
+    assert draft.required_relationship_ids == set()
     assert validator.validate(draft.graph) == []
 
 
-def test_relationship_duplicates_and_raw_context_are_rejected_without_partial_edits(draft) -> None:
+def test_relationship_duplicates_and_raw_context_are_rejected_without_partial_edits(
+    draft, validator
+) -> None:
+    peer = draft.add_agent("community-alpha", "Alpha peer", "Synthetic peer prompt")
+    identifier = draft.add_relationship("agent-alpha", peer)
+    assert validator.validate(draft.graph) == []
     before = copy.deepcopy(draft.graph)
     with pytest.raises(ValueError, match="duplicate_relationship"):
-        draft.add_relationship("agent-alpha", "agent-routing")
-    identifier = draft.graph["relationships"][0]["relationshipId"]
+        draft.add_relationship("agent-alpha", peer)
     with pytest.raises(ValueError, match="context_field_prohibited"):
         draft.set_context_field(identifier, "conversation", True)
     assert draft.graph == before
@@ -176,7 +521,7 @@ def test_relationship_duplicates_and_raw_context_are_rejected_without_partial_ed
 
 def test_relationship_choices_work_during_invalid_unsaved_name_edit(draft) -> None:
     draft.edit_agent("agent-alpha", "name", "")
-    assert len(draft.required_relationship_ids) == 8
+    assert draft.required_relationship_ids == set()
     assert draft.relationship_targets("agent-alpha") == []
 
 
@@ -386,7 +731,7 @@ def test_capability_removal_cleans_assignments_and_preserves_unsaved_constraints
     draft.add_tool("tool-public")
     draft.set_action("agent-alpha", "tool-public", "lookup", True)
     draft.edit_constraints("agent-alpha", "tool-public", '{"limit":5}')
-    draft.rejected(412, {"code": "configuration_conflict"})
+    draft.rejected(409, {"code": "configuration_conflict"})
     assert draft.graph["agents"][3]["capabilityAssignments"][0]["allowedInputConstraints"] == {
         "limit": 5
     }

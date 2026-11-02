@@ -25,7 +25,7 @@ def activation_case(revision_document):
 
         async def send(self, request):
             self.calls += 1
-            assert request.url == "https://management.example.invalid/v1/runtime/configuration"
+            assert request.url == "https://management.example.invalid/v2/runtime/configuration"
             assert request.headers["authorization"] == "Bearer synthetic-runtime-token"
             if self.unavailable:
                 return httpx.Response(503)
@@ -38,7 +38,8 @@ def activation_case(revision_document):
             assert scope == "api://00000000-0000-4000-8000-000000000001/.default"
             return SimpleNamespace(token="synthetic-runtime-token", expires_on=time.time() + 3600)
 
-    source, cache, clock = Source(), RevisionCache(), [0.0]
+    source, clock = Source(), [0.0]
+    cache = RevisionCache(monotonic=lambda: clock[0])
     client = ConfigurationClient(
         endpoint="https://management.example.invalid",
         audience="00000000-0000-4000-8000-000000000001",
@@ -116,7 +117,10 @@ async def test_outage_uses_only_last_validated_snapshot_and_empty_restart_declin
     source.unavailable = True
     clock[0] += 30
     assert await client.refresh() is False
-    assert activation.select_new_call() is pinned
+    assert cache.current is pinned
+    with pytest.raises(PermissionError, match="configuration_unavailable"):
+        activation.select_new_call()
+    assert pinned.view_for("a-source")["agent"]["agentId"] == "a-source"
     with pytest.raises(PermissionError):
         ConfigurationActivation(cache=RevisionCache()).select_new_call()
 

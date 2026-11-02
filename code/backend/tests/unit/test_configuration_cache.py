@@ -18,6 +18,225 @@ def cache():
     return RevisionCache()
 
 
+def test_schema_two_fixture_preserves_legacy_and_directed_boundaries(
+    community_configuration_v2, community_configuration
+):
+    graph = community_configuration_v2
+    assert graph["schemaVersion"] == "2.0.0"
+    assert community_configuration["schemaVersion"] == "1.0.0"
+    assert graph["communityConnections"] == [
+        {
+            "connectionId": "alpha-to-beta",
+            "sourceCommunityId": "alpha",
+            "targetCommunityId": "beta",
+            "allowedContextFields": ["request_summary", "transfer_reason"],
+        }
+    ]
+    agents = {agent["agentId"]: agent for agent in graph["agents"]}
+    assert {agent["role"] for agent in agents.values() if agent["communityId"] is None} == {
+        "welcome",
+        "routing",
+        "goodbye",
+    }
+    assert all(
+        agents[edge["sourceAgentId"]]["role"] == "ordinary"
+        and agents[edge["targetAgentId"]]["role"] == "ordinary"
+        and agents[edge["sourceAgentId"]]["communityId"]
+        == agents[edge["targetAgentId"]]["communityId"]
+        for edge in graph["relationships"]
+    )
+    assert {position["nodeId"] for position in graph["layout"]["communities"]} == {
+        "alpha",
+        "beta",
+    }
+    for community, positions in graph["layout"]["agentsByCommunity"].items():
+        assert {position["nodeId"] for position in positions} == {
+            agent["agentId"] for agent in agents.values() if agent["communityId"] == community
+        }
+    graph["agents"][0]["prompt"] = "Synthetic changed setup prompt"
+    assert community_configuration["agents"][0]["prompt"] != graph["agents"][0]["prompt"]
+
+
+def test_schema_two_fixture_revisions_are_detached_and_hash_layout(revision_document_v2):
+    first = revision_document_v2()
+    second = revision_document_v2(2)
+    assert first["id"] != second["id"] and second["revisionNumber"] == 2
+    assert first["organizationId"] == "default" and first["schemaVersion"] == "2.0.0"
+    fields = (
+        "schemaVersion",
+        "agents",
+        "communities",
+        "relationships",
+        "communityConnections",
+        "layout",
+        "tools",
+        "mcpConnections",
+    )
+    graph = {field: first[field] for field in fields}
+    expected = hashlib.sha256(
+        json.dumps(
+            graph, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+    assert first["graphHash"] == expected
+    first["layout"]["communities"][0]["x"] += 100
+    first["agents"][0]["prompt"] = "Synthetic detached setup mutation"
+    restored = revision_document_v2()
+    assert restored["graphHash"] == expected
+    assert restored["layout"] != first["layout"]
+    assert restored["agents"][0]["prompt"] != first["agents"][0]["prompt"]
+
+
+def test_v2_policy_snapshot_keeps_full_hash_without_recomputing_it_from_projection(
+    cache, runtime_revision_v2, revision_document_v2
+):
+    projection = runtime_revision_v2()
+    source = revision_document_v2()
+    assert projection["policyHash"] != projection["graphHash"]
+    pinned = cache.install(projection, etag='"projection-v2"')
+    assert pinned.graph_hash == source["graphHash"]
+    assert pinned.policy_hash == projection["policyHash"]
+    assert pinned.schema_version == "2.0.0"
+    assert "layout" not in pinned.for_runtime()
+    assert pinned.view_for("a-source")["agent"]["agentId"] == "a-source"
+    projection["agents"][0]["prompt"] = "synthetic-private-detached-projection"
+    assert "synthetic-private" not in repr(pinned) + repr(pinned.for_runtime())
+
+
+@pytest.mark.parametrize("business", ["absent", "disabled"])
+def test_fresh_valid_publication_without_enabled_business_cannot_admit(
+    cache, runtime_revision_v2, business
+):
+    from caller_runtime.domain.configuration import GRAPH_FIELDS, encoded
+
+    document = runtime_revision_v2()
+    if business == "absent":
+        document["agents"] = [agent for agent in document["agents"] if agent["role"] != "ordinary"]
+        document["communities"] = []
+        document["relationships"] = []
+        document["communityConnections"] = []
+    else:
+        for community in document["communities"]:
+            community["enabled"] = False
+    policy = {key: document[key] for key in GRAPH_FIELDS}
+    document["policyHash"] = hashlib.sha256(encoded(policy)).hexdigest()
+    document["graphHash"] = hashlib.sha256(
+        encoded(policy | {"layout": {"communities": [], "agentsByCommunity": {}}})
+    ).hexdigest()
+    snapshot = cache.install(document, etag='"protected-only-or-disabled"')
+    assert cache.current is snapshot
+    assert snapshot.view_for("routing")["communities"] == []
+    with pytest.raises(PermissionError, match="configuration_unavailable"):
+        cache.pin()
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "policy-hash",
+        "full-hash-format",
+        "layout",
+        "credential-reference",
+        "schema-one",
+        "extra-metadata",
+        "community-reference",
+        "community-duplicate",
+        "agent-protected",
+        "agent-foreign",
+    ],
+)
+def test_v2_policy_snapshot_rejects_strict_and_semantic_corruption(
+    cache, runtime_revision_v2, corruption
+):
+    from caller_runtime.domain.configuration import encoded
+
+    pinned = cache.install(runtime_revision_v2(), etag='"projection-v2"')
+    candidate = runtime_revision_v2(2)
+    if corruption == "policy-hash":
+        candidate["agents"][0]["prompt"] += " synthetic changed policy"
+    elif corruption == "full-hash-format":
+        candidate["graphHash"] = "not-a-digest"
+    elif corruption == "layout":
+        candidate["layout"] = {"communities": [], "agentsByCommunity": {}}
+    elif corruption == "credential-reference":
+        candidate["mcpConnections"] = [
+            {
+                "connectionId": "private-material",
+                "name": "Synthetic connection",
+                "approvedEndpointRef": "approved-public-fixture",
+                "enabled": True,
+                "credentialRef": "secret://fixture-connection",
+                "reviewedCapabilityCatalog": [],
+            }
+        ]
+    elif corruption == "schema-one":
+        candidate["schemaVersion"] = "1.0.0"
+    elif corruption == "extra-metadata":
+        candidate["transcript"] = "synthetic-private-forbidden-content"
+    elif corruption == "community-reference":
+        candidate["communityConnections"][0]["targetCommunityId"] = "missing"
+    elif corruption == "community-duplicate":
+        candidate["communityConnections"].append(
+            {**candidate["communityConnections"][0], "connectionId": "duplicate-direction"}
+        )
+    elif corruption == "agent-protected":
+        candidate["relationships"][0]["sourceAgentId"] = "welcome"
+    else:
+        candidate["relationships"][0]["targetAgentId"] = "b-entry"
+    if corruption != "policy-hash":
+        fields = (
+            "schemaVersion",
+            "agents",
+            "communities",
+            "relationships",
+            "communityConnections",
+            "tools",
+            "mcpConnections",
+        )
+        candidate["policyHash"] = hashlib.sha256(
+            encoded({key: candidate[key] for key in fields})
+        ).hexdigest()
+    with pytest.raises(ValueError, match="invalid_configuration_snapshot"):
+        cache.install(candidate, etag='"invalid-projection"')
+    assert cache.pin() is pinned
+
+
+def test_conversation_setup_clock_advances_utc_and_monotonic_without_sleep(conversation_clock):
+    from datetime import UTC, datetime, timedelta
+
+    origin = datetime(2026, 10, 30, tzinfo=UTC)
+    assert conversation_clock.monotonic() == 0
+    assert conversation_clock.utc_now() == origin
+    conversation_clock.advance(600)
+    assert conversation_clock.monotonic() == 600
+    assert conversation_clock.utc_now() == origin + timedelta(seconds=600)
+
+
+@pytest.mark.parametrize("invalid", [-1, True, float("inf"), float("nan"), "1"])
+def test_conversation_setup_clock_rejects_invalid_advances(conversation_clock, invalid):
+    before = conversation_clock.utc_now()
+    with pytest.raises(ValueError, match="invalid_fixture_clock_advance"):
+        conversation_clock.advance(invalid)
+    assert conversation_clock.monotonic() == 0 and conversation_clock.utc_now() == before
+
+
+def test_conversation_setup_ports_require_explicit_behavior(conversation_ports):
+    import asyncio
+
+    async def scenario():
+        with pytest.raises(RuntimeError, match="fixture_model_not_configured"):
+            await conversation_ports.model()
+        with pytest.raises(RuntimeError, match="fixture_admission_not_configured"):
+            await conversation_ports.admission()
+        conversation_ports.model.side_effect = None
+        conversation_ports.model.return_value = "synthetic configured result"
+        assert await conversation_ports.model() == "synthetic configured result"
+        assert conversation_ports.model.await_count == 2
+        assert conversation_ports.admission.await_count == 1
+
+    asyncio.run(scenario())
+
+
 def test_empty_and_restarted_cache_cannot_admit_from_absent_persistence(cache, revision_document):
     from caller_runtime.domain.configuration import RevisionCache
 
@@ -134,11 +353,12 @@ def test_even_consistently_hashed_invalid_catalog_graphs_are_rejected(
             "agents",
             "communities",
             "relationships",
+            "communityConnections",
             "tools",
             "mcpConnections",
         )
     }
-    document["graphHash"] = hashlib.sha256(
+    document["policyHash"] = hashlib.sha256(
         json.dumps(graph, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     ).hexdigest()
     with pytest.raises(ValueError, match="invalid_configuration_snapshot"):
@@ -147,8 +367,9 @@ def test_even_consistently_hashed_invalid_catalog_graphs_are_rejected(
 
 
 @pytest.fixture
-def client_case(cache, revision_document):
+def client_case(revision_document):
     from caller_runtime.adapters.configuration_client import ConfigurationClient
+    from caller_runtime.domain.configuration import RevisionCache
 
     class Credential:
         calls = []
@@ -164,9 +385,11 @@ def client_case(cache, revision_document):
         etag = '"active-one"'
         raw = None
         calls = []
+        elapsed = 0.0
 
         async def send(self, request):
             self.calls.append(request)
+            clock[0] += self.elapsed
             return httpx.Response(
                 self.status,
                 headers={"ETag": self.etag},
@@ -180,6 +403,7 @@ def client_case(cache, revision_document):
             )
 
     source, credential, clock = Source(), Credential(), [0.0]
+    cache = RevisionCache(monotonic=lambda: clock[0])
     client = ConfigurationClient(
         endpoint="https://management.example.invalid",
         audience="00000000-0000-4000-8000-000000000001",
@@ -189,6 +413,107 @@ def client_case(cache, revision_document):
         monotonic=lambda: clock[0],
     )
     return client, source, credential, clock, cache
+
+
+def test_v2_refresh_uses_only_the_authenticated_versioned_runtime_path(client_case):
+    import asyncio
+
+    client, source, credential, clock, cache = client_case
+    assert asyncio.run(client.refresh())
+    assert source.calls[0].url == "https://management.example.invalid/v2/runtime/configuration"
+    assert len(credential.calls) == 1 and cache.pin().schema_version == "2.0.0"
+
+
+@pytest.mark.parametrize(
+    "elapsed,eligible", [(29.999, True), (30.0, False), (60.0, False), (-1.0, False)]
+)
+def test_new_admission_requires_fresh_configuration_without_discarding_old_pin(
+    client_case, elapsed, eligible
+):
+    import asyncio
+
+    client, source, credential, clock, cache = client_case
+    assert asyncio.run(client.refresh())
+    pinned = cache.pin()
+    clock[0] = elapsed
+    if eligible:
+        assert cache.pin() is pinned
+    else:
+        with pytest.raises(PermissionError, match="configuration_unavailable"):
+            cache.pin()
+    assert cache.current is pinned
+    assert pinned.view_for("a-source")["agent"]["agentId"] == "a-source"
+
+
+def test_failed_refresh_keeps_old_content_without_authorizing_new_admission(client_case):
+    import asyncio
+
+    client, source, credential, clock, cache = client_case
+    assert asyncio.run(client.refresh())
+    pinned = cache.pin()
+    source.status = 503
+    clock[0] = 30
+    assert asyncio.run(client.refresh()) is False
+    assert cache.current is pinned
+    with pytest.raises(PermissionError, match="configuration_unavailable"):
+        cache.pin()
+
+
+def test_matching_304_revalidates_current_snapshot_without_replacing_old_pin(client_case):
+    import asyncio
+
+    client, source, credential, clock, cache = client_case
+    assert asyncio.run(client.refresh())
+    pinned = cache.pin()
+    clock[0] = 30
+    with pytest.raises(PermissionError):
+        cache.pin()
+    source.status = 304
+    assert asyncio.run(client.refresh())
+    assert cache.pin() is pinned
+    clock[0] = 59.999
+    assert cache.pin() is pinned
+    clock[0] = 60
+    with pytest.raises(PermissionError):
+        cache.pin()
+
+
+def test_refresh_transport_time_cannot_extend_the_freshness_window(client_case):
+    import asyncio
+
+    client, source, credential, clock, cache = client_case
+    source.elapsed = 7
+    assert asyncio.run(client.refresh())
+    assert clock[0] == 7
+    clock[0] = 30
+    with pytest.raises(PermissionError):
+        cache.pin()
+    source.status = 304
+    assert asyncio.run(client.refresh())
+    assert clock[0] == 37
+    clock[0] = 60
+    with pytest.raises(PermissionError):
+        cache.pin()
+
+
+def test_stale_snapshot_or_future_clock_cannot_revalidate_current_admission(
+    runtime_revision_v2, conversation_clock
+):
+    from caller_runtime.domain.configuration import RevisionCache
+
+    cache = RevisionCache(monotonic=conversation_clock.monotonic)
+    older = cache.install(runtime_revision_v2(), etag='"older"')
+    conversation_clock.advance(30)
+    current = cache.install(runtime_revision_v2(2), etag='"current"')
+    with pytest.raises(ValueError, match="configuration_revision_conflict"):
+        cache.revalidate(older)
+    assert cache.pin() is current
+    conversation_clock.advance(30)
+    with pytest.raises(ValueError, match="invalid_configuration_clock"):
+        cache.revalidate(current, validated_at=61)
+    assert cache.current is current
+    with pytest.raises(PermissionError):
+        cache.pin()
 
 
 def test_refresh_coalesces_concurrent_ticks_and_authenticates_every_due_attempt(client_case):
@@ -201,8 +526,8 @@ def test_refresh_coalesces_concurrent_ticks_and_authenticates_every_due_attempt(
         assert len(source.calls) == len(credential.calls) == 1
         assert source.calls[0].headers["authorization"] == "Bearer synthetic-runtime-token"
         source.status = 304
-        clock[0] += 30
         pinned = cache.pin()
+        clock[0] += 30
         assert await client.refresh()
         assert cache.pin() is pinned
         assert source.calls[-1].headers["if-none-match"] == pinned.etag
@@ -242,7 +567,9 @@ def test_invalid_refresh_retains_last_good_without_permission_or_local_fallback(
         else:
             credential.expires_on = time.time()
         assert await client.refresh() is False
-        assert cache.pin() is pinned
+        assert cache.current is pinned
+        with pytest.raises(PermissionError, match="configuration_unavailable"):
+            cache.pin()
         assert all(request.url.host == "management.example.invalid" for request in source.calls)
 
     asyncio.run(scenario())
@@ -262,7 +589,9 @@ def test_unsolicited_or_mismatched_304_does_not_authorize_a_snapshot(client_case
         pinned = cache.pin()
         source.status, source.etag = 304, '"different"'
         clock[0] += 30
-        assert await client.refresh() is False and cache.pin() is pinned
+        assert await client.refresh() is False and cache.current is pinned
+        with pytest.raises(PermissionError, match="configuration_unavailable"):
+            cache.pin()
 
     asyncio.run(scenario())
 

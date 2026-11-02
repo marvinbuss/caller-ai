@@ -1,18 +1,29 @@
-"""Immutable service-authenticated ordinary revisions, never current permission authority."""
+"""Immutable service-authenticated policy projections, never current permission authority."""
 
 import hashlib
 import json
+import math
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from caller_runtime.domain.visibility import CommunityVisibility
 
 GRAPH_FIELDS = frozenset(
-    {"schemaVersion", "agents", "communities", "relationships", "tools", "mcpConnections"}
+    {
+        "schemaVersion",
+        "agents",
+        "communities",
+        "relationships",
+        "communityConnections",
+        "tools",
+        "mcpConnections",
+    }
 )
 ETAG = re.compile(r'^"[A-Za-z0-9_-]{1,128}"$')
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")]
@@ -20,7 +31,7 @@ Name = Annotated[str, Field(min_length=1, max_length=128)]
 
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, hide_input_in_errors=True)
 
 
 class _Assignment(_Strict):
@@ -39,6 +50,13 @@ class _Agent(_Strict):
     communityId: Identifier | None
     capabilityAssignments: list[_Assignment]
 
+    @field_validator("prompt")
+    @classmethod
+    def bounded_prompt(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 16 * 1024:
+            raise ValueError("agent_prompt_too_large")
+        return value
+
 
 class _Community(_Strict):
     communityId: Identifier
@@ -47,11 +65,25 @@ class _Community(_Strict):
     enabled: bool
     entryAgentId: Identifier
 
+    @field_validator("routingDescription")
+    @classmethod
+    def bounded_description(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 4 * 1024:
+            raise ValueError("community_description_too_large")
+        return value
+
 
 class _Relationship(_Strict):
     relationshipId: Identifier
     sourceAgentId: Identifier
     targetAgentId: Identifier
+    allowedContextFields: list[Literal["request_summary", "transfer_reason"]] = Field(max_length=2)
+
+
+class _CommunityConnection(_Strict):
+    connectionId: Identifier
+    sourceCommunityId: Identifier
+    targetCommunityId: Identifier
     allowedContextFields: list[Literal["request_summary", "transfer_reason"]] = Field(max_length=2)
 
 
@@ -82,23 +114,24 @@ class _Connection(_Strict):
     name: Name
     approvedEndpointRef: Identifier
     enabled: bool
-    credentialRef: str = Field(pattern=r"^secret://[a-z][a-z0-9-]{2,62}$")
     reviewedCapabilityCatalog: list[_ReviewedCapability]
 
 
 class _Revision(_Strict):
     id: Identifier
     organizationId: Literal["default"]
-    schemaVersion: Literal["1.0.0"]
+    schemaVersion: Literal["2.0.0"]
     revisionNumber: int = Field(ge=1)
     createdAt: datetime
     createdBy: Identifier
     graphHash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    agents: list[_Agent]
-    communities: list[_Community]
-    relationships: list[_Relationship]
-    tools: list[_Tool]
-    mcpConnections: list[_Connection]
+    policyHash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    agents: list[_Agent] = Field(max_length=200)
+    communities: list[_Community] = Field(max_length=50)
+    relationships: list[_Relationship] = Field(max_length=1000)
+    communityConnections: list[_CommunityConnection] = Field(max_length=1000)
+    tools: list[_Tool] = Field(max_length=256)
+    mcpConnections: list[_Connection] = Field(max_length=128)
 
 
 def encoded(value: object) -> bytes:
@@ -112,6 +145,7 @@ class RevisionSnapshot:
     revision_id: str
     revision_number: int
     graph_hash: str
+    policy_hash: str
     schema_version: str
     etag: str
     _content: bytes = field(repr=False)
@@ -129,8 +163,43 @@ class RevisionSnapshot:
                 raise ValueError("invalid_revision_time")
             detached: dict[str, Any] = json.loads(content)
             graph = {key: detached[key] for key in GRAPH_FIELDS}
-            if hashlib.sha256(encoded(graph)).hexdigest() != model.graphHash:
+            if hashlib.sha256(encoded(graph)).hexdigest() != model.policyHash:
                 raise ValueError("invalid_configuration_hash")
+            if len(model.relationships) + len(model.communityConnections) > 1000:
+                raise ValueError("configuration_connection_limit")
+            agents = {agent.agentId: agent for agent in model.agents}
+            communities = {community.communityId: community for community in model.communities}
+            if len({edge.relationshipId for edge in model.relationships}) != len(
+                model.relationships
+            ):
+                raise ValueError("duplicate_configuration_relationship")
+            for edge in model.relationships:
+                source_agent = agents.get(edge.sourceAgentId)
+                target_agent = agents.get(edge.targetAgentId)
+                if (
+                    source_agent is None
+                    or target_agent is None
+                    or source_agent.role != "ordinary"
+                    or target_agent.role != "ordinary"
+                    or source_agent.communityId != target_agent.communityId
+                ):
+                    raise ValueError("invalid_configuration_relationship")
+            community_pairs: set[tuple[str, str]] = set()
+            community_edge_ids: set[str] = set()
+            for community_edge in model.communityConnections:
+                pair = (community_edge.sourceCommunityId, community_edge.targetCommunityId)
+                if (
+                    pair[0] not in communities
+                    or pair[1] not in communities
+                    or pair[0] == pair[1]
+                    or pair in community_pairs
+                    or community_edge.connectionId in community_edge_ids
+                    or len(community_edge.allowedContextFields)
+                    != len(set(community_edge.allowedContextFields))
+                ):
+                    raise ValueError("invalid_configuration_community_connection")
+                community_pairs.add(pair)
+                community_edge_ids.add(community_edge.connectionId)
             tools = {tool.toolId: tool for tool in model.tools}
             connections = {
                 connection.connectionId: connection for connection in model.mcpConnections
@@ -145,6 +214,11 @@ class RevisionSnapshot:
             for agent in model.agents:
                 if agent.role != "ordinary" and agent.capabilityAssignments:
                     raise ValueError("protected_capability_assignment")
+                if (
+                    sum(len(item.permittedActionNames) for item in agent.capabilityAssignments)
+                    > 128
+                ):
+                    raise ValueError("configuration_effective_tool_limit")
                 seen = set()
                 for assignment in agent.capabilityAssignments:
                     if (
@@ -161,7 +235,13 @@ class RevisionSnapshot:
                 if community.enabled:
                     visibility.view_for(community.entryAgentId)
             return cls(
-                model.id, model.revisionNumber, model.graphHash, model.schemaVersion, etag, content
+                revision_id=model.id,
+                revision_number=model.revisionNumber,
+                graph_hash=model.graphHash,
+                policy_hash=model.policyHash,
+                schema_version=model.schemaVersion,
+                etag=etag,
+                _content=content,
             )
         except (KeyError, TypeError, ValueError, PermissionError, RecursionError):
             raise ValueError("invalid_configuration_snapshot") from None
@@ -176,14 +256,31 @@ class RevisionSnapshot:
 
 
 class RevisionCache:
-    def __init__(self) -> None:
+    def __init__(self, *, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._current: RevisionSnapshot | None = None
+        self._monotonic = monotonic
+        self._validated_at: float | None = None
 
     @property
     def current(self) -> RevisionSnapshot | None:
         return self._current
 
-    def install(self, document: dict[str, Any], *, etag: str) -> RevisionSnapshot:
+    def _observation_time(self, validated_at: float | None) -> float:
+        now = self._monotonic()
+        observed = now if validated_at is None else validated_at
+        if (
+            not math.isfinite(now)
+            or not math.isfinite(observed)
+            or observed > now
+            or (self._validated_at is not None and observed < self._validated_at)
+        ):
+            raise ValueError("invalid_configuration_clock")
+        return observed
+
+    def install(
+        self, document: dict[str, Any], *, etag: str, validated_at: float | None = None
+    ) -> RevisionSnapshot:
+        observed = self._observation_time(validated_at)
         candidate = RevisionSnapshot.validate(document, etag=etag)
         previous = self._current
         if previous is not None:
@@ -203,9 +300,25 @@ class RevisionCache:
             ):
                 raise ValueError("configuration_revision_conflict")
         self._current = candidate
+        self._validated_at = observed
         return candidate
 
+    def revalidate(self, snapshot: RevisionSnapshot, *, validated_at: float | None = None) -> None:
+        if snapshot is not self._current:
+            raise ValueError("configuration_revision_conflict")
+        self._validated_at = self._observation_time(validated_at)
+
     def pin(self) -> RevisionSnapshot:
-        if self._current is None:
+        now = self._monotonic()
+        if (
+            self._current is None
+            or self._validated_at is None
+            or not math.isfinite(now)
+            or not 0 <= now - self._validated_at < 30
+        ):
+            raise PermissionError("configuration_unavailable")
+        if not any(
+            community["enabled"] is True for community in self._current.for_runtime()["communities"]
+        ):
             raise PermissionError("configuration_unavailable")
         return self._current

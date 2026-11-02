@@ -145,6 +145,41 @@ def test_publication_rejects_private_feed_without_echoing_url(publication, tmp_p
     assert "settings.txt" in output.err
 
 
+@pytest.mark.parametrize("indexed_private", [False, True])
+def test_publication_move_ignores_missing_worktree_paths_but_keeps_index_gate(
+    publication, monkeypatch, tmp_path, indexed_private
+):
+    from types import SimpleNamespace
+
+    document = tmp_path / "docs/setup.md"
+    document.parent.mkdir()
+    document.write_text("# Setup\n")
+    seen = []
+    monkeypatch.setattr(publication, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["check_publication.py", "check"])
+    monkeypatch.setattr(
+        publication.subprocess,
+        "run",
+        lambda *arguments, **keywords: SimpleNamespace(
+            stdout=b"code/docs/setup.md\0docs/setup.md\0"
+        ),
+    )
+    monkeypatch.setattr(
+        publication,
+        "check_git",
+        lambda root: seen.append("index-and-history") or int(indexed_private),
+    )
+    original = publication.check_paths
+
+    def paths(values, root):
+        assert values == [document]
+        return original(values, root)
+
+    monkeypatch.setattr(publication, "check_paths", paths)
+    assert publication.main() == int(indexed_private)
+    assert seen == ["index-and-history"]
+
+
 def test_publication_accepts_public_package_origins(publication, tmp_path):
     source = tmp_path / "settings.txt"
     source.write_text("https://pypi.org/simple https://registry.npmjs.org/")
@@ -649,6 +684,132 @@ def test_documentation_structure_and_links(tmp_path: Path, monkeypatch, text, va
 
 
 @pytest.mark.parametrize(
+    "broken", [None, "link", "image", "asset", "fragment", "local-fragment", "escape"]
+)
+def test_root_document_links_assets_and_fragments_are_verified(tmp_path, monkeypatch, broken):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import verify_docs
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    target = docs / "target file.md"
+    target.write_text("# Target\n\n## Exact Heading `Name`\n\n## Repeated\n\n## Repeated\n")
+    (docs / "asset.png").write_bytes(b"synthetic-image")
+    (docs / "data.json").write_text("{}")
+    reference = {
+        None: "[target](target%20file.md#exact-heading-name) ![image](asset.png) "
+        "[asset](data.json) [duplicate](target%20file.md#repeated-1) [self](#local-heading)",
+        "link": "[missing](missing.md)",
+        "image": "![missing](missing.png)",
+        "asset": "[missing](missing.json)",
+        "fragment": "[missing](target%20file.md#absent)",
+        "local-fragment": "[missing](#absent)",
+        "escape": "![escape](../../outside.png)",
+    }[broken]
+    document = docs / "index.md"
+    document.write_text(
+        "# Root Docs\n\n## Local Heading\n\n"
+        + reference
+        + "\nHistorical literal code/docs/acceptance/result.md is not a navigable link.\n"
+    )
+    if broken is None:
+        assert verify_docs.validate_documents([document], tmp_path) == []
+        assert "Historical literal code/docs" in document.read_text()
+    else:
+        with pytest.raises(ValueError):
+            verify_docs.validate_documents([document], tmp_path)
+
+
+def test_ci_file_scan_covers_root_docs_navigation_and_feature_artifacts(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
+
+    commands, scans = [], []
+    monkeypatch.setattr(ci, "ROOT", tmp_path)
+    for name in ("docs/setup.md", "README.md", "specs/002-feature/spec.md"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Synthetic\n")
+    monkeypatch.setattr(ci, "run", lambda *arguments: commands.append(arguments))
+    monkeypatch.setattr(ci, "environment", lambda: {})
+
+    def scan(command, **options):
+        scans.append(command)
+        return SimpleNamespace(stdout="docs/setup.md\nREADME.md\nspecs/002-feature/spec.md\n")
+
+    monkeypatch.setattr(ci.subprocess, "run", scan)
+    ci.check()
+    assert len(scans) == 1 and {"code", "docs", "README.md", "specs", ".github/workflows"} <= set(
+        scans[0]
+    )
+    checked = next(command for command in commands if "pre-commit" in command)
+    assert {"docs/setup.md", "README.md", "specs/002-feature/spec.md"} <= set(checked)
+
+
+def test_native_ci_collects_complete_apps_docs_and_no_live_endurance(monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
+
+    commands = []
+    monkeypatch.setattr(ci, "run", lambda *arguments: commands.append(arguments))
+    monkeypatch.setattr(sys, "argv", ["ci.py", "test"])
+    ci.main()
+    assert len(commands) == 2
+    assert {command[command.index("--directory") + 1] for command in commands} == {
+        "code/backend",
+        "code/management",
+    }
+    assert all("pytest" in command and "--locked" in command for command in commands)
+    assert all(
+        command[command.index("--locked") + 1 : command.index("--locked") + 4]
+        == ("python", "-m", "pytest")
+        for command in commands
+    )
+    assert all(
+        not {"-k", "--ignore", "--live-endurance", "--execute"} & set(command)
+        for command in commands
+    )
+    workflow = yaml.load(
+        (SCRIPTS.parents[2] / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    native = workflow["jobs"]["native"]
+    assert set(native["strategy"]["matrix"]["os"]) == {"windows-2022", "ubuntu-24.04"}
+    executed = [step["run"] for step in native["steps"] if "run" in step]
+    assert any("verify_docs.py" in command for command in executed)
+    assert any("audit_dependencies.py" in command for command in executed)
+    assert workflow["permissions"] == {"contents": "read"}
+    assert not any("paths" in value for value in workflow["on"].values() if isinstance(value, dict))
+
+
+def test_root_document_discovery_covers_contracts_specs_and_rejects_old_tree(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import verify_docs
+
+    expected = [
+        "docs/setup.md",
+        "docs/runbooks/check.md",
+        "code/contracts/README.md",
+        "specs/002-feature/spec.md",
+        "README.md",
+    ]
+    for name in expected:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Synthetic\n")
+    assert {
+        str(path.relative_to(tmp_path)).replace("\\", "/")
+        for path in verify_docs.discover_documents(tmp_path)
+    } == set(expected)
+    old = tmp_path / "code/docs/setup.md"
+    old.parent.mkdir(parents=True)
+    old.write_text("# Duplicate Maintained Docs\n")
+    with pytest.raises(ValueError, match="duplicate_maintained_documentation"):
+        verify_docs.discover_documents(tmp_path)
+
+
+@pytest.mark.parametrize(
     "diagnostic,category",
     [
         ("No usable sandbox!", "browser_sandbox_unavailable"),
@@ -876,6 +1037,7 @@ def test_diagram_rendering_prepares_once_then_forbids_package_network(
     specification.loader.exec_module(module)
     browser = tmp_path / "prepared-browser"
     browser.touch()
+    (tmp_path / "docs").mkdir()
     monkeypatch.setattr(module, "ROOT", tmp_path)
     monkeypatch.setattr(
         module, "environment", lambda: {"NPM_CONFIG_REGISTRY": "https://registry.example.invalid/"}

@@ -157,7 +157,7 @@ def test_editor_build_module_override_survives_frontend_reinitialization(monkeyp
         return child
 
     monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
-    monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345])
+    monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345, 12346])
     monkeypatch.setattr(SMOKE.psutil, "Popen", spawn)
     monkeypatch.setattr(SMOKE, "stop", lambda processes: None)
     monkeypatch.setattr(SMOKE, "restore_frontend_lock", lambda: restored.append(True))
@@ -191,7 +191,7 @@ def test_editor_build_failure_reports_only_safe_category(monkeypatch, tmp_path):
         return child
 
     monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
-    monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345])
+    monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345, 12346])
     monkeypatch.setattr(SMOKE.psutil, "Popen", spawn)
     monkeypatch.setattr(SMOKE, "stop", lambda processes: None)
     monkeypatch.setattr(SMOKE, "restore_frontend_lock", lambda: None)
@@ -228,7 +228,7 @@ def test_editor_uses_canonical_absolute_temporary_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
     monkeypatch.setattr(SMOKE.tempfile, "TemporaryDirectory", relative_directory)
     monkeypatch.setattr(SMOKE.psutil, "Popen", spawn)
-    monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345])
+    monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345, 12346])
     monkeypatch.setattr(SMOKE, "stop", lambda processes: None)
     monkeypatch.setattr(SMOKE, "restore_frontend_lock", lambda: None)
     with pytest.raises(RuntimeError, match="editor_frontend_build_failed"):

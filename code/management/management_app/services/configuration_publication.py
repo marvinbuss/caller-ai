@@ -10,6 +10,7 @@ from management_app.models.configuration import ConfigurationGraph, Configuratio
 from management_app.models.permissions import AUTHORITY_LIMIT, PermissionAuthority
 from management_app.services.configuration_validation import (
     BATCH_LIMIT,
+    GRAPH_FIELDS,
     SNAPSHOT_LIMIT,
     ConfigurationValidator,
     encoded,
@@ -23,6 +24,22 @@ class ConfigurationRejected(ValueError):
     def __init__(self, issues: list[Issue]) -> None:
         super().__init__("configuration_rejected")
         self.issues = copy.deepcopy(issues)
+
+
+def runtime_projection(snapshot: Document) -> Document:
+    """Project an integrity-verified revision without claiming to recompute its full hash."""
+    policy = {
+        key: copy.deepcopy(value)
+        for key, value in snapshot.items()
+        if key in GRAPH_FIELDS and key != "layout"
+    }
+    for connection in policy["mcpConnections"]:
+        connection.pop("credentialRef")
+    provenance = {
+        key: snapshot[key]
+        for key in ("id", "organizationId", "revisionNumber", "createdAt", "createdBy", "graphHash")
+    }
+    return provenance | policy | {"policyHash": hashlib.sha256(encoded(policy)).hexdigest()}
 
 
 def publication(

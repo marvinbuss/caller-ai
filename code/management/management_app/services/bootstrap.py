@@ -30,9 +30,8 @@ def protected_graph() -> Document:
         "routing": "Select an enabled business community entry from approved routing metadata.",
         "goodbye": "Give a concise farewell and end the call.",
     }
-    pairs = (("welcome", "routing"), ("welcome", "goodbye"), ("routing", "goodbye"))
     return {
-        "schemaVersion": "1.0.0",
+        "schemaVersion": "2.0.0",
         "agents": [
             {
                 "agentId": identifiers[role],
@@ -48,15 +47,9 @@ def protected_graph() -> Document:
         "communities": [],
         "tools": [],
         "mcpConnections": [],
-        "relationships": [
-            {
-                "relationshipId": "path-" + source + "-" + target,
-                "sourceAgentId": identifiers[source],
-                "targetAgentId": identifiers[target],
-                "allowedContextFields": ["request_summary", "transfer_reason"],
-            }
-            for source, target in pairs
-        ],
+        "relationships": [],
+        "communityConnections": [],
+        "layout": {"communities": [], "agentsByCommunity": {}},
     }
 
 

@@ -14,6 +14,109 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from management_app.health import lifecycle
+
+
+def test_owned_editor_fixture_requires_normal_manager_cookie(editor_test_app):
+    async def scenario():
+        async with (
+            lifecycle(editor_test_app.api, editor_test_app.settings),
+            editor_test_app.seed_editor(),
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=editor_test_app.api),
+                base_url=editor_test_app.origin,
+            ) as client:
+                assert (await client.get("/v2/configuration")).status_code == 401
+                response = await client.get("/_test/login/manager-one")
+                assert response.status_code == 303
+                cookie = response.headers["set-cookie"].lower()
+                assert "secure" in cookie and "httponly" in cookie and "samesite=strict" in cookie
+                assert (await client.get("/v2/configuration")).status_code == 200
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "target,path", [("editor", "/configuration"), ("test", "/configuration/test")]
+)
+def test_owned_editor_fixture_login_has_only_fixed_destinations(editor_test_app, target, path):
+    async def scenario():
+        async with (
+            lifecycle(editor_test_app.api, editor_test_app.settings),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=editor_test_app.api),
+                base_url=editor_test_app.origin,
+            ) as client,
+        ):
+            response = await client.get("/_test/login/manager-one", params={"target": target})
+            assert response.status_code == 303 and response.headers["location"] == path
+            assert (await client.get("/_test/login/unknown-manager")).status_code == 404
+            assert (
+                await client.get(
+                    "/_test/login/manager-one", params={"target": "https://bad.invalid"}
+                )
+            ).status_code == 422
+
+    asyncio.run(scenario())
+
+
+def test_owned_console_fixture_has_explicit_test_role_and_no_allocation_on_ticket(editor_test_app):
+    async def scenario():
+        async with (
+            lifecycle(editor_test_app.api, editor_test_app.settings),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=editor_test_app.api),
+                base_url=editor_test_app.origin,
+            ) as client,
+        ):
+            await client.get("/_test/login/manager-one", params={"target": "test"})
+            csrf = (await client.get("/auth/session")).json()["csrf"]
+            response = await client.post(
+                "/v1/test-tickets",
+                json={"mode": "text", "requestId": "fixture-ticket"},
+                headers={"Origin": editor_test_app.origin, "X-CSRF-Token": csrf},
+            )
+            assert (
+                response.status_code == 200 and response.json()["socketPath"] == "/v1/test-sessions"
+            )
+            assert (
+                editor_test_app.api.state.test_console_services.test_role == "Conversation.Tester"
+            )
+            assert response.headers["cache-control"] == "no-store"
+
+    asyncio.run(scenario())
+
+
+def test_owned_editor_fixture_keeps_origin_and_csrf_checks(editor_test_app):
+    async def scenario():
+        async with (
+            lifecycle(editor_test_app.api, editor_test_app.settings),
+            editor_test_app.seed_editor(),
+        ):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=editor_test_app.api),
+                base_url=editor_test_app.origin,
+            ) as client:
+                await client.get("/_test/login/manager-one")
+                current = await client.get("/v2/configuration")
+                csrf = (await client.get("/auth/session")).json()["csrf"]
+                headers = {"If-Match": current.headers["etag"], "Origin": editor_test_app.origin}
+                response = await client.put(
+                    "/v2/configuration", json=editor_test_app.fixture["graph"], headers=headers
+                )
+                assert response.status_code == 403
+                headers.update({"X-CSRF-Token": csrf, "Origin": "https://foreign.invalid"})
+                response = await client.put(
+                    "/v2/configuration", json=editor_test_app.fixture["graph"], headers=headers
+                )
+                assert response.status_code == 403
+                assert (await client.get("/v2/configuration")).headers["etag"] == current.headers[
+                    "etag"
+                ]
+
+    asyncio.run(scenario())
+
 
 def test_management_composition_requires_explicit_authority_before_resource_creation():
     from management_app.management_app import create_managed_app
@@ -236,6 +339,75 @@ def composition_case(composition_key, capability_graph, monkeypatch, tmp_path):
     return settings, request, authority, resources, resolved, container, effects, audit_records
 
 
+def test_management_lifecycle_binds_explicit_bounded_nonblocking_alert_sink(composition_case):
+    from queue import Queue
+
+    from management_app.management_app import create_managed_app
+
+    settings, request, authority, resources, _resolved, _container, effects, _audit = (
+        composition_case
+    )
+    pending = Queue(maxsize=1)
+    attempted = []
+
+    def enqueue(event):
+        attempted.append(event)
+        pending.put_nowait(event)
+
+    async def approved(value, *, fingerprint, deadline):
+        resolved = await resources(value, fingerprint=fingerprint, deadline=deadline)
+        return replace(resolved, test_alert_sink=enqueue)
+
+    async def scenario():
+        managed = await create_managed_app(
+            settings, request=request, authority=authority, resources=approved
+        )
+        async with lifecycle(managed.api, settings):
+            telemetry = managed.api.state.telemetry
+            with telemetry.span(
+                "test.relay", headers={"traceparent": "00-" + "1" * 32 + "-" + "2" * 16 + "-01"}
+            ):
+                for _ in range(3):
+                    telemetry.event(
+                        "test.relay",
+                        "failure",
+                        mode="text",
+                        reason="unavailable",
+                        correlation_id="cross-service-fixture",
+                    )
+            telemetry.event(
+                "test.alert",
+                "failure",
+                mode="speech",
+                reason="cleanup_uncertain",
+                correlation_id="cross-service-fixture",
+            )
+            assert pending.qsize() == 1 and len(attempted) == 2
+            event = pending.get_nowait()
+            assert event["service"] == "management" and event["event"] == "test.alert"
+            assert event["correlation_id"] == "cross-service-fixture"
+            assert event["trace_id"] == "1" * 32
+            assert set(event) <= {
+                "timestamp",
+                "severity",
+                "service",
+                "environment",
+                "event",
+                "outcome",
+                "correlation_id",
+                "trace_id",
+                "span_id",
+                "mode",
+                "reason_code",
+            }
+            event["reason_code"] = "detached-fixture"
+            assert all(item.get("reason_code") != "detached-fixture" for item in telemetry.events)
+        telemetry.event("test.alert", "failure", mode="text", reason="dependency_failures")
+        assert len(attempted) == 2 and not telemetry.events and effects.count("closed") == 1
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("mode", ["denied", "expired", "foreign"])
 def test_composition_denial_prevents_resource_creation_and_writes(composition_case, mode):
     from management_app.management_app import create_managed_app
@@ -312,8 +484,8 @@ def test_composed_cosmos_app_authenticates_publishes_preserves_conflicts_and_run
         assert effects.index("authorize") < effects.index("resources")
         paths = set(api.openapi()["paths"])
         assert {
-            "/v1/configuration",
-            "/v1/runtime/configuration",
+            "/v2/configuration",
+            "/v2/runtime/configuration",
             "/v1/runtime/capabilities/execute",
             "/auth/login",
         } <= paths
@@ -323,29 +495,29 @@ def test_composed_cosmos_app_authenticates_publishes_preserves_conflicts_and_run
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=application), base_url=request.policy.origin
             ) as client:
-                assert (await client.get("/v1/configuration")).status_code == 401
+                assert (await client.get("/v2/configuration")).status_code == 401
                 manager = {"Authorization": "Bearer " + signed(composition_key)}
-                current = await client.get("/v1/configuration", headers=manager)
+                current = await client.get("/v2/configuration", headers=manager)
                 assert current.status_code == 200
                 graph = business_graph(current.json(), capability_graph)
                 saved = await client.put(
-                    "/v1/configuration",
+                    "/v2/configuration",
                     headers={**manager, "If-Match": current.headers["etag"]},
                     json=graph,
                 )
                 assert saved.status_code == 200 and saved.headers["etag"] != current.headers["etag"]
                 assert (
                     await client.put(
-                        "/v1/configuration",
+                        "/v2/configuration",
                         headers={**manager, "If-Match": current.headers["etag"]},
                         json=graph,
                     )
-                ).status_code == 412
+                ).status_code == 409
                 assert (
-                    await client.get("/v1/configuration", headers=manager)
+                    await client.get("/v2/configuration", headers=manager)
                 ).json() == saved.json()
                 assert (
-                    await client.get("/v1/runtime/configuration", headers=manager)
+                    await client.get("/v2/runtime/configuration", headers=manager)
                 ).status_code == 401
                 runtime = {
                     "Authorization": "Bearer "
@@ -358,9 +530,9 @@ def test_composed_cosmos_app_authenticates_publishes_preserves_conflicts_and_run
                         azp=RUNTIME_CLIENT,
                     )
                 }
-                selected = await client.get("/v1/runtime/configuration", headers=runtime)
+                selected = await client.get("/v2/runtime/configuration", headers=runtime)
                 assert selected.status_code == 200 and selected.json()["id"] == saved.json()["id"]
-                assert (await client.get("/v1/configuration", headers=runtime)).status_code == 401
+                assert (await client.get("/v2/configuration", headers=runtime)).status_code == 401
                 ready = await client.get("/readyz")
                 assert ready.status_code == 200
                 assert ready.json()["capabilities"] == {
@@ -481,7 +653,7 @@ def test_composed_oidc_session_drives_reflex_drafts_conflicts_and_revocation(
                 conflict = await editor.request(
                     sid, token, "PUT", graph=second.graph, etag=second.etag
                 )
-                assert conflict.status_code == 412
+                assert conflict.status_code == 409
                 second.rejected(conflict.status_code, conflict.json())
                 assert (
                     second.conflict
@@ -675,6 +847,159 @@ def test_composition_hides_authority_and_factory_diagnostics(composition_case, b
             )
         )
     assert "sensitive-composition-provider-details" not in str(failure.value)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("capacity", 6),
+        ("capacity", 4),
+        ("retention_seconds", 301),
+        ("runtime_endpoint", "http://runtime.invalid"),
+        ("max_clock_skew_seconds", 2),
+    ],
+)
+def test_browser_test_composition_rejects_unreviewable_bounds(field, value):
+    from management_app.composition import ManagementTestRequest
+
+    document = dict(
+        runtime_endpoint="https://runtime.fixture.example",
+        runtime_audience=str(uuid4()),
+        issuer="https://management.fixture.example",
+        permit_audience="browser-tests",
+        test_role="Conversation.Tester",
+        permission_review_ref="permission-reviewed",
+        signing_review_ref="signing-reviewed",
+        runtime_review_ref="runtime-reviewed",
+        capacity=5,
+        retention_seconds=300,
+        max_clock_skew_seconds=0,
+    )
+    with pytest.raises(ValueError):
+        ManagementTestRequest(**(document | {field: value}))
+
+
+def test_browser_test_composition_requires_explicit_resources_before_bootstrap(composition_case):
+    from management_app.composition import ManagementTestRequest
+    from management_app.management_app import create_managed_app
+
+    settings, request, authority, _factory, resolved, container, effects, _audit = composition_case
+    reviewed = ManagementTestRequest(
+        runtime_endpoint="https://runtime.fixture.example",
+        runtime_audience=str(uuid4()),
+        issuer="https://management.fixture.example",
+        permit_audience="browser-tests",
+        test_role="Conversation.Tester",
+        permission_review_ref="permission-reviewed",
+        signing_review_ref="signing-reviewed",
+        runtime_review_ref="runtime-reviewed",
+        capacity=5,
+        retention_seconds=300,
+        max_clock_skew_seconds=0,
+    )
+    bound = request.model_copy(update={"tests": reviewed})
+
+    async def resources(value, *, fingerprint, deadline):
+        assert value == bound
+        effects.append("resource_creation")
+        return replace(resolved, fingerprint=fingerprint)
+
+    with pytest.raises(PermissionError):
+        asyncio.run(
+            create_managed_app(settings, request=bound, resources=resources, authority=authority)
+        )
+    assert not container.items and "closed" in effects and "credential_resolved" not in effects
+
+
+def test_explicit_test_composition_exposes_guarded_ticket_without_model_or_workload_io(
+    composition_case, composition_key
+):
+    from management_app.composition import ManagementTestRequest, ManagementTestResources
+    from management_app.management_app import create_managed_app
+    from management_app.security import Principal
+
+    settings, request, authority, _factory, resolved, _container, effects, _audit = composition_case
+    reviewed = ManagementTestRequest(
+        runtime_endpoint="https://runtime.fixture.example",
+        runtime_audience=str(uuid4()),
+        issuer="https://management.fixture.example",
+        permit_audience="browser-tests",
+        test_role="Conversation.Tester",
+        permission_review_ref="permission-reviewed",
+        signing_review_ref="signing-reviewed",
+        runtime_review_ref="runtime-reviewed",
+        capacity=5,
+        retention_seconds=300,
+        max_clock_skew_seconds=0.1,
+    )
+    bound = request.model_copy(update={"tests": reviewed})
+
+    class Credential:
+        async def get_token(self, *scopes):
+            pytest.fail("visiting_console_or_issuing_ticket_must_not_get_workload_token")
+
+    async def resources(value, *, fingerprint, deadline):
+        assert value == bound
+        return replace(
+            resolved,
+            fingerprint=fingerprint,
+            tests=ManagementTestResources(
+                key_id="fixture-key",
+                signing_key=composition_key,
+                verification_keys={"fixture-key": composition_key.public_key()},
+                credential=Credential(),
+            ),
+        )
+
+    async def scenario():
+        managed = await create_managed_app(
+            settings, request=bound, resources=resources, authority=authority
+        )
+        try:
+            identity = managed.api.state.management_identity
+            ticket = identity.sessions.issue(
+                Principal(
+                    "manager-fixture",
+                    request.policy.tenant_id,
+                    int(datetime.now(UTC).timestamp()) + 600,
+                    (request.policy.manager_role, reviewed.test_role),
+                )
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=managed.asgi), base_url=request.policy.origin
+            ) as client:
+                denied = await client.post(
+                    "/v1/test-tickets",
+                    json={"mode": "text", "requestId": "denied"},
+                    headers={
+                        "Origin": request.policy.origin,
+                        "Cookie": "unrelated=fixture",
+                        "X-CSRF-Token": "a" * 64,
+                    },
+                )
+                assert denied.status_code == 401
+                response = await client.post(
+                    "/v1/test-tickets",
+                    json={"mode": "text", "requestId": "fixture-request"},
+                    headers={
+                        "Cookie": identity.cookie_name + "=" + ticket.cookie,
+                        "Origin": request.policy.origin,
+                        "X-CSRF-Token": ticket.csrf,
+                    },
+                )
+                assert (
+                    response.status_code == 200
+                    and response.json()["socketPath"] == "/v1/test-sessions"
+                )
+                assert response.headers["cache-control"] == "no-store"
+                assert managed.api.state.management_startup.test_relay._active == 0
+        finally:
+            await managed.api.state.management_startup.shutdown()
+            managed.api.state.telemetry.close()
+            managed.api.state.metrics.close()
+        assert "credential_resolved" not in effects and effects.count("closed") == 1
+
+    asyncio.run(scenario())
 
 
 def test_managed_factory_returns_initialized_protected_reflex_boundary(composition_case):

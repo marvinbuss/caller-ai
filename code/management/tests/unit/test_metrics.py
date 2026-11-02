@@ -235,7 +235,10 @@ def test_saturation_is_a_finite_bounded_ratio(measured, value):
 
 def test_unknown_http_paths_collapse_to_one_bounded_label(measured):
     metrics, reader = measured
-    assert metrics.route_for("/v1/configuration") == "configuration"
+    assert metrics.route_for("/v2/configuration") == "configuration"
+    assert metrics.route_for("/v2/runtime/configuration") == "runtime_configuration"
+    assert metrics.route_for("/v1/configuration") == "unmatched"
+    assert metrics.route_for("/v1/runtime/configuration") == "unmatched"
     assert metrics.route_for("/v1/runtime/capabilities/execute") == "capability_execute"
     assert metrics.route_for("/synthetic-private-path/session-one") == "unmatched"
 
