@@ -25,6 +25,34 @@ inputs and no automatic application loading; it must never be published or logge
 it supplies review inputs, not authority to execute tests. Exact existing resources, identity,
 privacy/retention, time/cost and applicable device/sink reviews still require confirmation.
 
+Source commit `49175e111da62d0834e483b0f7f2072cc372bf14` is published in
+[draft PR #3](https://github.com/marvinbuss/caller-ai/pull/3). Exact-source
+[CI run 41462727627](https://github.com/marvinbuss/caller-ai/actions/runs/41462727627)
+completed **failed**. The staged/publication guards verified the exact reviewed feature set
+and excluded all local inputs; no merge or deployment was performed.
+
+## Native CI Source Checkpoint
+
+Observed results apply to source commit `49175e111da62d0834e483b0f7f2072cc372bf14`:
+
+- Windows job 125335617006 passed 852 runtime, 719 management and 284 tools tests, the
+  assertion-failure gate and actual documentation rendering (53 documents, Chrome
+  156.0.8078.48). Its dependency audit failed on minimatch 10.2.6 / GHSA-g3hv-75wg-m249.
+- Ubuntu job 125335616653 passed 284 tools and 852 runtime tests, then management reported
+  718 passed and one failure: `test_us1_community_graph_publication_navigation_and_presentation`
+  at 768 pixels, line 651, expecting Unsaved after dragging but observing Saved. Later
+  assertion/documentation/advisory steps did not run; they are not counted as passed.
+- Linux image job 125335616483 passed the actual non-root/offline image smoke, including
+  three browser widths. Its dependency audit failed on the same minimatch advisory; no
+  passing image vulnerability-audit result is inferred from successful image smoke.
+
+The exact 768-pixel journey passed once locally with an additional read-only drag-origin
+viewport/hit-test probe (205.69 seconds). The cause remains unconfirmed. That temporary
+probe was removed and the test file was verified identical to the published source; no
+application change, assertion weakening, timeout increase or selective CI rerun was applied.
+Keep T101/T114 and merge/release blocked. A later evidence-only commit does not imply a
+new native-CI pass; this is a source-specific failed checkpoint, not acceptance.
+
 The current frontend dependency advisory gate is **failed/blocked** by Moderate
 `minimatch` 10.2.6 / GHSA-g3hv-75wg-m249. Its reported fixed release 11.0.1 is absent from
 the approved mirror; the canonical registry was unreachable under normal TLS. No pin,
@@ -237,7 +265,7 @@ destinations. Existing Terraform validation used its pinned credential-free prep
 | VI Bounded realtime | Declared queues/clocks/capacity, CAS/closure proof and local pressure tests; real five-manager endurance pending. |
 | VII Observability | Bounded correlated test metadata and alert thresholds; approved-sink delivery remains unverified. |
 | VIII Terraform | No infrastructure behavior changed; only existing documentation/evidence path consumers moved. |
-| IX Automated tests | All 851/704/284 local tests pass with zero failures/errors/skips; current native Windows/Linux workflow execution remains unobserved. |
+| IX Automated tests | Current local 852/719/284 suites pass; observed source CI fails Ubuntu's graph drag journey and Windows/image dependency auditing. Required native gates remain blocked. |
 
 ## Final Gates
 
@@ -266,8 +294,9 @@ not silently overridden. No source was staged or committed by this implementatio
   Current Python advisory lookups passed; the frontend advisory gate remains blocked above.
 - T101: An executed wiring regression confirms complete app suite commands, native Windows/
   Linux matrix, docs/advisory gates, read-only permissions and no test exclusions/live-endurance
-  flags. A current native Linux/remote workflow run is unobserved; the owner has now authorized
-  feature-only commit/push/PR publication to obtain it. No workflow result is inferred.
+  flags. The owner-authorized published source now has observed failed native CI: Windows
+  application/docs steps passed but auditing failed; Ubuntu failed its graph drag journey.
+  The source-specific checkpoint above preserves actual counts and unexecuted later gates.
 - T102: Unsupported-deployment cases pass in both modes; [unavailable recovery](../runbooks/configuration.md#feature-002-unavailable-and-recovery-rules) documents schema/authority/older-artifact refusal without reset or fallback.
 - T103: Read-only excluded-scope/constitution/deferred-task preservation checks passed above.
 - T104/T105: Contracts/quickstart are reconciled and the completed nine-principle assessment

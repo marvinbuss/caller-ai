@@ -1795,3 +1795,43 @@ Feature-001 task changes are exactly three navigation repairs; the constitution,
 and existing workflows remain unchanged. Current source still has 103/114 tasks checked;
 actual provider/device/endurance/sink and current native-CI evidence remain pending.
 
+Authorized feature commit `49175e111da62d0834e483b0f7f2072cc372bf14` is now pushed to
+`feat/spec-002`, with [draft PR #3](https://github.com/marvinbuss/caller-ai/pull/3).
+Exact-source [CI run 41462727627](https://github.com/marvinbuss/caller-ai/actions/runs/41462727627)
+is being observed; no outcome is inferred. The source/tooling gate passed all locks,
+lint/format, both application type checks, credential-free Terraform tests, offline secrets,
+public-origin checks and 284 tools tests (85.22 seconds) before staging. The 165 reviewed
+paths became 134 changed Git files after rename detection. Exact index/worktree binding and
+the staged/new-history private-origin guard passed; the local input file is excluded.
+No merge, release, image publication, deployment or actual qualification was authorized.
+
+### 2026-11-02: Actual Hosted CI Failure and Unreproduced Drag Checkpoint
+
+[Run 41462727627](https://github.com/marvinbuss/caller-ai/actions/runs/41462727627)
+completed failed on exact source `49175e111da62d0834e483b0f7f2072cc372bf14`:
+
+- Windows job 125335617006: 852 runtime, 719 management and 284 tools tests passed; the
+   assertion-failure gate and actual 53-document rendering passed (Chrome 156.0.8078.48).
+   Dependency auditing failed on minimatch 10.2.6 / GHSA-g3hv-75wg-m249.
+- Ubuntu job 125335616653: tools 284 and runtime 852 passed; management 718 passed and one
+   failed. The 768-pixel US1 community-graph publication/navigation/presentation journey
+   reached line 651 expecting Unsaved after a drag but observed Saved. Later assertion,
+   documentation/rendering and advisory steps were unexecuted, not passes.
+- Linux image job 125335616483: actual offline/non-root image smoke and three browser
+   widths passed; its audit failed on the same frontend advisory. Image smoke does not
+   certify that the subsequent image vulnerability scans passed or even ran.
+
+The native CLI log reader supplied bounded sanitized counts/test names/advisory identifiers;
+no raw logs or private qualification inputs were emitted. Direct log-download API access
+was unavailable, but API quota was not exhausted; no auth/TLS/account bypass was attempted.
+
+A single local run of the exact 768-pixel journey with a read-only viewport/hit-test probe
+passed in 205.69 seconds. The failure did not reproduce, and no root cause is asserted.
+The temporary probe was removed; Git comparison proved the test file identical to the
+published source, and its lint passed. No application fix, changed timeout, weakened
+assertion or selective CI retry was made. Stop at this failed native verification checkpoint.
+
+T101/T114 remain unchecked, as do the dependency and actual qualification gates. Status
+is still 103/114. The draft PR stays unmerged; the operator's ignored local input file
+remains excluded. This evidence-only update does not claim a new revision's CI passed.
+
