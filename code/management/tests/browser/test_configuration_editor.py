@@ -640,6 +640,7 @@ def test_us1_community_graph_publication_navigation_and_presentation(
         graph.locator(".react-flow__controls-fitview").click()
         native_node = graph.locator('.react-flow__node[data-id="community-alpha"]')
         expect(native_node).to_be_visible()
+        native_node.hover(timeout=5000)
         node_box = native_node.bounding_box()
         assert node_box is not None
         start_x = node_box["x"] + node_box["width"] / 2

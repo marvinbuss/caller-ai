@@ -53,6 +53,20 @@ application change, assertion weakening, timeout increase or selective CI rerun 
 Keep T101/T114 and merge/release blocked. A later evidence-only commit does not imply a
 new native-CI pass; this is a source-specific failed checkpoint, not acceptance.
 
+### Graph Drag Actionability Follow-Up
+
+The installed xyflow implementation supplies a final position from its drag-end path;
+inspection did not support adding a second application drag-stop callback. The browser
+journey now uses `native_node.hover(timeout=5000)` before reading its bounding box, requiring
+the node to be stable, in view and receiving pointer events before the raw mouse gesture.
+All original drag, Unsaved/Saved, persisted-layout and semantic-isolation assertions remain.
+No application component, dependency, timeout or test-selection rule changed.
+
+The exact journey passes at 360/768/1440 locally: three tests, 215.17 seconds. This is a
+bounded test-actionability improvement, not proof of the earlier Ubuntu failure's cause.
+The complete 852/719/284 local profile below predates this test-only follow-up; fresh native
+results remain required and no failed gate is waived. T101/T114 remain unchecked.
+
 The current frontend dependency advisory gate is **failed/blocked** by Moderate
 `minimatch` 10.2.6 / GHSA-g3hv-75wg-m249. Its reported fixed release 11.0.1 is absent from
 the approved mirror; the canonical registry was unreachable under normal TLS. No pin,

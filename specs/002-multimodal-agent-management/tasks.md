@@ -1835,3 +1835,20 @@ T101/T114 remain unchecked, as do the dependency and actual qualification gates.
 is still 103/114. The draft PR stays unmerged; the operator's ignored local input file
 remains excluded. This evidence-only update does not claim a new revision's CI passed.
 
+### 2026-11-02: Bounded Graph Drag Actionability Follow-Up
+
+The resumed implementation checked the installed xyflow drag-end path: final position
+updates are supplied, so no duplicate application callback was added. The existing browser
+journey instead now calls `native_node.hover(timeout=5000)` before taking raw drag coordinates.
+This explicitly waits for a stable, in-view pointer target without enlarging the original
+five-second assertion bound. All actual mouse drag, Unsaved/Saved, persisted-layout and
+semantic-isolation assertions remain unchanged; no application component or dependency changed.
+
+The exact compiled community-graph journey passes all three required widths (360/768/1440):
+three tests, 215.17 seconds. The earlier Ubuntu failure's cause is still unconfirmed; this
+test-actionability improvement is not certified as its application root-cause repair.
+Fresh native CI remains required, and all 11 blocked markers remain unchanged (103/114).
+The approved mirror again returns 404 for fixed minimatch 11.0.1 and root package metadata
+omits it; the mirror-only policy and advisory gate remain unchanged. No private inputs were
+read, and no live qualification, merge or deployment occurred.
+
