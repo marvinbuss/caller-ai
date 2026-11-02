@@ -332,6 +332,23 @@ def case(monkeypatch):
     return module, manifest, request, now
 
 
+@pytest.mark.parametrize(
+    "region", ["eastus2", "centralus", "canadacentral", "swedencentral", "unreviewed-region"]
+)
+def test_provider_region_allowlist_preserves_qualification_gate(case, region):
+    module, manifest, _request, now = case
+    manifest["live_region"] = region
+    if region == "unreviewed-region":
+        with pytest.raises(ValueError):
+            module.parse_request(json.dumps(manifest).encode())
+        return
+    request = module.parse_request(json.dumps(manifest).encode())
+    assert request.live_region == region
+    report = asyncio.run(module.qualify(request, now=lambda: now)).to_dict()
+    assert report["status"] == report["live_qualification"] == "pending"
+    assert all(value["outcome"] == "unavailable" for value in report["checks"].values())
+
+
 def test_default_and_unapproved_runner_never_allocate_or_discover_credentials(case):
     module, manifest, request, now = case
 

@@ -88,7 +88,7 @@ class MultimodalRequest:
             or self.text_deployment == "gpt-live-1"
             or self.live_model != "gpt-live-1"
             or self.live_model_version != "2026-09-10"
-            or self.live_region not in {"eastus2", "centralus", "canadacentral"}
+            or self.live_region not in {"eastus2", "centralus", "canadacentral", "swedencentral"}
             or not isinstance(self.text_features, tuple)
             or len(self.text_features) != len(FEATURES)
             or frozenset(self.text_features) != FEATURES

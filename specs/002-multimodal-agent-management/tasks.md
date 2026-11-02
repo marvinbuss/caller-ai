@@ -1869,3 +1869,40 @@ All three compiled widths pass locally (226.49 seconds), and 360/1440 screenshot
 inspected with both nodes contained. Fresh native validation remains pending; historical
 failures, advisory blocking, private-input exclusion and all 11 unchecked states remain.
 
+### 2026-11-02: Redacted Input Review and Sweden Central Correction
+
+The operator's changed local qualification input was parsed only in-process. Output contained
+known missing/invalid field names and presence flags, never secret values, private endpoints
+or raw parser errors. It remains ignored; a client secret is present and all execution flags
+are disabled. Missing review records and reviewer/approval-window fields still block actual use.
+
+The operator confirmed the actual region as `swedencentral`, requested its acceptance and
+proposed a 10 USD ceiling for review, not execution. A fresh official Foundry Global Standard
+Europe table confirms `gpt-live-1` version `2026-09-10` availability in that region. Runtime
+`TestRuntimeOptions` and the qualification `MultimodalRequest` now accept it alongside the
+existing three regions. Each owning test suite first failed only its Sweden Central case;
+all ten focused cases pass after the change, preserving unsupported-region rejection and
+independent approval gates. No credential was used or live provider action performed.
+
+The setup guide now walks through identity, provider, quota, residency, lifecycle, retention
+and cost reviews. None is automatically marked complete. Global Standard in Sweden Central
+is not a Sweden-only or EU-only inference guarantee. Actual qualification remains blocked,
+and the 10 USD amount is not a blanket grant, price estimate or authority to provision.
+
+During the subsequent guided review, the operator explicitly accepted global processing of
+public/synthetic-only test content and confirmed the app identity's resource-scoped access,
+both deployment bindings/text features, available quota, lifecycle terms and provider privacy/
+retention acceptability. The limited cost/scenario review was confirmed, with execution
+approval validity to be defined only at final execution confirmation. References and the
+chosen reviewer alias were stored only in the ignored local input, without publishing private
+values or claiming live technical proof. Its missing disabled-storage declaration was added
+based on the operator's confirmed feature support; no provider setting was changed.
+
+The final redacted offline schema check passes for Sweden Central, a 120-second initial
+provider-check duration and intended total 10 USD ceiling. All five execution flags remain
+false and execution approval timestamps blank; no credential was used or live call made.
+The complete owning modules pass 62 runtime-conversation and 54 qualification tests, and
+the ten new region cases preserve existing-region compatibility, unknown-region rejection
+and independent approval gates. Actual provider/device/endurance/sink acceptance remains
+unqualified; task status stays 103/114.
+

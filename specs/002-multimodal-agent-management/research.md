@@ -106,6 +106,13 @@ no alternate provider, live call, resource creation or new approval is implied h
 
 Additional first-party references:
 
+**2026-11-02 region correction**: The original design excerpt above covered Americas, not
+an exhaustive global region list. A fresh read of the official Global Standard Europe table
+also lists `gpt-live-1` version `2026-09-10` in `swedencentral`. At the operator's request,
+runtime and qualification validation now accept that region without bypassing actual
+deployment/identity/quota/lifecycle/retention/residency review. Global Standard remains
+potentially global processing, not a Sweden-only or EU-only inference guarantee.
+
 - [Foundry event reference](https://learn.microsoft.com/en-us/azure/foundry/openai/gpt-live-reference).
 - [Foundry regional model catalog](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability).
 - [Confirmed Americas Global Standard table](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability?tabs=az-americas&pivots=standard).

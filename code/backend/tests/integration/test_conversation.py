@@ -400,6 +400,22 @@ def reviewed_runtime_options():
 
 
 @pytest.mark.parametrize(
+    "region", ["eastus2", "centralus", "canadacentral", "swedencentral", "unreviewed-region"]
+)
+def test_runtime_region_allowlist_requires_independent_review(reviewed_runtime_options, region):
+    from caller_runtime.composition import TestRuntimeOptions
+
+    document = reviewed_runtime_options | {"live_region": region}
+    if region == "unreviewed-region":
+        with pytest.raises(ValueError):
+            TestRuntimeOptions(**document)
+        return
+    assert TestRuntimeOptions(**document).live_region == region
+    with pytest.raises(ValueError):
+        TestRuntimeOptions(**(document | {"region_reviewed": False}))
+
+
+@pytest.mark.parametrize(
     "changes",
     [
         None,

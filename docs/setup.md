@@ -75,6 +75,34 @@ within sixty seconds, next-action revocation denial and confirmed closure. Short
 silence and heartbeat-only activity are not live evidence. Default tests use controlled ports
 to test these rules and always leave live qualification pending. T062/T086/T087 have not run.
 
+## Initial Qualification Reviews
+
+Keep the ignored local qualification input's execution flags disabled while completing these
+reviews. A populated field or review-reference label is not an independent authorization.
+Store actual private decisions locally or in the approved review system, not in this guide.
+
+| Review | Decision and Evidence Needed |
+|--------|------------------------------|
+| Identity | Confirm the tenant/application identity, approved authentication method, secret expiry where applicable and least-privilege access to both existing Foundry deployments. Do not grant roles or discover credentials as part of this review. |
+| Provider | Confirm actual GPT-Live deployment mapping to `gpt-live-1` version `2026-09-10`, the separate reasoning deployment and its required streaming/function-tool/storage/structured-output features. |
+| Quota | Record at least five available Live session slots plus reviewed text RPM/TPM, accounting for other usage and unconfirmed closures. Published defaults are not free subscription capacity. |
+| Residency | Check actual deployment type and permitted processing locations. A Sweden Central resource using Global Standard does not establish Sweden-only or EU-only inference. |
+| Lifecycle | Verify the deployed version's current availability, preview/lifecycle terms and any applicable retirement dates before approving the binding. |
+| Retention | Review actual provider storage, abuse-monitoring, processing and deletion terms for the proposed public/synthetic content. Application memory-only handling is not a provider zero-retention guarantee. |
+| Cost | Confirm the exact scenarios, maximum duration, expiry and total ceiling across billed Live time (including silence), reasoning and tool use. The operator's proposed 10 USD ceiling is review intent, not execution permission or a price estimate. |
+
+The current Foundry [Global Standard regional table](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability?tabs=az-europe&pivots=standard)
+lists `gpt-live-1` version `2026-09-10` in `swedencentral`. The runtime and qualification
+validators accept it alongside `eastus2`, `centralus` and `canadacentral`; actual deployment,
+access, quota and residency still require the reviews above. No other region is implicitly
+approved, and no existing resource is moved or provisioned.
+
+Give each completed decision a genuine record reference and name its accountable reviewer.
+Before execution, confirm a UTC approval validity window, permitted content/scenarios and the
+time/cost bounds together. Keep incomplete review references blank rather than inventing
+approved labels. Initial review is offline; using credentials or making provider calls needs
+separate explicit authorization after scope confirmation.
+
 ## Current Verification Profiles
 
 ```powershell

@@ -51,7 +51,7 @@ class TestRuntimeOptions(Metadata):
     approved_hosts: frozenset[str]
     manager_issuer: str
     manager_audience: str
-    live_region: Literal["canadacentral", "centralus", "eastus2"]
+    live_region: Literal["canadacentral", "centralus", "eastus2", "swedencentral"]
     live_model_version: Literal["2026-09-10"]
     available_live_sessions: int = Field(ge=5, le=10000)
     text_features: frozenset[str]
