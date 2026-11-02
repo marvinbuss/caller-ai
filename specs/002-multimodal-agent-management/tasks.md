@@ -1963,3 +1963,44 @@ no Azure request or resource enumeration occurred, and all actual qualification 
 pending. Real binding still needs explicit account ARM IDs and reviewed management-read
 permission, separately from model invocation permission and final execution authorization.
 
+### 2026-11-02: Requested Full Test Run and Authorized Authentication-Only Result
+
+The operator requested all necessary tests and completion of the remaining tasks. The current
+feature-aware full local profile parsed actual JUnit: **857 runtime, 719 management and
+319 tools tests**, each exit zero with no failures/errors/skips. Original full discovery,
+900-second per-suite limits and owned cleanup remained unchanged. No absent qualification
+was substituted with a double, skip or narrower suite.
+
+The existing source/tooling gate passed locks, lint/format, both application type checks,
+credential-free Terraform checks, whitespace, offline secrets and publication-origin guards,
+including a complete 319-test tools rerun (67.93 seconds). Fresh strict hashed Python audits
+reported no known vulnerabilities in all three projects. The frontend audit failed on
+minimatch 10.2.6 / GHSA-g3hv-75wg-m249. The approved mirror still returns 404 for fixed
+11.0.1 and root metadata omits it. Stop implementation at this failed required gate;
+no alternate feed, TLS/pin/integrity bypass, advisory ignore or mitigation was applied.
+
+Observed exact-source CI is now [run 41541215814](https://github.com/marvinbuss/caller-ai/actions/runs/41541215814)
+on `44969858cf046e9c5a5d46a568c6da9ae31e648c`. Windows job 125605558770 and Ubuntu
+job 125605558402 each passed 857 runtime/719 management/319 tools, the assertion gate and
+actual 53-document rendering (Chrome 156.0.8078.48/156.0.8078.47). Their only failed step
+was dependency auditing on that same advisory. Image job 125605558943 passed actual
+offline/non-root image smoke and three browser widths, then failed its dependency audit;
+no passing later image vulnerability scans are inferred. Earlier graph failures remain
+historical, not erased and not claimed as independently certified root repairs.
+
+The operator explicitly authorized one authentication-only attempt after the local profile:
+at most 30 seconds, configured client-secret identity, fixed Microsoft Entra token authority
+and Foundry scope, no inference/discovery/provisioning/devices/endurance/sink calls. The locked
+HTTP client performed exactly one documented client-credentials POST with verified TLS,
+no environment proxy, redirects, retries, interactive login or fallback identity. HTTP 200
+returned a bearer token; output contained only status metadata. No token was printed,
+persisted, decoded or used against Foundry. This verifies token acquisition only, not model
+permissions or complete qualification. The private input and all disabled live flags were
+preserved; no additional authentication attempt or paid call is implied by this permission.
+
+Status remains **103/114 checked**, with exactly T062/T086/T087/T100/T101 and
+T106/T110/T111/T112/T113/T114 open. Actual paid provider/physical-device/endurance/sink
+qualification still lacks required concrete probes, scoped execution authorization and/or
+real environment/device/recipient evidence. Test success cannot complete those tasks, and
+the failed strict advisory gate cannot be relabelled as a native CI pass or release approval.
+

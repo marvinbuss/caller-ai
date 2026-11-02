@@ -8,7 +8,7 @@ published-only browser text/speech tests and root documentation. This report is 
 not production/live acceptance**. The owner has authorized feature-only commit/push/PR
 publication on the existing `feat/spec-002` branch for review, not merge, release, image
 publication, deployment or actual qualification. The latest full local profile
-passes 852 runtime, 719 management and 284 tools tests. The earlier responsive-shell setup
+passes 857 runtime, 719 management and 319 tools tests. The earlier responsive-shell setup
 errors remain historical with their cause unconfirmed, as recorded below.
 The dependency and external acceptance blockers remain. Feature-001 evidence and its
 deferred tasks are not recertified or reopened.
@@ -16,12 +16,13 @@ deferred tasks are not recertified or reopened.
 Actual Foundry bindings/identity/quota/retention (T062), current stable physical browser/headset
 qualification (T086), full-duration five-manager acceptance (T087), approved-sink delivery and
 current native Windows/Linux CI must not be inferred from controlled ports or screenshots.
-Those missing results block affected live acceptance. No operator authorization was supplied
-for actual provider/device/store access, credential discovery, provisioning, deployment or spend.
+Those missing results block affected live acceptance. The operator separately authorized
+one bounded authentication-only attempt; no inference, provider/store access, credential
+discovery, provisioning, deployment, device/endurance/sink activity or paid model use was granted.
 
 The operator retained the approved-mirror-only dependency policy and requested a Git-ignored
-local qualification-input template. That template has disabled execution gates, blank secret
-inputs and no automatic application loading; it must never be published or logged. Filling
+local qualification-input template. It was created with disabled execution gates and blank
+secret inputs, and has no automatic application loading; it must never be published or logged. Filling
 it supplies review inputs, not authority to execute tests. Exact existing resources, identity,
 privacy/retention, time/cost and applicable device/sink reviews still require confirmation.
 
@@ -31,7 +32,43 @@ Source commit `49175e111da62d0834e483b0f7f2072cc372bf14` is published in
 completed **failed**. The staged/publication guards verified the exact reviewed feature set
 and excluded all local inputs; no merge or deployment was performed.
 
-## Native CI Source Checkpoint
+## Current Test and Authentication Checkpoint
+
+The requested current full local profile parsed JUnit for **857 runtime, 719 management and
+319 tools tests**, each exit zero with no failures, errors or skips. Full discovery and the
+original 900-second per-suite bound remain unchanged. The source/tooling gate also passed
+all canonical locks, lint/format, both application type checks, credential-free Terraform
+checks, whitespace, offline secrets and publication-origin guards; its tools rerun passed
+319 tests (67.93 seconds).
+
+A fresh strict hashed audit found no known vulnerabilities in each of the three Python
+environments. The resolved frontend audit failed on Moderate minimatch 10.2.6 /
+GHSA-g3hv-75wg-m249. Fixed 11.0.1 still returns 404 on the approved mirror and is absent
+from root package metadata. No registry, pin, integrity, TLS or advisory bypass was applied.
+
+Exact source `44969858cf046e9c5a5d46a568c6da9ae31e648c` has observed
+[run 41541215814](https://github.com/marvinbuss/caller-ai/actions/runs/41541215814):
+
+- Ubuntu job 125605558402 and Windows job 125605558770 each passed 857 runtime,
+  719 management and 319 tools tests, the assertion gate and actual 53-document rendering.
+  Chrome versions were 156.0.8078.47 and 156.0.8078.48 respectively. Their only failed step
+  was the dependency audit on the same minimatch advisory; no application test failed.
+- Linux image job 125605558943 passed actual offline/non-root image smoke and its three
+  browser widths, then failed the dependency audit on that advisory. Passing image
+  vulnerability scans are not inferred from passing smoke or an earlier failed audit stage.
+
+The operator then authorized one client-secret authentication-only attempt, capped at
+30 seconds with fixed Microsoft Entra authority and Foundry scope. It made exactly one token
+POST and received HTTP 200 / a bearer token. No token was printed, persisted, decoded or used
+against Foundry; no inference, resource discovery or fallback identity was attempted. This
+proves token acquisition only, not model permissions or T062/T110 qualification. The private
+input's execution flags remained disabled. No authentication retry is authorized or implied.
+
+All 11 open task markers remain unchanged (103/114). Required advisory gates, concrete
+remaining live probes, final scoped provider authorization and actual physical-device,
+five-manager endurance and approved alert-delivery evidence still block completion/release.
+
+## Earlier Native CI Source Checkpoint
 
 Observed results apply to source commit `49175e111da62d0834e483b0f7f2072cc372bf14`:
 
@@ -86,9 +123,9 @@ The current frontend dependency advisory gate is **failed/blocked** by Moderate
 the approved mirror; the canonical registry was unreachable under normal TLS. No pin,
 integrity, feed, TLS or advisory policy was bypassed. See [current security blocker](../security.md#feature-002-current-advisory-blocker).
 
-## Latest Local Regression
+## Earlier Full Local Regression
 
-The resumed feature-aware profile completed all three full test directories with actual JUnit
+The earlier feature-aware profile completed all three full test directories with actual JUnit
 results: **852 runtime, 719 management and 284 tools tests**, each exit zero with no failures,
 errors or skips. The original 900-second per-suite bound and full discovery are unchanged.
 Its result remains `local_status=passed`, `live_status=pending`, `release_status=blocked`.
@@ -293,7 +330,7 @@ destinations. Existing Terraform validation used its pinned credential-free prep
 | VI Bounded realtime | Declared queues/clocks/capacity, CAS/closure proof and local pressure tests; real five-manager endurance pending. |
 | VII Observability | Bounded correlated test metadata and alert thresholds; approved-sink delivery remains unverified. |
 | VIII Terraform | No infrastructure behavior changed; only existing documentation/evidence path consumers moved. |
-| IX Automated tests | Current local 852/719/284 suites pass; observed source CI fails Ubuntu's graph drag journey and Windows/image dependency auditing. Required native gates remain blocked. |
+| IX Automated tests | Current local and both native application suites pass 857/719/319. Native documentation/assertion gates pass; required dependency audits remain failed on minimatch. Earlier graph failures remain historical. |
 
 ## Final Gates
 
@@ -322,9 +359,9 @@ not silently overridden. No source was staged or committed by this implementatio
   Current Python advisory lookups passed; the frontend advisory gate remains blocked above.
 - T101: An executed wiring regression confirms complete app suite commands, native Windows/
   Linux matrix, docs/advisory gates, read-only permissions and no test exclusions/live-endurance
-  flags. The owner-authorized published source now has observed failed native CI: Windows
-  application/docs steps passed but auditing failed; Ubuntu failed its graph drag journey.
-  The source-specific checkpoint above preserves actual counts and unexecuted later gates.
+  flags. Current source 4496985 passes both native application/assertion/documentation gates;
+  both native jobs and image auditing remain failed only on the minimatch advisory. Earlier
+  source-specific graph failures and unexecuted later gates remain historical above.
 - T102: Unsupported-deployment cases pass in both modes; [unavailable recovery](../runbooks/configuration.md#feature-002-unavailable-and-recovery-rules) documents schema/authority/older-artifact refusal without reset or fallback.
 - T103: Read-only excluded-scope/constitution/deferred-task preservation checks passed above.
 - T104/T105: Contracts/quickstart are reconciled and the completed nine-principle assessment
