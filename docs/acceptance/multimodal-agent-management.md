@@ -69,6 +69,26 @@ for credential-free CI is owner-authorized; no deployment workflow, real plan/ap
 role grant, merge or image/app release ran. Earlier exact-source native/image evidence below
 does not certify this new increment or substitute for actual private deployment qualification.
 
+The owner separately authorized source-only publication for native CI. Reviewed source
+`595a5b15d338a5766d8a8a00b3fc9b3c1025986b` is published in draft PR #3 with private
+profiles excluded. [Run 41633613785](https://github.com/marvinbuss/caller-ai/actions/runs/41633613785)
+completed **failed**. Windows 125909113575 passed367tools/857runtime/719management,
+assertion restoration, 54-document/44-diagram rendering and advisory gates. Image125909114519
+passed three-width/offline/non-root smoke and scanned three actual images, zero HIGH/CRITICAL.
+Ubuntu125909114196 passed source/tool/Terraform checks,367tools and857runtime, then management
+had695passed/24failed synthetic-speech cases. Its later assertion/docs/advisory gates did not run.
+
+All24 failures share the initial ready assertion (old line498): first cleanup pending, then
+same-actor busy. The root is unconfirmed; capacity retention was not reset or weakened. The
+first controls/360 case passes locally unchanged; the owning clock read did not support changing
+media/admission timing. The owner approved a temporary closed-schema metadata-only startup
+probe, preserving the original raising assertion. Privacy regression passes, full console57
+passes, first compiled speech with probe passes locally, and all source/type/Terraform/secret/
+publication gates plus367tools pass. No production code, timeout, fixture cleanup proof or
+artifact-upload policy was changed. The probe is not a repair or passing Ubuntu evidence.
+T101/T114 are reopened: **110/120 checked** until the required current-source gate is observed
+passing. Earlier successful checkpoints remain historical. No deployment workflow was dispatched.
+
 ## Earlier Input and Device-Scope Amendment
 
 On 2026-11-03 the owner requested exact missing-field guidance, selected the existing

@@ -276,7 +276,7 @@ scope boundaries. Gated live tasks may remain blocked; never convert their absen
 - [X] T098 Create feature-specific traceability/evidence in `docs/acceptance/multimodal-agent-management.md` and extend the feature-aware inventory in `code/tools/scripts/verify_release.py`, mapping every FR-001 through FR-034 and SC-001 through SC-010 to actual tests/results or an explicit blocked gate while preserving feature-001 reports and all deferred tasks.
 - [X] T099 Review and run cross-service privacy/authorization regressions in `code/backend/tests/integration/test_content_privacy.py` and `code/management/tests/contract/test_browser_tests.py`, covering endpoints/keys/permits, telemetry/browser storage, rejected/provider errors, current-policy/epoch races and five-minute disposal; record no critical/high security gaps as clean unless actually remediated or constitutionally approved.
 - [X] T100 Run the full backend, management and tools suites, actual Reflex build/browser journeys, lint/type checks and applicable secret/dependency/public-origin gates from `specs/002-multimodal-agent-management/quickstart.md`, retaining zero failed/error/skipped required tests and recording observed counts without copying old feature evidence or creating a root frontend lock.
-- [X] T101 Verify the existing native Windows/Linux application CI in `.github/workflows/ci.yml` collects all new contract/integration/browser tests and documentation checks, adding only missing application-test wiring; record actual executed results in `docs/acceptance/multimodal-agent-management.md`, not an inferred CI pass, image publication or hosting deployment.
+- [ ] T101 Verify the existing native Windows/Linux application CI in `.github/workflows/ci.yml` collects all new contract/integration/browser tests and documentation checks, adding only missing application-test wiring; record actual executed results in `docs/acceptance/multimodal-agent-management.md`, not an inferred CI pass, image publication or hosting deployment.
 - [X] T102 Document/test safe unavailable behavior for an unsupported schema/deployment, authority outage, uncertain cleanup and an older artifact encountering schema 2 in `docs/runbooks/configuration.md` and `code/backend/tests/integration/test_conversation.py`; do not add legacy fallback, data reset/migration or hosting rollback machinery.
 - [X] T103 Audit feature-only source/dependency/contract changes and old deferred-task preservation against `specs/002-multimodal-agent-management/spec.md`, recording in `docs/acceptance/multimodal-agent-management.md` that no telephony research/integration, Azure Voice Live, Responses delegation, alternate frontend, hosting-specific code or infrastructure activation entered the change.
 - [X] T104 Reconcile `specs/002-multimodal-agent-management/quickstart.md`, both files under `specs/002-multimodal-agent-management/contracts/` and `docs/acceptance/multimodal-agent-management.md` with the implemented behavior; run final local link/asset/fragment, whitespace, secret/private-origin and actual changed-diagram checks, with no fabricated qualification or loosened budget.
@@ -1691,7 +1691,7 @@ credential, spend and publication restrictions; a task is not authorization for 
 - [ ] T111 HIGH F6: Complete the owner-amended physical browser/headset scope per FR-017, SC-005, SC-006, US4/AC2 and T086 after actual T110/T062. Use `code/tools/scripts/verify_multimodal.py` with current stable Edge/Windows and Chrome/Windows, recording exact versions and genuine microphone/output observations for denied/unanswered permission, playback/autoplay, unplug, mute, interruption, stop, navigation, logout and connection loss. Verify <=1-second audible cutoff, <=10-second failures and actual cleanup, including T107-T109. Record metadata-only evidence and the owner's explicit Linux-physical deferral to a follow-up; never report Linux passed or infer Windows acceptance from bundled Chromium, synthetic media or Node. Test approval is granted; missing actual Windows/provider evidence remains blocking.
 - [ ] T112 HIGH F7: Demonstrate the actual capacity/latency/publication targets per SC-001, SC-007, SC-008 and T087 (partial), only after T110/T111 and the separately approved full-duration environment/time/spend scope. Execute the live-endurance mode of `code/tools/scripts/verify_multimodal.py` with five isolated concurrent managers each completing 600 seconds, accepted user input preventing idle expiry, at least ten text and ten speech journeys, measured p95 relevant response <=2 seconds excluding declared external-action waits, 20 new-publication starts <=60 seconds, existing-session pins and next-action revocation denial. Record actual distributions, usage and confirmed shutdown/closure in `docs/acceptance/multimodal-agent-management.md` and `specs/002-multimodal-agent-management/tasks.md`. Unknown closure, shorter runs, virtual clocks, silence or missing approval remain unqualified; do not add endurance waits to routine tests or native CI.
 - [ ] T113 HIGH F8: Demonstrate end-to-end approved alert delivery per plan: Security and Observability, Constitution VII, T097 and T105 (partial), without adding hosting collectors or reopening feature-001 work. Inspect/use the explicit observation ports in `code/backend/src/caller_runtime/observability.py` and `code/management/management_app/observability.py` and their owning `code/backend/src/caller_runtime/main.py` and `code/management/management_app/composition.py` lifecycles; preserve credential-free defaults and add only any necessary explicitly injected approved-sink binding. Extend the existing service `tests/unit/test_observability.py` files and `code/tools/tests/test_verify_multimodal.py` for bounded nonblocking delivery, shutdown, cross-service correlation and content/credential exclusion. Only after separate approval of an existing sink, record representative actual cleanup-uncertainty/dependency/latency alert receipt, accountable recipient acknowledgement and recovery evidence in `docs/acceptance/multimodal-agent-management.md`, linked to `docs/runbooks/monitoring.md`. Controlled sink assertions alone do not complete this gate; absent approval or actual delivery remains blocked.
-- [X] T114 HIGH F9: Obtain reviewer-visible current native CI evidence per plan: Verification Mapping, Constitution IX and T101 (partial). Verify `.github/workflows/ci.yml` and `code/tools/scripts/ci.py` retain complete backend/management/tools collection, compiled responsive Reflex journeys, documentation rendering and strict advisory gates after T106-T109; extend existing tooling regressions only for an observed wiring defect. Use an already authorized current run or request the operator's separate authorization for any required Git publication/workflow action, then record actual Windows and Linux results in `docs/acceptance/multimodal-agent-management.md` and `specs/002-multimodal-agent-management/tasks.md`. Local suite results and static workflow inspection are not a native CI pass. Do not stage, commit, create/switch branches, push, publish images or deploy from this task without separate explicit authorization; keep T101 blocked while results are unavailable or required gates fail.
+- [ ] T114 HIGH F9: Obtain reviewer-visible current native CI evidence per plan: Verification Mapping, Constitution IX and T101 (partial). Verify `.github/workflows/ci.yml` and `code/tools/scripts/ci.py` retain complete backend/management/tools collection, compiled responsive Reflex journeys, documentation rendering and strict advisory gates after T106-T109; extend existing tooling regressions only for an observed wiring defect. Use an already authorized current run or request the operator's separate authorization for any required Git publication/workflow action, then record actual Windows and Linux results in `docs/acceptance/multimodal-agent-management.md` and `specs/002-multimodal-agent-management/tasks.md`. Local suite results and static workflow inspection are not a native CI pass. Do not stage, commit, create/switch branches, push, publish images or deploy from this task without separate explicit authorization; keep T101 blocked while results are unavailable or required gates fail.
 
 ### 2026-11-02: T107-T109 Local Corrections and Failed Full-Suite Gate
 
@@ -2182,4 +2182,42 @@ qualification remain open. The owner authorized source publication to the existi
 credential-free CI only; no deployment dispatch, real Terraform plan/apply, role grant, resource
 creation, merge or image/application publication ran. Actual private connectivity and protected
 environment/OIDC/backend references must be supplied and reviewed before activation.
+
+Source-only publication was separately owner-approved. Commit
+`595a5b15d338a5766d8a8a00b3fc9b3c1025986b` includes exactly 36 reviewed paths and is
+pushed to the existing draft PR; private inputs are excluded and the initial post-push worktree
+is clean/upstream-synchronized. Current native CI run 41633613785 is being observed through
+the existing PR-status path after run-list metadata was unavailable; Windows 125909113575,
+Ubuntu 125909114196 and image 125909114519 were in progress at that checkpoint. No live
+deployment or native pass is claimed from pending status or prior source's results.
+
+### 2026-11-03: Failed Ubuntu Speech Startup and Approved Bounded Diagnostic
+
+Run 41633613785 on source `595a5b15d338a5766d8a8a00b3fc9b3c1025986b` completed failed:
+Windows 125909113575 passed 367 tools/857 runtime/719 management, assertion restoration,
+54-document/44-diagram actual rendering and advisory gates. Image 125909114519 passed all
+three widths/non-root/offline smoke and scans of three images with zero HIGH/CRITICAL findings.
+The single MODERATE library exception remains visible/counted. Ubuntu 125909114196 passed
+all source/tool/Terraform checks, 367 tools and 857 runtime, then management had 695 passed/
+24 failed synthetic-speech cases. Later Ubuntu docs/assertion/advisory gates did not run.
+
+All failures reach `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop`'s
+initial ready assertion (old source line498): the first reports cleanup pending and subsequent
+same-actor cases busy. The cause is unconfirmed; uncertain capacity must not be reset to hide it.
+The exact first controls/360 case passed once locally unchanged. Reading the owning startup
+clock falsified the proposed media-time/admission-clock explanation, so production timing was
+not changed. T101/T114 are reopened while this required current-source gate fails; earlier
+observed successful source checkpoints remain historical, not erased.
+
+The owner approved a temporary metadata-only failure diagnostic. The original ready assertion
+still raises; stdout includes only a closed allowlist of status/error/control/media state and
+bounded frame counts. A red-first privacy test rejects arbitrary/private/unbounded values,
+then passed with the helper. Full console57 passed10.99seconds; the first compiled speech case
+with the probe passes locally, and all repository source/type/Terraform/privacy gates plus
+367 tools pass92.06seconds. No production source, original assertion/deadline, physical/media
+proof, fixture capacity or artifact-upload policy changed. This probe is not a root fix or a
+passing Ubuntu result and must be removed after diagnosis.
+
+Current status: **110/120 checked**. The eight actual acceptance/deployment tasks remain open,
+plus T101/T114 required current native CI. No Terraform deployment workflow was dispatched.
 
