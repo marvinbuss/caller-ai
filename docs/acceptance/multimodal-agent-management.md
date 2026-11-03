@@ -12,7 +12,7 @@ including actual qualification, without changing privacy, resource or cost contr
 The latest full local profile passes 857 runtime, 719 management and 342 tools tests.
 The earlier responsive-shell setup
 errors remain historical with their cause unconfirmed, as recorded below.
-The dependency and external acceptance blockers remain. Feature-001 evidence and its
+The reviewed library exception remains active; external acceptance gates remain. Feature-001 evidence and its
 deferred tasks are not recertified or reopened.
 
 Actual Foundry bindings/identity/quota/retention (T062), current stable physical browser/headset
@@ -60,8 +60,8 @@ hashed Python backend/management/tools 69/93/68 packages each have zero known fi
 frontend 314 coordinates retain one vulnerability and one approved mirror gap. Its source-gate
 tools rerun passed 342 tests (89.01 seconds). T106 is complete under the owner's revised
 alternative, and T100's full local application/non-image gates are complete;
-**105/114 tasks checked**, not an assertion that the vulnerable package is fixed.
-T101/T114 still require successful current-source native/image CI evidence.
+**107/114 tasks checked**, not an assertion that the vulnerable package is fixed.
+T101/T114 are complete on the exact-source successful native/image CI recorded below.
 
 Actual final documentation validation rendered all **43 Mermaid diagrams in 53 documents**
 with pinned CLI 12.0.0, the existing sandbox and original bounds. Two positive policy cases
@@ -91,6 +91,30 @@ No audio was captured, model invoked or alert sent in this readiness check. Five
 600-second endurance and actual sink recipient/recovery remain unobserved, not simulated passes.
 The owner confirmed only a Windows headset platform is available now. Required Linux physical
 qualification remains open; that requirement was not downgraded or replaced with synthetic media.
+
+Published policy source is `90c3c04349b7faca922c46434907feea41683bc4` in draft PR #3.
+The unchanged console text and responsive synthetic-speech journeys also ran using installed
+Edge: **26 passed**, zero failures/errors/skips. This exercises real Edge/owned application
+transport with synthetic PCM and controlled providers, not physical microphone/headset or
+Foundry qualification. The private-input presence recheck still found the required exact ARM
+IDs, app targets, signing-key paths and sink/recipient absent; no values were printed.
+Exact-source [CI run 41553750695](https://github.com/marvinbuss/caller-ai/actions/runs/41553750695)
+completed **success** on that source; all three jobs and every step succeeded, none failed/skipped:
+
+- Windows 125647459408 and Ubuntu 125647459818 each passed 857 runtime, 719 management
+  and 342 tools tests, assertion-failure restoration and 53-document/43-diagram actual rendering.
+  Chrome versions were 156.0.8078.48 and 156.0.8078.47 respectively.
+- Hashed Python counts were Windows 69/93/68 and Linux 68/91/67, each with zero known
+  findings. Frontend 314 coordinates retain one vulnerability and one approved mirror gap;
+  the audit result is explicitly `dependency_audits_passed_with_exceptions`.
+- Linux image job 125647459735 passed actual offline/non-root image smoke at all three
+  widths, and scanned three actual runtime/build-stage images with zero HIGH/CRITICAL findings.
+
+The earlier local image-build failure remains historical; CI success is not independent proof
+of its root repair. No scanner/TLS/sandbox/deadline/assertion was bypassed, and no image was
+published or infrastructure deployed. This evidence-only follow-up does not assert a new
+revision's CI outcome. T101/T114 are complete on `90c3c04`; the seven actual qualification
+tasks T062/T086/T087/T110/T111/T112/T113 remain incomplete for the concrete reasons above.
 
 ## Earlier Test and Authentication Checkpoint
 
@@ -383,14 +407,14 @@ destinations. Existing Terraform validation used its pinned credential-free prep
 | Principle | Evidence and Disposition |
 |-----------|--------------------------|
 | I Azure-first | Explicit Foundry/Entra/resource ports; actual model/region/quota approvals remain T062. |
-| II Security-first | Authority/privacy/secret/public-origin checks pass. The owner now approves one exact expiring MODERATE mirror-gap exception; finding retained, HIGH/CRITICAL/unknown still blocking. Actual image validation remains failed before scanning. |
+| II Security-first | Authority/privacy/secret/public-origin checks pass. One exact expiring MODERATE mirror-gap exception retains its finding; HIGH/CRITICAL/unknown remain blocking. Exact-source CI scans three images with zero HIGH/CRITICAL findings. |
 | III Documentation | One root maintained tree, reconciled guides/contracts, 53 checked documents and 43 actual Mermaid renders; history preserved. |
 | IV Service boundaries | Separate locks/artifacts/private stores; management publication/gateway and runtime authority communicate through versioned APIs. |
 | V Python/Reflex | Python applications and narrow Reflex-owned browser bridge; no alternate frontend application. |
 | VI Bounded realtime | Declared queues/clocks/capacity, CAS/closure proof and local pressure tests; real five-manager endurance pending. |
 | VII Observability | Bounded correlated test metadata and alert thresholds; approved-sink delivery remains unverified. |
 | VIII Terraform | No infrastructure behavior changed; only existing documentation/evidence path consumers moved. |
-| IX Automated tests | Current local full suites pass 857/719/342. Earlier source 4496985 native app/docs passes 857/719/319 but auditing failed before the new approved policy. New-source CI and actual image validation are not inferred. |
+| IX Automated tests | Current local and exact-source 90c3c04 Windows/Ubuntu suites pass 857/719/342, all docs/assertion/advisory gates pass under the explicit mirror-gap policy, and actual image smoke/scans pass. Earlier failures remain historical. |
 
 ## Final Gates
 
@@ -419,24 +443,24 @@ not silently overridden. No source was staged or committed by this implementatio
   unchanged scope/limits. The original failed attempt remains historical, not overwritten.
   Current Python advisory lookups pass; the retained MODERATE frontend finding now has the
   explicit time-limited approval above, not a patched-package or zero-findings claim.
-- T101: An executed wiring regression confirms complete app suite commands, native Windows/
-  Linux matrix, docs/advisory gates, read-only permissions and no test exclusions/live-endurance
-  flags. Current source 4496985 passes both native application/assertion/documentation gates;
-  both native jobs and image auditing remain failed only on the minimatch advisory. Earlier
-  source-specific graph failures and unexecuted later gates remain historical above.
+- T101/T114: Exact-source 90c3c04 run 41553750695 passed both native application/assertion/
+  documentation/advisory jobs and actual image smoke/scans under the explicit mirror-gap
+  policy. Wiring retains complete collection, read-only permissions, no test exclusions or
+  default live endurance. Earlier source-specific failures/unexecuted gates remain historical.
 - T102: Unsupported-deployment cases pass in both modes; [unavailable recovery](../runbooks/configuration.md#feature-002-unavailable-and-recovery-rules) documents schema/authority/older-artifact refusal without reset or fallback.
 - T103: Read-only excluded-scope/constitution/deferred-task preservation checks passed above.
 - T104/T105: Contracts/quickstart are reconciled and the completed nine-principle assessment
   explicitly withholds live/release acceptance; final source/reference/security checks pass.
-  Final root/contract/spec validation passed 53 documents and actually rendered all 42
+  Final root/contract/spec validation passed 53 documents and actually rendered all 43
   Mermaid diagrams with pinned 12.0.0, original sandbox and budgets. Later prose-only
   evidence updates pass local reference/whitespace/secret/public-origin checks.
 - T062/T086/T087 and approved-sink delivery remain unrun/unconfirmed; missing proof blocks
   affected live acceptance and never becomes release, deployment or merge approval.
 
-The unresolved task gates are T062, T086, T087, T100 and T101. Approved-sink alert delivery is
-also unverified and blocks affected acceptance under Principles II/VII and T105. No missing
-result is a pass, and completing this assessment does not authorize publication or deployment.
+The unresolved task gates are T062, T086, T087, T110, T111, T112 and T113. Actual provider,
+physical headset, endurance and approved-sink evidence still block affected acceptance under
+Principles II/VI/VII and T105. No missing result is a pass; this assessment does not authorize
+merge, image publication or deployment.
 
 [tasks]: ../../specs/002-multimodal-agent-management/tasks.md
 [live]: ../../code/backend/tests/contract/test_gpt_live.py
