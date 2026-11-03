@@ -15,6 +15,14 @@ errors remain historical with their cause unconfirmed, as recorded below.
 The reviewed library exception remains active; external acceptance gates remain. Feature-001 evidence and its
 deferred tasks are not recertified or reopened.
 
+On 2026-11-03 the owner deferred all eight remaining tasks for actual real-environment
+verification at a later time. Current disposition is **112 completed / 8 deferred / 120 total**,
+with no undeferred implementation tasks in this pass. See the
+[task disposition](../../specs/002-multimodal-agent-management/tasks.md#current-task-disposition).
+Their unchecked boxes, dependencies, original acceptance criteria and missing evidence remain;
+deferral does not certify live readiness or authorize execution. Resume only on the owner's
+request with reviewed environment inputs, required probe bindings and current scope/budgets.
+
 Actual Foundry bindings/identity/quota/retention (T062), current stable physical browser/headset
 qualification (T086), full-duration five-manager acceptance (T087) and approved-sink delivery
 must not be inferred from controlled ports or screenshots.
@@ -50,7 +58,8 @@ settlement repair and both cancellation regressions remain; no assertion, timeou
 TLS or capacity rule was weakened. This observed pass completes T101/T114 on this source,
 not an independent explanation of every earlier text/Windows/fixture failure. Their history
 is retained below. Task status is **112/120 checked**; the eight actual provider/device/
-endurance/alert/deployment tasks remain open. No Terraform workflow, real plan/apply, resource
+endurance/alert/deployment tasks are owner-deferred for later real-environment verification.
+No Terraform workflow, real plan/apply, resource
 creation, role grant, merge or image/application publication was performed.
 
 ## Current Terraform Delivery Amendment
@@ -654,7 +663,7 @@ not silently overridden. No source was staged or committed by this implementatio
 - T062/T086/T087 and approved-sink delivery remain unrun/unconfirmed; missing proof blocks
   affected live acceptance and never becomes release, deployment or merge approval.
 
-The unresolved task gates are T062, T086, T087, T110, T111, T112, T113 and T120. Remaining
+The owner-deferred task gates are T062, T086, T087, T110, T111, T112, T113 and T120. Remaining
 provider checks, actual Windows headset/endurance/sink evidence and actual protected dev
 deployment still block affected acceptance. Linux physical work is explicitly deferred, not
 reported passed. No missing result is a pass; this assessment does not authorize merge,
