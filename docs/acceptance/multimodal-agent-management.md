@@ -116,6 +116,18 @@ Privacy regression,79 backend unit tests and both compiled text journeys pass lo
 all source/type/Terraform/privacy gates and367tools pass. Current required native CI remains
 failed/unresolved, with T101/T114 open and110/120 checked. This probe is not live evidence.
 
+Diagnostic source362a5a5 / [run41650399020](https://github.com/marvinbuss/caller-ai/actions/runs/41650399020)
+passed Ubuntu/image but failed Windows: runtime858 passed, management703 passed/16 failed.
+The first failure is synthetic speech's hidden/1440 initial ready assertion (oldline549),
+followed by busy lifecycle cases. No cleanup record was emitted because capture covered only
+text Stop. A platform's subsequent pass does not establish a root repair. The same failure-only
+reader now covers initial speech readiness and adds allowlisted browser status/error labels;
+its direct unit test proves the original assertion is reraised and arbitrary text excluded.
+One local compiled attempt had three pre-assertion setup errors (compilation,1976-byte log,
+unclassified); one unchanged attempt then passed the three text/first-speech cases. No fixture
+or deadline changed. Full console57 and all source/type/Terraform/privacy gates plus367tools
+pass. The probe remains temporary, T101/T114 remain open, and no deployment was dispatched.
+
 ## Earlier Input and Device-Scope Amendment
 
 On 2026-11-03 the owner requested exact missing-field guidance, selected the existing

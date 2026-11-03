@@ -2270,3 +2270,22 @@ A red-first metadata-privacy regression passed, all79 backend conversation unit 
 public-origin gates plus367tools pass153.51seconds. This is safe observation, not a root fix;
 T101/T114 stay open (110/120 checked) and the probe must be removed after diagnosis.
 
+### 2026-11-03: Windows Readiness Failure and Broadened Failure-Only Capture
+
+Diagnostic source362a5a5 / run41650399020 passed Ubuntu and image gates but failed Windows
+125966685608:858 runtime passed, management703 passed/16 failed. The earliest failure is
+synthetic speech hidden/1440 initial ready (oldline549), followed by busy lifecycle cases.
+The text-Stop-only reader emitted no cleanup diagnostic. Neither the platform swap nor a
+later platform pass proves a root repair, and no uncertain slot was reset.
+
+The existing temporary failure-only reader now also wraps initial speech readiness, retaining
+the original raising assertion and adding only allowlisted browser status/error labels.
+Its direct privacy test proves arbitrary browser/runtime strings are excluded and the original
+assertion reraised. Full console57 passes10.90seconds; all source/type/Terraform/privacy gates
+plus367tools pass76.76seconds. The three compiled text/first-speech cases passed once unchanged
+after a separate pre-assertion setup failure: three errors, compilation phase,1976-byte log,
+unclassified cause. That failure remains recorded, not converted into passing assertions.
+No fixture budget, timeout, application source, capacity proof or deployment workflow changed.
+Current native verification remains unresolved:110/120 checked, T101/T114 open. Remove all
+temporary probes after diagnosis rather than presenting them as the final runtime repair.
+
