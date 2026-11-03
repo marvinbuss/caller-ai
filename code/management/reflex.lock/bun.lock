@@ -7,6 +7,7 @@
       "dependencies": {
         "@radix-ui/themes": "3.3.0",
         "@react-router/node": "8.4.0",
+        "@xyflow/react": "12.12.0",
         "isbot": "5.2.2",
         "lucide-react": "1.26.0",
         "mergician": "v2.0.2",
@@ -2258,11 +2259,104 @@
       },
       "sha1-n+t/sdXy97U2DCLiRlEhDbdMNN8="
     ],
+    "@types/d3-color": [
+      "@types/d3-color@3.1.3",
+      "",
+      {},
+      "sha1-NoyWGhjech2oIA6AvzlD+1MTavI="
+    ],
+    "@types/d3-drag": [
+      "@types/d3-drag@3.0.7",
+      "",
+      {
+        "dependencies": {
+          "@types/d3-selection": "*"
+        }
+      },
+      "sha1-sTq6iyRCtAaMmp5tHYL4vOp3/AI="
+    ],
+    "@types/d3-interpolate": [
+      "@types/d3-interpolate@3.0.4",
+      "",
+      {
+        "dependencies": {
+          "@types/d3-color": "*"
+        }
+      },
+      "sha1-QSuQ6EhwKF8v+KhGxutgNE8SpBw="
+    ],
+    "@types/d3-selection": [
+      "@types/d3-selection@3.0.12",
+      "",
+      {},
+      "sha512-Qe/KWYhEiIIxGs7HrAAjMfShxKldx19SJtr5zu53f3afPsdZNz7HHtdTLXo/kqeiWNXVycI24kSnfzBYkTzpgw=="
+    ],
+    "@types/d3-transition": [
+      "@types/d3-transition@3.0.9",
+      "",
+      {
+        "dependencies": {
+          "@types/d3-selection": "*"
+        }
+      },
+      "sha1-ETa8V+nds8OQ3MybX/O30rjZRwY="
+    ],
+    "@types/d3-zoom": [
+      "@types/d3-zoom@3.0.9",
+      "",
+      {
+        "dependencies": {
+          "@types/d3-interpolate": "*",
+          "@types/d3-selection": "*"
+        }
+      },
+      "sha512-0sE1406XBYJGiqD3AusTl9ZqC//2mIXix51tbom25gDCA8ri4xnSZg28CaSE8Srl6FClqABUKfsn0qghgdepMA=="
+    ],
     "@types/parse-json": [
       "@types/parse-json@4.0.2",
       "",
       {},
       "sha1-WVDlCWB5MFWEXpVsQn/CsNcMUjk="
+    ],
+    "@xyflow/react": [
+      "@xyflow/react@12.12.0",
+      "",
+      {
+        "dependencies": {
+          "@xyflow/system": "0.0.83",
+          "classcat": "^5.0.3",
+          "zustand": "^4.4.0"
+        },
+        "peerDependencies": {
+          "@types/react": ">=17",
+          "@types/react-dom": ">=17",
+          "react": ">=17",
+          "react-dom": ">=17"
+        },
+        "optionalPeers": [
+          "@types/react",
+          "@types/react-dom"
+        ]
+      },
+      "sha512-74oXI0Rgm1Eu33cHQAd74J6oVgCH9mbFyTVQbsGgp2kmWwh0HdtBr2VP04z8mbPD+M/xO69nqG5dDEt7/EN2rQ=="
+    ],
+    "@xyflow/system": [
+      "@xyflow/system@0.0.83",
+      "",
+      {
+        "dependencies": {
+          "@types/d3-drag": "^3.0.7",
+          "@types/d3-interpolate": "^3.0.4",
+          "@types/d3-selection": "^3.0.10",
+          "@types/d3-transition": "^3.0.8",
+          "@types/d3-zoom": "^3.0.8",
+          "d3-drag": "^3.0.0",
+          "d3-interpolate": "^3.0.1",
+          "d3-selection": "^3.0.0",
+          "d3-zoom": "^3.0.0"
+        }
+      },
+      "sha512-a//eDjez3WZF47aaPTfVUDD0OINOq+WVwBZCRTqG+m0a5euX8EwlJ4jMY1Wxz0Ocj4xOeekJ70V22Pq0ll8RJw=="
     ],
     "aria-hidden": [
       "aria-hidden@1.2.6",
@@ -2384,6 +2478,12 @@
       },
       "sha1-lJwSapI4qAeSvpoCZZNPCYrzaaU="
     ],
+    "classcat": [
+      "classcat@5.0.5",
+      "",
+      {},
+      "sha1-jCCfNZqTrDAkBKEBYbUB66nAnHc="
+    ],
     "classnames": [
       "classnames@2.5.1",
       "",
@@ -2443,6 +2543,88 @@
       "",
       {},
       "sha1-7EjA8+mT5QZIyG2lWeJhCZXPmJo="
+    ],
+    "d3-color": [
+      "d3-color@3.1.0",
+      "",
+      {},
+      "sha1-OVsoM9+scVB/EqwvevI7+BneJOI="
+    ],
+    "d3-dispatch": [
+      "d3-dispatch@3.0.1",
+      "",
+      {},
+      "sha1-X8dShOnCN1w2yDlBGgz1UMv8TV4="
+    ],
+    "d3-drag": [
+      "d3-drag@3.0.0",
+      "",
+      {
+        "dependencies": {
+          "d3-dispatch": "1 - 3",
+          "d3-selection": "3"
+        }
+      },
+      "sha1-mUqunNI8cZ9TteEOOgphCMaWB7o="
+    ],
+    "d3-ease": [
+      "d3-ease@3.0.1",
+      "",
+      {},
+      "sha1-llisOKIUDVnTRhYPH2ww/aC9EvQ="
+    ],
+    "d3-interpolate": [
+      "d3-interpolate@3.0.1",
+      "",
+      {
+        "dependencies": {
+          "d3-color": "1 - 3"
+        }
+      },
+      "sha1-PEeqWzLFs9+1bvP9Q0IHimMrQA0="
+    ],
+    "d3-selection": [
+      "d3-selection@3.0.0",
+      "",
+      {},
+      "sha1-wlM4IH76csxbm9FFihpBkB8eGzE="
+    ],
+    "d3-timer": [
+      "d3-timer@3.0.1",
+      "",
+      {},
+      "sha1-YoTSonCChbGrt+IB7aQ4CvNeY7A="
+    ],
+    "d3-transition": [
+      "d3-transition@3.0.1",
+      "",
+      {
+        "dependencies": {
+          "d3-color": "1 - 3",
+          "d3-dispatch": "1 - 3",
+          "d3-ease": "1 - 3",
+          "d3-interpolate": "1 - 3",
+          "d3-timer": "1 - 3"
+        },
+        "peerDependencies": {
+          "d3-selection": "2 - 3"
+        }
+      },
+      "sha1-aGn93hRIhoB3/dWYkgDLYbKhZF8="
+    ],
+    "d3-zoom": [
+      "d3-zoom@3.0.0",
+      "",
+      {
+        "dependencies": {
+          "d3-dispatch": "1 - 3",
+          "d3-drag": "2 - 3",
+          "d3-interpolate": "1 - 3",
+          "d3-selection": "2 - 3",
+          "d3-transition": "2 - 3"
+        }
+      },
+      "sha1-0T9BZccyF//qpUKVzWlps+eu6PM="
     ],
     "debug": [
       "debug@4.4.3",
@@ -3549,6 +3731,16 @@
       },
       "sha1-EOf9iX0TC4luLFRsY6XoIz0A79s="
     ],
+    "use-sync-external-store": [
+      "use-sync-external-store@1.7.0",
+      "",
+      {
+        "peerDependencies": {
+          "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
+        }
+      },
+      "sha1-bctm71aeAvGGr2s9V19BTOdG4Y8="
+    ],
     "util-deprecate": [
       "util-deprecate@1.0.2",
       "",
@@ -3648,6 +3840,26 @@
       "",
       {},
       "sha1-duQH7ZXEJoT7jhRkHl3mL+ZbvLM="
+    ],
+    "zustand": [
+      "zustand@4.5.7",
+      "",
+      {
+        "dependencies": {
+          "use-sync-external-store": "^1.2.2"
+        },
+        "peerDependencies": {
+          "@types/react": ">=16.8",
+          "immer": ">=9.0.6",
+          "react": ">=16.8"
+        },
+        "optionalPeers": [
+          "@types/react",
+          "immer",
+          "react"
+        ]
+      },
+      "sha1-fWuyAmoUJBXdi+iJHXhw5tvmX1U="
     ],
     "@babel/core/convert-source-map": [
       "convert-source-map@2.0.0",

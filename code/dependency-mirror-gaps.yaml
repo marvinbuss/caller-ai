@@ -1,0 +1,11 @@
+schema_version: 1
+exceptions:
+  - ecosystem: npm
+    package: minimatch
+    version: 10.2.6
+    advisory: GHSA-g3hv-75wg-m249
+    fixed_version: 11.0.1
+    owner: project-owner
+    reason: Owner approved this temporary gap because the fixed release is absent from the approved mirror. Remove when available.
+    verified_at: '2026-11-02T23:42:34Z'
+    expires_at: '2026-11-09T23:42:34Z'

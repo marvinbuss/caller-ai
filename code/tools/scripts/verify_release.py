@@ -15,16 +15,22 @@ from smoke import stop
 
 Runner = Callable[[list[str], dict[str, str], int], int]
 SUITES = (("runtime", "code/backend"), ("management", "code/management"), ("tools", "code/tools"))
+FEATURES = ("001-call-center-agents", "002-multimodal-agent-management")
 
 
-def requirements() -> dict[str, dict[str, str]]:
+def requirements(*, feature: str = "001-call-center-agents") -> dict[str, dict[str, str]]:
+    if feature not in FEATURES:
+        raise ValueError("unknown_release_feature")
+    multimodal = feature == "002-multimodal-agent-management"
     keys = [f"FR-{index:03}" for index in range(1, 35)] + [
-        f"SC-{index:03}" for index in range(1, 20)
+        f"SC-{index:03}" for index in range(1, 11 if multimodal else 20)
     ]
     return {
         key: {
-            "status": "deferred" if key == "SC-008" else "pending_qualification",
-            "evidence": "code/docs/acceptance/requirements.md",
+            "status": "deferred" if key == "SC-008" and not multimodal else "pending_qualification",
+            "evidence": "docs/acceptance/multimodal-agent-management.md"
+            if multimodal
+            else "docs/acceptance/requirements.md",
         }
         for key in keys
     }
@@ -32,7 +38,12 @@ def requirements() -> dict[str, dict[str, str]]:
 
 def execute(command: list[str], values: dict[str, str], timeout: int) -> int:
     process = psutil.Popen(
-        command, cwd=ROOT, env=values, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        command,
+        cwd=ROOT,
+        env=values,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     try:
         code = process.wait(timeout=timeout)
@@ -61,7 +72,10 @@ def junit(path: Path, code: int) -> dict[str, int | str]:
     }
 
 
-def run_local(*, runner: Runner = execute) -> dict[str, Any]:
+def run_local(
+    *, runner: Runner = execute, feature: str = "001-call-center-agents"
+) -> dict[str, Any]:
+    inventory = requirements(feature=feature)
     values = {
         key: value
         for key, value in environment().items()
@@ -78,6 +92,8 @@ def run_local(*, runner: Runner = execute) -> dict[str, Any]:
                 project,
                 "--locked",
                 "--no-sync",
+                "python",
+                "-m",
                 "pytest",
                 "tests",
                 "-q",
@@ -92,6 +108,7 @@ def run_local(*, runner: Runner = execute) -> dict[str, Any]:
             suites.append({"name": name, **result})
     return {
         "schema_version": 1,
+        "feature": feature,
         "profile": "local",
         "local_status": "passed"
         if all(suite["status"] == "passed" for suite in suites)
@@ -99,7 +116,7 @@ def run_local(*, runner: Runner = execute) -> dict[str, Any]:
         "live_status": "pending",
         "release_status": "blocked",
         "suites": suites,
-        "requirements": requirements(),
+        "requirements": inventory,
     }
 
 
@@ -111,6 +128,7 @@ class SafeParser(argparse.ArgumentParser):
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = SafeParser(description=__doc__)
     parser.add_argument("--profile", choices=("local", "live"), default="local")
+    parser.add_argument("--feature", choices=FEATURES, default=FEATURES[0])
     try:
         options = parser.parse_args(arguments)
     except Exception:
@@ -121,15 +139,16 @@ def main(arguments: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "profile": "live",
+                    "feature": options.feature,
                     "live_status": "pending",
                     "release_status": "blocked",
                     "reason": "authorized_environment_and_live_evidence_required",
-                    "requirements": requirements(),
+                    "requirements": requirements(feature=options.feature),
                 }
             )
         )
         return 2
-    report = run_local()
+    report = run_local(feature=options.feature)
     print(json.dumps(report))
     return 0 if report["local_status"] == "passed" else 1
 

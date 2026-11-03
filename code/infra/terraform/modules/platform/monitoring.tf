@@ -2,10 +2,15 @@ variable "monitoring" {
   description = "Required reviewed per-service owners, published runbooks, action-group references, thresholds and ingestion cap; no delivery approval is inferred."
   type = object({
     daily_cap_gb = number
+    action_group = optional(object({
+      name            = string
+      short_name      = string
+      email_receivers = map(string)
+    }), null)
     services = map(object({
       owner                = string
       runbook_url          = string
-      action_group_id      = string
+      action_group_id      = optional(string, "")
       error_ratio          = number
       mean_latency_seconds = number
       dependency_failures  = number
@@ -18,11 +23,19 @@ variable "monitoring" {
     condition = (
       toset(keys(var.monitoring.services)) == toset(["runtime", "management"]) &&
       var.monitoring.daily_cap_gb >= 0.1 && var.monitoring.daily_cap_gb <= 100 &&
+      (var.monitoring.action_group == null || try(
+        can(regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", var.monitoring.action_group.name)) &&
+        can(regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,11}$", var.monitoring.action_group.short_name)) &&
+        length(var.monitoring.action_group.email_receivers) >= 1 && length(var.monitoring.action_group.email_receivers) <= 10 &&
+        alltrue([for name, address in var.monitoring.action_group.email_receivers :
+          can(regex("^[A-Za-z][A-Za-z0-9_-]{0,63}$", name)) &&
+          length(address) <= 254 && can(regex("^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$", address))
+      ]), false)) &&
       contains([30, 60, 90, 120, 180, 270, 365, 550, 730], var.services.log_retention_days) &&
       alltrue([for service in values(var.monitoring.services) :
         can(regex("^[a-z][a-z0-9_-]{2,63}$", service.owner)) &&
         length(service.runbook_url) <= 256 && can(regex("^https://[A-Za-z0-9.-]+/[A-Za-z0-9/_.#-]+$", service.runbook_url)) &&
-        can(regex("^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft.Insights/actionGroups/[A-Za-z0-9_-]+$", service.action_group_id)) &&
+        (var.monitoring.action_group != null || can(regex("^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft.Insights/actionGroups/[A-Za-z0-9_-]+$", service.action_group_id))) &&
         service.error_ratio > 0 && service.error_ratio < 1 &&
         service.mean_latency_seconds >= 0.01 && service.mean_latency_seconds <= 10 &&
         service.dependency_failures >= 1 && service.dependency_failures <= 10000 && floor(service.dependency_failures) == service.dependency_failures &&
@@ -30,12 +43,17 @@ variable "monitoring" {
         service.minimum_requests >= 1 && service.minimum_requests <= 10000 && floor(service.minimum_requests) == service.minimum_requests
       ])
     )
-    error_message = "Require exactly both services with safe owners, HTTPS runbooks without credentials, existing action-group IDs, bounded thresholds and explicit supported retention/cost limits."
+    error_message = "Require both services with safe owners/runbooks, existing group IDs or validated managed recipients, bounded thresholds and supported retention/cost limits."
   }
 }
 
 locals {
   metric_services = { runtime = "caller-runtime", management = "management" }
+  action_group_ids = {
+    for name, service in var.monitoring.services : name => (
+      var.monitoring.action_group == null ? service.action_group_id : azurerm_monitor_action_group.application[0].id
+    )
+  }
   service_alerts = merge([for key, service in var.monitoring.services : {
     "${key}-errors" = {
       service   = key
@@ -98,6 +116,29 @@ locals {
   }]...)
 }
 
+resource "azurerm_monitor_action_group" "application" {
+  count               = var.monitoring.action_group == null ? 0 : 1
+  name                = var.monitoring.action_group.name
+  resource_group_name = azurerm_resource_group.platform.name
+  short_name          = var.monitoring.action_group.short_name
+  enabled             = true
+  tags                = azurerm_resource_group.platform.tags
+
+  dynamic "email_receiver" {
+    for_each = var.monitoring.action_group.email_receivers
+    content {
+      name                    = email_receiver.key
+      email_address           = email_receiver.value
+      use_common_alert_schema = true
+    }
+  }
+}
+
+output "managed_action_group_id" {
+  value       = try(azurerm_monitor_action_group.application[0].id, null)
+  description = "Optional managed notification destination; not proof of alert delivery."
+}
+
 resource "azurerm_application_insights" "service" {
   for_each                             = var.monitoring.services
   name                                 = "app-${var.services.monitor_name}-${each.key}"
@@ -151,7 +192,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "service" {
     }
   }
   action {
-    action_groups = [var.monitoring.services[each.value.service].action_group_id]
+    action_groups = [local.action_group_ids[each.value.service]]
     custom_properties = {
       owner   = var.monitoring.services[each.value.service].owner
       runbook = var.monitoring.services[each.value.service].runbook_url

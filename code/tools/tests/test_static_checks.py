@@ -17,6 +17,226 @@ from packaging.version import Version
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 
+@pytest.fixture
+def approved_mirror_gap(monkeypatch, tmp_path):
+    from datetime import UTC, datetime
+
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import audit_dependencies
+
+    instant = datetime(2026, 11, 3, 12, tzinfo=UTC)
+
+    class FrozenClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant if tz is None else instant.astimezone(tz)
+
+    monkeypatch.setattr(audit_dependencies, "datetime", FrozenClock)
+    policy = {
+        "schema_version": 1,
+        "exceptions": [
+            {
+                "ecosystem": "npm",
+                "package": "minimatch",
+                "version": "10.2.6",
+                "advisory": "GHSA-g3hv-75wg-m249",
+                "fixed_version": "11.0.1",
+                "owner": "project-owner",
+                "reason": "Approved mirror does not yet carry the fixed release.",
+                "verified_at": "2026-11-03T00:00:00Z",
+                "expires_at": "2026-11-10T00:00:00Z",
+            }
+        ],
+    }
+    path = tmp_path / "mirror-gaps.yaml"
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    return audit_dependencies, path, policy, instant
+
+
+def test_approved_mirror_gap_preserves_finding_and_reports_exception(approved_mirror_gap):
+    audits, path, _, now = approved_mirror_gap
+    gaps = audits.load_mirror_gaps(path, now=now)
+    lock = path.parent / "bun.lock"
+    lock.write_text('{"packages":{"minimatch":["minimatch@10.2.6","",{},""]}}')
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json=(
+                    {"results": [{"vulns": [{"id": "GHSA-g3hv-75wg-m249"}]}]}
+                    if request.method == "POST"
+                    else {
+                        "id": "GHSA-g3hv-75wg-m249",
+                        "database_specific": {"severity": "MODERATE"},
+                    }
+                ),
+            )
+        )
+    ) as client:
+        result = audits.audit_frontend(lock, client, gaps=gaps)
+    assert result == {"packages": 1, "vulnerabilities": 1, "approved_mirror_gaps": 1}
+
+
+@pytest.mark.parametrize("field,value", [("version", "10.2.7"), ("advisory", "CVE-2026-1")])
+def test_approved_mirror_gap_does_not_cover_other_findings(approved_mirror_gap, field, value):
+    audits, path, policy, now = approved_mirror_gap
+    policy["exceptions"][0][field] = value
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    gaps = audits.load_mirror_gaps(path, now=now)
+    lock = path.parent / "bun.lock"
+    lock.write_text('{"packages":{"minimatch":["minimatch@10.2.6","",{},""]}}')
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"results": [{"vulns": [{"id": "GHSA-g3hv-75wg-m249"}]}]}
+            )
+        )
+    ) as client:
+        with pytest.raises(RuntimeError, match="frontend_vulnerabilities_detected"):
+            audits.audit_frontend(lock, client, gaps=gaps)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("expires_at", "2026-11-03T12:00:00Z"),
+        ("expires_at", "2026-12-03T00:00:00Z"),
+        ("verified_at", "2026-11-04T00:00:00Z"),
+        ("owner", ""),
+        ("package", "*"),
+        ("unexpected", True),
+    ],
+)
+def test_approved_mirror_gap_rejects_invalid_or_expired_policy(approved_mirror_gap, field, value):
+    audits, path, policy, now = approved_mirror_gap
+    policy["exceptions"][0][field] = value
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="mirror_gap_policy_invalid"):
+        audits.load_mirror_gaps(path, now=now)
+
+
+@pytest.mark.parametrize("status,available", [(200, True), (404, False)])
+def test_approved_mirror_gap_revalidation_detects_fixed_artifact(
+    approved_mirror_gap, status, available
+):
+    audits, path, _, now = approved_mirror_gap
+    gaps = audits.load_mirror_gaps(path, now=now)
+    seen = []
+
+    def respond(request):
+        seen.append(request)
+        return httpx.Response(status, json={"versions": {"11.0.1": {}}} if available else {})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = audits.revalidate_mirror_gaps(
+            gaps, client, {"NPM_CONFIG_REGISTRY": "https://mirror.example.invalid/npm/"}
+        )
+    assert result == [
+        {"package": "minimatch", "fixed_version": "11.0.1", "gap_confirmed": not available}
+    ]
+    assert len(seen) == 1
+    assert seen[0].url.host == "mirror.example.invalid"
+
+
+@pytest.mark.parametrize("severity", ["HIGH", "CRITICAL", "unknown"])
+def test_approved_mirror_gap_does_not_allow_high_or_unknown_severity(approved_mirror_gap, severity):
+    audits, path, _, now = approved_mirror_gap
+    gaps = audits.load_mirror_gaps(path, now=now)
+    lock = path.parent / "bun.lock"
+    lock.write_text('{"packages":{"minimatch":["minimatch@10.2.6","",{},""]}}')
+
+    def respond(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"results": [{"vulns": [{"id": gaps[0].advisory}]}]})
+        return httpx.Response(
+            200, json={"id": gaps[0].advisory, "database_specific": {"severity": severity}}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(RuntimeError, match="mirror_gap_advisory_not_eligible"):
+            audits.audit_frontend(lock, client, gaps=gaps)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "schema_version: 1\nschema_version: 1\nexceptions: []\n",
+        "schema_version: 1\nexceptions: &items [*items]\n",
+        "schema_version: true\nexceptions: []\n",
+    ],
+)
+def test_approved_mirror_gap_rejects_duplicate_keys_and_aliases(approved_mirror_gap, content):
+    audits, path, _, now = approved_mirror_gap
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="mirror_gap_policy_invalid"):
+        audits.load_mirror_gaps(path, now=now)
+
+
+@pytest.mark.parametrize("status", [302, 401, 403, 429, 503])
+def test_approved_mirror_gap_lookup_errors_are_not_absence(approved_mirror_gap, status):
+    audits, path, _, now = approved_mirror_gap
+    gaps = audits.load_mirror_gaps(path, now=now)
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(status))
+    ) as client:
+        with pytest.raises(RuntimeError, match="mirror_gap_revalidation_failed"):
+            audits.revalidate_mirror_gaps(
+                gaps, client, {"NPM_CONFIG_REGISTRY": "https://mirror.example.invalid/npm/"}
+            )
+
+
+def test_approved_mirror_gap_python_findings_remain_visible(approved_mirror_gap, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    audits, path, policy, now = approved_mirror_gap
+    policy["exceptions"][0].update(
+        ecosystem="PyPI", package="fixture", version="1.0", fixed_version="1.1"
+    )
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    gaps = audits.load_mirror_gaps(path, now=now)
+    monkeypatch.setattr(audits, "run", lambda *arguments: None)
+
+    def execute(arguments, **keywords):
+        report = Path(arguments[arguments.index("--output") + 1])
+        report.write_text(
+            json.dumps(
+                {
+                    "dependencies": [
+                        {
+                            "name": "fixture",
+                            "version": "1.0",
+                            "vulns": [{"id": gaps[0].advisory, "fix_versions": ["1.1"]}],
+                        }
+                    ]
+                }
+            )
+        )
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(audits.subprocess, "run", execute)
+    original = httpx.Client
+    monkeypatch.setattr(
+        audits.httpx,
+        "Client",
+        lambda **keywords: original(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={"id": gaps[0].advisory, "database_specific": {"severity": "MODERATE"}},
+                )
+            )
+        ),
+    )
+    result = audits.audit_python("tools", path.parent, gaps=gaps)
+    assert result == {
+        "project": "tools",
+        "packages": 1,
+        "vulnerabilities": 1,
+        "approved_mirror_gaps": 1,
+    }
+
+
 def test_ci_registry_defaults_are_public_and_local_overrides_are_not_hardcoded(
     monkeypatch, tmp_path
 ):
@@ -143,6 +363,41 @@ def test_publication_rejects_private_feed_without_echoing_url(publication, tmp_p
     output = capsys.readouterr()
     assert candidate not in output.out + output.err
     assert "settings.txt" in output.err
+
+
+@pytest.mark.parametrize("indexed_private", [False, True])
+def test_publication_move_ignores_missing_worktree_paths_but_keeps_index_gate(
+    publication, monkeypatch, tmp_path, indexed_private
+):
+    from types import SimpleNamespace
+
+    document = tmp_path / "docs/setup.md"
+    document.parent.mkdir()
+    document.write_text("# Setup\n")
+    seen = []
+    monkeypatch.setattr(publication, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["check_publication.py", "check"])
+    monkeypatch.setattr(
+        publication.subprocess,
+        "run",
+        lambda *arguments, **keywords: SimpleNamespace(
+            stdout=b"code/docs/setup.md\0docs/setup.md\0"
+        ),
+    )
+    monkeypatch.setattr(
+        publication,
+        "check_git",
+        lambda root: seen.append("index-and-history") or int(indexed_private),
+    )
+    original = publication.check_paths
+
+    def paths(values, root):
+        assert values == [document]
+        return original(values, root)
+
+    monkeypatch.setattr(publication, "check_paths", paths)
+    assert publication.main() == int(indexed_private)
+    assert seen == ["index-and-history"]
 
 
 def test_publication_accepts_public_package_origins(publication, tmp_path):
@@ -649,6 +904,132 @@ def test_documentation_structure_and_links(tmp_path: Path, monkeypatch, text, va
 
 
 @pytest.mark.parametrize(
+    "broken", [None, "link", "image", "asset", "fragment", "local-fragment", "escape"]
+)
+def test_root_document_links_assets_and_fragments_are_verified(tmp_path, monkeypatch, broken):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import verify_docs
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    target = docs / "target file.md"
+    target.write_text("# Target\n\n## Exact Heading `Name`\n\n## Repeated\n\n## Repeated\n")
+    (docs / "asset.png").write_bytes(b"synthetic-image")
+    (docs / "data.json").write_text("{}")
+    reference = {
+        None: "[target](target%20file.md#exact-heading-name) ![image](asset.png) "
+        "[asset](data.json) [duplicate](target%20file.md#repeated-1) [self](#local-heading)",
+        "link": "[missing](missing.md)",
+        "image": "![missing](missing.png)",
+        "asset": "[missing](missing.json)",
+        "fragment": "[missing](target%20file.md#absent)",
+        "local-fragment": "[missing](#absent)",
+        "escape": "![escape](../../outside.png)",
+    }[broken]
+    document = docs / "index.md"
+    document.write_text(
+        "# Root Docs\n\n## Local Heading\n\n"
+        + reference
+        + "\nHistorical literal code/docs/acceptance/result.md is not a navigable link.\n"
+    )
+    if broken is None:
+        assert verify_docs.validate_documents([document], tmp_path) == []
+        assert "Historical literal code/docs" in document.read_text()
+    else:
+        with pytest.raises(ValueError):
+            verify_docs.validate_documents([document], tmp_path)
+
+
+def test_ci_file_scan_covers_root_docs_navigation_and_feature_artifacts(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
+
+    commands, scans = [], []
+    monkeypatch.setattr(ci, "ROOT", tmp_path)
+    for name in ("docs/setup.md", "README.md", "specs/002-feature/spec.md"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Synthetic\n")
+    monkeypatch.setattr(ci, "run", lambda *arguments: commands.append(arguments))
+    monkeypatch.setattr(ci, "environment", lambda: {})
+
+    def scan(command, **options):
+        scans.append(command)
+        return SimpleNamespace(stdout="docs/setup.md\nREADME.md\nspecs/002-feature/spec.md\n")
+
+    monkeypatch.setattr(ci.subprocess, "run", scan)
+    ci.check()
+    assert len(scans) == 1 and {"code", "docs", "README.md", "specs", ".github/workflows"} <= set(
+        scans[0]
+    )
+    checked = next(command for command in commands if "pre-commit" in command)
+    assert {"docs/setup.md", "README.md", "specs/002-feature/spec.md"} <= set(checked)
+
+
+def test_native_ci_collects_complete_apps_docs_and_no_live_endurance(monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import ci
+
+    commands = []
+    monkeypatch.setattr(ci, "run", lambda *arguments: commands.append(arguments))
+    monkeypatch.setattr(sys, "argv", ["ci.py", "test"])
+    ci.main()
+    assert len(commands) == 2
+    assert {command[command.index("--directory") + 1] for command in commands} == {
+        "code/backend",
+        "code/management",
+    }
+    assert all("pytest" in command and "--locked" in command for command in commands)
+    assert all(
+        command[command.index("--locked") + 1 : command.index("--locked") + 4]
+        == ("python", "-m", "pytest")
+        for command in commands
+    )
+    assert all(
+        not {"-k", "--ignore", "--live-endurance", "--execute"} & set(command)
+        for command in commands
+    )
+    workflow = yaml.load(
+        (SCRIPTS.parents[2] / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    native = workflow["jobs"]["native"]
+    assert set(native["strategy"]["matrix"]["os"]) == {"windows-2022", "ubuntu-24.04"}
+    executed = [step["run"] for step in native["steps"] if "run" in step]
+    assert any("verify_docs.py" in command for command in executed)
+    assert any("audit_dependencies.py" in command for command in executed)
+    assert workflow["permissions"] == {"contents": "read"}
+    assert not any("paths" in value for value in workflow["on"].values() if isinstance(value, dict))
+
+
+def test_root_document_discovery_covers_contracts_specs_and_rejects_old_tree(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import verify_docs
+
+    expected = [
+        "docs/setup.md",
+        "docs/runbooks/check.md",
+        "code/contracts/README.md",
+        "specs/002-feature/spec.md",
+        "README.md",
+    ]
+    for name in expected:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Synthetic\n")
+    assert {
+        str(path.relative_to(tmp_path)).replace("\\", "/")
+        for path in verify_docs.discover_documents(tmp_path)
+    } == set(expected)
+    old = tmp_path / "code/docs/setup.md"
+    old.parent.mkdir(parents=True)
+    old.write_text("# Duplicate Maintained Docs\n")
+    with pytest.raises(ValueError, match="duplicate_maintained_documentation"):
+        verify_docs.discover_documents(tmp_path)
+
+
+@pytest.mark.parametrize(
     "diagnostic,category",
     [
         ("No usable sandbox!", "browser_sandbox_unavailable"),
@@ -876,6 +1257,7 @@ def test_diagram_rendering_prepares_once_then_forbids_package_network(
     specification.loader.exec_module(module)
     browser = tmp_path / "prepared-browser"
     browser.touch()
+    (tmp_path / "docs").mkdir()
     monkeypatch.setattr(module, "ROOT", tmp_path)
     monkeypatch.setattr(
         module, "environment", lambda: {"NPM_CONFIG_REGISTRY": "https://registry.example.invalid/"}
@@ -1028,7 +1410,18 @@ def test_terraform_check_uses_validate_and_mocked_tests_only(terraform_checks, m
         "validate",
         "test",
     ]
-    assert terraform_checks.ROOTS[-1] == terraform_checks.BASE / "environments/dev"
+    assert terraform_checks.ROOTS[-1] == terraform_checks.BASE / "environments"
+
+
+def test_terraform_environments_share_one_root_and_explicit_environment(terraform_checks):
+    directory = terraform_checks.BASE / "environments"
+    main = (directory / "main.tf").read_text(encoding="utf-8")
+    variables = (directory / "variables.tf").read_text(encoding="utf-8")
+    assert 'source              = "../modules/platform"' in main
+    assert "environment = var.environment" in main
+    assert 'environment = "dev"' not in main
+    assert 'variable "environment"' in variables
+    assert not list(directory.glob("*/main.tf"))
 
 
 def test_terraform_preparation_is_explicit_and_missing_tool_does_not_fall_back(

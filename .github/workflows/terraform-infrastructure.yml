@@ -1,0 +1,27 @@
+name: Terraform Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Existing reviewed environment configuration name
+        required: true
+        default: dev
+      apply_changes:
+        description: Request protected apply after reviewing the private saved plan
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/terraform-deploy.yml
+    with:
+      environment: ${{ inputs.environment }}
+      root: platform
+      apply_changes: ${{ inputs.apply_changes }}
+      runner_labels: ${{ vars.TF_RUNNER_LABELS || '["ubuntu-24.04"]' }}

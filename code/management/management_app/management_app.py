@@ -148,13 +148,27 @@ def create_app(
         application.add_page(index, title="Caller AI")
         if editor is not None:
             from management_app.pages.communities import configuration_page
+            from management_app.pages.test_console import test_console_page
             from management_app.state.configuration_editor import ConfigurationEditorState
+            from management_app.state.test_console import TestConsoleState
 
             application.add_page(
                 configuration_page,
                 route="/configuration",
                 title="Configuration | Caller AI",
-                on_load=ConfigurationEditorState.load,
+                on_load=ConfigurationEditorState.enter_view,
+            )
+            application.add_page(
+                configuration_page,
+                route="/configuration/communities/[community_id]",
+                title="Community | Caller AI",
+                on_load=ConfigurationEditorState.enter_view,
+            )
+            application.add_page(
+                test_console_page,
+                route="/configuration/test",
+                title="Test | Caller AI",
+                on_load=TestConsoleState.enter_view,
             )
     return application
 

@@ -75,6 +75,7 @@ class CapabilityReferences(ConfigurationModel):
 class CapabilityAttempt(CapabilityReferences):
     inputs: dict[str, JsonValue] = Field(repr=False)
     deadline_at: AwareDatetime = Field(alias="deadlineAt", repr=False)
+    single_attempt: bool = Field(default=False, alias="singleAttempt", exclude=True)
 
     @field_validator("deadline_at")
     @classmethod

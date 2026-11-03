@@ -1,14 +1,17 @@
 """Guarded management composition over explicit reviewed resources; no implicit cloud access."""
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
 import reflex as rx
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -26,6 +29,7 @@ from management_app.adapters.public_tools import (
     SecretPort,
     resolve_public,
 )
+from management_app.adapters.test_session_client import TestSessionClient, WorkloadCredential
 from management_app.api.capabilities import create_router as capability_router
 from management_app.api.configuration import create_router as configuration_router
 from management_app.api.runtime_configuration import create_router as runtime_router
@@ -41,6 +45,7 @@ from management_app.security import (
     RuntimeIdentity,
     SessionStore,
     SigningKeys,
+    TestPermitSigner,
     TokenVerifier,
     create_auth_router,
 )
@@ -52,6 +57,50 @@ from management_app.services.configuration_validation import ConfigurationValida
 from management_app.services.ports import ReadinessPort
 from management_app.settings import Settings
 from management_app.state.configuration_editor import EditorServices
+from management_app.state.test_console import ConsoleServices
+
+
+class ManagementTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
+
+    runtime_endpoint: str = Field(min_length=1, max_length=512)
+    runtime_audience: str
+    issuer: str = Field(min_length=1, max_length=512)
+    permit_audience: str = Field(min_length=1, max_length=512)
+    test_role: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_.]{0,127}$")
+    permission_review_ref: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    signing_review_ref: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    runtime_review_ref: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    capacity: int = Field(ge=5, le=5)
+    retention_seconds: int = Field(ge=300, le=300)
+    max_clock_skew_seconds: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def explicit_runtime(self) -> "ManagementTestRequest":
+        endpoint = urlsplit(self.runtime_endpoint)
+        UUID(self.runtime_audience)
+        if (
+            endpoint.scheme != "https"
+            or not endpoint.hostname
+            or endpoint.username is not None
+            or endpoint.password is not None
+            or endpoint.port not in {None, 443}
+            or endpoint.path not in {"", "/"}
+            or endpoint.query
+            or endpoint.fragment
+            or "\\" in self.runtime_endpoint
+            or any(ord(character) < 33 for character in self.runtime_endpoint)
+        ):
+            raise ValueError("invalid_test_runtime_origin")
+        return self
+
+
+@dataclass(frozen=True, slots=True)
+class ManagementTestResources:
+    key_id: str
+    signing_key: RSAPrivateKey = field(repr=False)
+    verification_keys: Mapping[str, RSAPublicKey] = field(repr=False)
+    credential: WorkloadCredential = field(repr=False)
 
 
 class ManagementRequest(BaseModel):
@@ -67,6 +116,7 @@ class ManagementRequest(BaseModel):
     runtime_audience: str
     runtime_role: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_.]{0,127}$")
     runtime_clients: tuple[str, ...] = Field(min_length=1, max_length=32)
+    tests: ManagementTestRequest | None = None
 
     @model_validator(mode="after")
     def distinct_boundaries(self) -> "ManagementRequest":
@@ -78,6 +128,12 @@ class ManagementRequest(BaseModel):
             self.policy.api_audience,
         }:
             raise ValueError("distinct_management_resources_required")
+        if self.tests is not None and (
+            self.tests.test_role == self.policy.manager_role
+            or self.tests.runtime_audience
+            in {self.policy.client_id, self.policy.api_audience, self.runtime_audience}
+        ):
+            raise ValueError("distinct_test_authorities_required")
         return self
 
 
@@ -111,6 +167,8 @@ class ManagementResources:
     close: Callable[[], Awaitable[None]]
     resolver: Resolver = resolve_public
     network: httpx.AsyncBaseTransport | None = None
+    tests: ManagementTestResources | None = field(default=None, repr=False)
+    test_alert_sink: Callable[[dict[str, str]], None] | None = field(default=None, repr=False)
 
 
 class ManagementResourcesFactory(Protocol):
@@ -176,6 +234,7 @@ class ManagedStartup:
         self.request, self.authority, self.resources = request, authority, resources
         self.fingerprint = settings.composition_fingerprint(request.model_dump(mode="json"))
         self.closed = False
+        self.test_relay: TestSessionClient | None = None
 
     async def require(self, settings: Settings, *, deadline: float | None = None) -> None:
         if (
@@ -192,7 +251,10 @@ class ManagedStartup:
             self.closed = True
             try:
                 async with asyncio.timeout(10):
-                    await self.resources.close()
+                    if self.test_relay is None:
+                        await self.resources.close()
+                    else:
+                        await asyncio.gather(self.test_relay.close(), self.resources.close())
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -239,6 +301,14 @@ async def compose_management(
                 )
             ):
                 raise PermissionError("management_resource_binding_invalid")
+            if (request.tests is None) != (resolved.tests is None) or (
+                request.tests is not None
+                and (
+                    not isinstance(resolved.tests, ManagementTestResources)
+                    or resolved.tests.credential is None
+                )
+            ):
+                raise PermissionError("explicit_test_resources_required")
             await startup.require(settings, deadline=deadline)
             validator = ConfigurationValidator(
                 policy=resolved.secret_policy,
@@ -277,9 +347,32 @@ async def compose_management(
                 ),
             )
             telemetry, metrics = (
-                Telemetry("management", settings.mode),
+                Telemetry("management", settings.mode, alert_sink=resolved.test_alert_sink),
                 ManagementMetrics(mode=settings.mode),
             )
+            signer: TestPermitSigner | None = None
+            if request.tests is not None and resolved.tests is not None:
+                signer = TestPermitSigner(
+                    issuer=request.tests.issuer,
+                    audience=request.tests.permit_audience,
+                    key_id=resolved.tests.key_id,
+                    signing_key=resolved.tests.signing_key,
+                    verification_keys=resolved.tests.verification_keys,
+                    utc_now=lambda: datetime.now(UTC),
+                    max_clock_skew_seconds=request.tests.max_clock_skew_seconds,
+                )
+                startup.test_relay = TestSessionClient(
+                    endpoint=request.tests.runtime_endpoint,
+                    audience=request.tests.runtime_audience,
+                    approved_hosts=frozenset(
+                        {str(urlsplit(request.tests.runtime_endpoint).hostname)}
+                    ),
+                    credential=resolved.tests.credential,
+                    utc_now=lambda: datetime.now(UTC),
+                    monotonic=time.monotonic,
+                    max_clock_skew_seconds=request.tests.max_clock_skew_seconds,
+                    telemetry=telemetry,
+                )
             gateway = CapabilityGateway(
                 repository=repository,
                 policy=CapabilityPolicy(
@@ -322,6 +415,23 @@ async def compose_management(
             editor = EditorServices(
                 api=api, guard=ReflexEventGuard(identity=identity), reviewed=resolved.reviewed
             )
+            if request.tests is not None and signer is not None and startup.test_relay is not None:
+                from management_app.api.test_sessions import create_router as test_router
+
+                api.state.test_console_services = ConsoleServices(
+                    guard=editor.guard, test_role=request.tests.test_role
+                )
+                api.include_router(
+                    test_router(
+                        identity=identity,
+                        signer=signer,
+                        test_role=request.tests.test_role,
+                        telemetry=telemetry,
+                        monotonic=time.monotonic,
+                        max_clock_skew_seconds=request.tests.max_clock_skew_seconds,
+                        relay=startup.test_relay,
+                    )
+                )
             api.state.management_identity = identity
             api.state.management_repository = repository
             application = create_app(settings, editor=editor)
@@ -332,7 +442,8 @@ async def compose_management(
                         "/v1/runtime/capabilities/execute",
                         "/v1/security/revocations",
                     }
-                ),
+                )
+                | (frozenset({"/v1/test-tickets"}) if request.tests is not None else frozenset()),
             )
             return ManagedApplication(application, api, asgi)
         except BaseException as error:

@@ -81,7 +81,7 @@ renders 33 documents/28 diagrams and proves the 0/1/0 assertion gate with fixtur
 Strict package audits and all three actual image audits report zero findings. T031 is complete;
 six tasks remain open: T042/T097/T099/T117/T118/T119. Telephony remains explicitly deferred
 under local-only authorization; no live/release gate or reviewer checklist decision changes.
-See [foundation evidence](../../code/docs/acceptance/foundation.md).
+See [foundation evidence](../../docs/acceptance/foundation.md).
 
 **Earlier local verification (2026-10-27)**: after the supported eager preview initialization
 repair, the full combined runner passes runtime 384, management 407 and tools 149 cases,
@@ -1129,8 +1129,8 @@ and all six T124-T129 unchecked markers are preserved; local increments are not 
 - T129 cannot execute before T120-T128 and separate live access/approvals. No acceptance, cost/RU,
   quota, privacy, alert-delivery or release evidence is fabricated from local checks.
 
-See [drain rollout](../../code/docs/runbooks/drain-rollout.md) and
-[monitoring](../../code/docs/runbooks/monitoring.md) for implemented contracts and limitations.
+See [drain rollout](../../docs/runbooks/drain-rollout.md) and
+[monitoring](../../docs/runbooks/monitoring.md) for implemented contracts and limitations.
 
 This local checkpoint passes all 552 backend tests, all 220 tooling tests and all eight
 repository/type/Terraform/secret/publication gates. The 68-package strict tooling dependency

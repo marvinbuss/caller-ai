@@ -22,7 +22,7 @@ US2_REAL_COSMOS_PROFILE = {
     "activation": {
         "explicitOptIn": "us2-real-cosmos",
         "requiredTasks": ["T099", "T112", "T117", "T118"],
-        "environmentEvidence": "code/docs/acceptance/live-environment.md",
+        "environmentEvidence": "docs/acceptance/live-environment.md",
         "runner": "code/tools/scripts/verify_release.py",
         "runnerImplementedBy": "T112",
     },
@@ -59,7 +59,7 @@ US2_REAL_COSMOS_PROFILE = {
     "liveCriterion": "SC-012",
     "unavailableOutcome": "blocked",
     "excludedCriteria": ["SC-008"],
-    "evidenceDestination": "code/docs/acceptance/us2.md",
+    "evidenceDestination": "docs/acceptance/us2.md",
 }
 
 
@@ -419,8 +419,22 @@ def test_snapshot_limit_includes_server_metadata(repository, configuration_graph
 
     store, container = repository
     payload = copy.deepcopy(configuration_graph)
-    payload["agents"][3]["prompt"] += "x" * (SNAPSHOT_LIMIT - len(encoded(payload)))
+    payload["agents"].extend(
+        {
+            **copy.deepcopy(payload["agents"][3]),
+            "agentId": f"padding-agent-{index}",
+            "name": f"Padding agent {index}",
+        }
+        for index in range(32)
+    )
+    remaining = SNAPSHOT_LIMIT - len(encoded(payload))
+    for agent in payload["agents"]:
+        padding = min(16 * 1024 - len(agent["prompt"].encode("utf-8")), remaining)
+        agent["prompt"] += "x" * padding
+        remaining -= padding
+    assert remaining == 0
     assert len(encoded(payload)) == SNAPSHOT_LIMIT
+    assert store.validator.validate(payload) == []
 
     async def scenario():
         with pytest.raises(ConfigurationRejected) as failure:
@@ -505,8 +519,8 @@ def test_us2_two_managers_share_one_revision_and_conflicts_never_overwrite(
     acceptance_api, configuration_graph
 ) -> None:
     client, actors, headers, audit = acceptance_api
-    first = client.get("/v1/configuration", headers=headers(actors[0]))
-    second = client.get("/v1/configuration", headers=headers(actors[1]))
+    first = client.get("/v2/configuration", headers=headers(actors[0]))
+    second = client.get("/v2/configuration", headers=headers(actors[1]))
     assert first.status_code == second.status_code == 200
     assert first.json() == second.json() and first.headers["ETag"] == second.headers["ETag"]
     assert first.json()["organizationId"] == "default" and len(first.json()["communities"]) == 2
@@ -519,30 +533,30 @@ def test_us2_two_managers_share_one_revision_and_conflicts_never_overwrite(
     changed["communities"][0]["name"] = "Shared community update"
     changed["agents"][3]["prompt"] = "Synthetic approved shared revision"
     saved = client.put(
-        "/v1/configuration",
+        "/v2/configuration",
         json=changed,
         headers={**headers(actors[0]), "If-Match": first.headers["ETag"]},
     )
     assert saved.status_code == 200 and saved.json()["createdBy"] == actors[0]
     rejected = client.put(
-        "/v1/configuration",
+        "/v2/configuration",
         json=configuration_graph,
         headers={**headers(actors[1]), "If-Match": second.headers["ETag"]},
     )
-    assert rejected.status_code == 412
-    assert client.get("/v1/configuration", headers=headers(actors[1])).json() == saved.json()
+    assert rejected.status_code == 409
+    assert client.get("/v2/configuration", headers=headers(actors[1])).json() == saved.json()
     changed["communities"][1]["routingDescription"] = "Synthetic second manager shared edit"
     second_saved = client.put(
-        "/v1/configuration",
+        "/v2/configuration",
         json=changed,
         headers={**headers(actors[1]), "If-Match": saved.headers["ETag"]},
     )
     assert second_saved.status_code == 200 and second_saved.json()["createdBy"] == actors[1]
     for actor in actors:
-        assert client.get("/v1/configuration", headers=headers(actor)).json() == second_saved.json()
-    assert client.get("/v1/configuration").status_code == 401
+        assert client.get("/v2/configuration", headers=headers(actor)).json() == second_saved.json()
+    assert client.get("/v2/configuration").status_code == 401
     assert (
-        client.get("/v1/configuration", headers=headers(actors[1], "Runtime.Reader")).status_code
+        client.get("/v2/configuration", headers=headers(actors[1], "Runtime.Reader")).status_code
         == 403
     )
     assert (
@@ -572,7 +586,7 @@ def test_us2_invalid_manager_edits_never_change_the_active_revision(
     acceptance_api, configuration_graph, mutation
 ) -> None:
     client, actors, headers, audit = acceptance_api
-    before = client.get("/v1/configuration", headers=headers(actors[0]))
+    before = client.get("/v2/configuration", headers=headers(actors[0]))
     changed = copy.deepcopy(configuration_graph)
     if mutation == "delete-role":
         changed["agents"].pop(0)
@@ -587,21 +601,24 @@ def test_us2_invalid_manager_edits_never_change_the_active_revision(
             }
         )
     elif mutation == "bypass-role":
-        changed["relationships"] = [
-            row
-            for row in changed["relationships"]
-            if row["sourceAgentId"] != "agent-welcome" or row["targetAgentId"] != "agent-routing"
-        ]
+        changed["relationships"].append(
+            {
+                "relationshipId": "forged-protected-path",
+                "sourceAgentId": "agent-alpha",
+                "targetAgentId": "agent-goodbye",
+                "allowedContextFields": [],
+            }
+        )
     elif mutation == "invalid-reference":
         changed["communities"][0]["entryAgentId"] = "unknown-agent"
     else:
         changed["organizationId"] = "another-organization"
     response = client.put(
-        "/v1/configuration",
+        "/v2/configuration",
         json=changed,
         headers={**headers(actors[0]), "If-Match": before.headers["ETag"]},
     )
     assert response.status_code == 422
-    after = client.get("/v1/configuration", headers=headers(actors[1]))
+    after = client.get("/v2/configuration", headers=headers(actors[1]))
     assert after.json() == before.json() and after.headers["ETag"] == before.headers["ETag"]
     assert not any(record["action"] == "configuration.publish" for record in audit.records.values())
