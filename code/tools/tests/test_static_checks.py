@@ -17,6 +17,226 @@ from packaging.version import Version
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 
+@pytest.fixture
+def approved_mirror_gap(monkeypatch, tmp_path):
+    from datetime import UTC, datetime
+
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    import audit_dependencies
+
+    instant = datetime(2026, 11, 3, 12, tzinfo=UTC)
+
+    class FrozenClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant if tz is None else instant.astimezone(tz)
+
+    monkeypatch.setattr(audit_dependencies, "datetime", FrozenClock)
+    policy = {
+        "schema_version": 1,
+        "exceptions": [
+            {
+                "ecosystem": "npm",
+                "package": "minimatch",
+                "version": "10.2.6",
+                "advisory": "GHSA-g3hv-75wg-m249",
+                "fixed_version": "11.0.1",
+                "owner": "project-owner",
+                "reason": "Approved mirror does not yet carry the fixed release.",
+                "verified_at": "2026-11-03T00:00:00Z",
+                "expires_at": "2026-11-10T00:00:00Z",
+            }
+        ],
+    }
+    path = tmp_path / "mirror-gaps.yaml"
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    return audit_dependencies, path, policy, instant
+
+
+def test_approved_mirror_gap_preserves_finding_and_reports_exception(approved_mirror_gap):
+    audits, path, _, now = approved_mirror_gap
+    gaps = audits.load_mirror_gaps(path, now=now)
+    lock = path.parent / "bun.lock"
+    lock.write_text('{"packages":{"minimatch":["minimatch@10.2.6","",{},""]}}')
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json=(
+                    {"results": [{"vulns": [{"id": "GHSA-g3hv-75wg-m249"}]}]}
+                    if request.method == "POST"
+                    else {
+                        "id": "GHSA-g3hv-75wg-m249",
+                        "database_specific": {"severity": "MODERATE"},
+                    }
+                ),
+            )
+        )
+    ) as client:
+        result = audits.audit_frontend(lock, client, gaps=gaps)
+    assert result == {"packages": 1, "vulnerabilities": 1, "approved_mirror_gaps": 1}
+
+
+@pytest.mark.parametrize("field,value", [("version", "10.2.7"), ("advisory", "CVE-2026-1")])
+def test_approved_mirror_gap_does_not_cover_other_findings(approved_mirror_gap, field, value):
+    audits, path, policy, now = approved_mirror_gap
+    policy["exceptions"][0][field] = value
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    gaps = audits.load_mirror_gaps(path, now=now)
+    lock = path.parent / "bun.lock"
+    lock.write_text('{"packages":{"minimatch":["minimatch@10.2.6","",{},""]}}')
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"results": [{"vulns": [{"id": "GHSA-g3hv-75wg-m249"}]}]}
+            )
+        )
+    ) as client:
+        with pytest.raises(RuntimeError, match="frontend_vulnerabilities_detected"):
+            audits.audit_frontend(lock, client, gaps=gaps)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("expires_at", "2026-11-03T12:00:00Z"),
+        ("expires_at", "2026-12-03T00:00:00Z"),
+        ("verified_at", "2026-11-04T00:00:00Z"),
+        ("owner", ""),
+        ("package", "*"),
+        ("unexpected", True),
+    ],
+)
+def test_approved_mirror_gap_rejects_invalid_or_expired_policy(approved_mirror_gap, field, value):
+    audits, path, policy, now = approved_mirror_gap
+    policy["exceptions"][0][field] = value
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="mirror_gap_policy_invalid"):
+        audits.load_mirror_gaps(path, now=now)
+
+
+@pytest.mark.parametrize("status,available", [(200, True), (404, False)])
+def test_approved_mirror_gap_revalidation_detects_fixed_artifact(
+    approved_mirror_gap, status, available
+):
+    audits, path, _, now = approved_mirror_gap
+    gaps = audits.load_mirror_gaps(path, now=now)
+    seen = []
+
+    def respond(request):
+        seen.append(request)
+        return httpx.Response(status, json={"versions": {"11.0.1": {}}} if available else {})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = audits.revalidate_mirror_gaps(
+            gaps, client, {"NPM_CONFIG_REGISTRY": "https://mirror.example.invalid/npm/"}
+        )
+    assert result == [
+        {"package": "minimatch", "fixed_version": "11.0.1", "gap_confirmed": not available}
+    ]
+    assert len(seen) == 1
+    assert seen[0].url.host == "mirror.example.invalid"
+
+
+@pytest.mark.parametrize("severity", ["HIGH", "CRITICAL", "unknown"])
+def test_approved_mirror_gap_does_not_allow_high_or_unknown_severity(approved_mirror_gap, severity):
+    audits, path, _, now = approved_mirror_gap
+    gaps = audits.load_mirror_gaps(path, now=now)
+    lock = path.parent / "bun.lock"
+    lock.write_text('{"packages":{"minimatch":["minimatch@10.2.6","",{},""]}}')
+
+    def respond(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"results": [{"vulns": [{"id": gaps[0].advisory}]}]})
+        return httpx.Response(
+            200, json={"id": gaps[0].advisory, "database_specific": {"severity": severity}}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(RuntimeError, match="mirror_gap_advisory_not_eligible"):
+            audits.audit_frontend(lock, client, gaps=gaps)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "schema_version: 1\nschema_version: 1\nexceptions: []\n",
+        "schema_version: 1\nexceptions: &items [*items]\n",
+        "schema_version: true\nexceptions: []\n",
+    ],
+)
+def test_approved_mirror_gap_rejects_duplicate_keys_and_aliases(approved_mirror_gap, content):
+    audits, path, _, now = approved_mirror_gap
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="mirror_gap_policy_invalid"):
+        audits.load_mirror_gaps(path, now=now)
+
+
+@pytest.mark.parametrize("status", [302, 401, 403, 429, 503])
+def test_approved_mirror_gap_lookup_errors_are_not_absence(approved_mirror_gap, status):
+    audits, path, _, now = approved_mirror_gap
+    gaps = audits.load_mirror_gaps(path, now=now)
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(status))
+    ) as client:
+        with pytest.raises(RuntimeError, match="mirror_gap_revalidation_failed"):
+            audits.revalidate_mirror_gaps(
+                gaps, client, {"NPM_CONFIG_REGISTRY": "https://mirror.example.invalid/npm/"}
+            )
+
+
+def test_approved_mirror_gap_python_findings_remain_visible(approved_mirror_gap, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    audits, path, policy, now = approved_mirror_gap
+    policy["exceptions"][0].update(
+        ecosystem="PyPI", package="fixture", version="1.0", fixed_version="1.1"
+    )
+    path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    gaps = audits.load_mirror_gaps(path, now=now)
+    monkeypatch.setattr(audits, "run", lambda *arguments: None)
+
+    def execute(arguments, **keywords):
+        report = Path(arguments[arguments.index("--output") + 1])
+        report.write_text(
+            json.dumps(
+                {
+                    "dependencies": [
+                        {
+                            "name": "fixture",
+                            "version": "1.0",
+                            "vulns": [{"id": gaps[0].advisory, "fix_versions": ["1.1"]}],
+                        }
+                    ]
+                }
+            )
+        )
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(audits.subprocess, "run", execute)
+    original = httpx.Client
+    monkeypatch.setattr(
+        audits.httpx,
+        "Client",
+        lambda **keywords: original(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={"id": gaps[0].advisory, "database_specific": {"severity": "MODERATE"}},
+                )
+            )
+        ),
+    )
+    result = audits.audit_python("tools", path.parent, gaps=gaps)
+    assert result == {
+        "project": "tools",
+        "packages": 1,
+        "vulnerabilities": 1,
+        "approved_mirror_gaps": 1,
+    }
+
+
 def test_ci_registry_defaults_are_public_and_local_overrides_are_not_hardcoded(
     monkeypatch, tmp_path
 ):

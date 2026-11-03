@@ -21,9 +21,62 @@ and actual router/build/browser compatibility checks before it can be accepted.
 **T100 remains blocked** until the fixed artifact is available through an approved trusted
 source (or a maintainer separately approves a constitutionally valid mitigation), followed
 by exact targeted lock resolution, full compatibility checks and a clean advisory rerun.
-No such mitigation or waiver was supplied. Earlier clean counts below are historical and
-must not be copied as current frontend advisory evidence. Actual model/device/sink/native-CI
-qualification remains separately unverified; no cloud/model/device call or deployment ran.
+That was the disposition before the owner's 2026-11-03 instruction below. Earlier clean
+counts are historical and must not be copied as current frontend advisory evidence.
+
+### Approved Mirror-Gap Exceptions
+
+On 2026-11-03 the owner explicitly approved temporary allow-listing of unavailable fixed
+library releases, with separate revalidatable YAML evidence. The policy lives in
+[code/dependency-mirror-gaps.yaml](../code/dependency-mirror-gaps.yaml). This changes the
+advisory gate's approved-risk disposition, not dependency versions or vulnerability status.
+The current minimatch exception was checked against the configured approved mirror: fixed
+11.0.1 is still absent. UTC verification/expiry values are recorded in the YAML; the initial
+window ends **2026-11-09T23:42:34Z**. The host UTC date was still November 2 when checked.
+
+Each entry must bind the exact ecosystem (`npm` or `PyPI`), package, installed version,
+advisory, fixed version, accountable owner, reason and UTC verification/expiry. No wildcard
+or version range is supported. Maximum approval duration is seven days; expired/future,
+duplicate-key, aliased, malformed or oversized policies fail closed. An empty `exceptions`
+list restores unconditional finding rejection. Python exceptions must also match a fix
+version returned by the current audit. Missing/failed/skipped Python audit results still fail.
+
+Every excepted finding requires a fresh OSV advisory response confirming LOW or MODERATE
+severity. HIGH, CRITICAL, unknown severity and lookup errors remain blocking. Actual image
+HIGH/CRITICAL scanning is unchanged and has no exception path. Findings remain printed and
+counted: `vulnerabilities` never becomes zero because of an approval. Successful reports use
+`dependency_audits_passed_with_exceptions` and per-project `approved_mirror_gaps` counts.
+
+```text
+uv run --project code/tools --locked --no-sync python code/tools/scripts/audit_dependencies.py --revalidate-mirror-gaps
+uv run --project code/tools --locked --no-sync python code/tools/scripts/audit_dependencies.py --images
+```
+
+The first command performs bounded read-only metadata requests only against configured
+approved mirrors, with normal TLS, no environment proxy/redirects and no public-registry
+fallback. It can inspect expired entries without renewing them. A newly available fixed
+release or lookup failure exits nonzero; only confirmed missing releases report
+`gap_confirmed=true`. Private registry URLs and raw responses are never emitted. Revalidation
+does not edit approvals. When a fix appears, verify its artifact/integrity, update only the
+necessary resolution, remove the exception, then rerun the full compatibility and audit gates.
+If the gap persists, the owner must review and explicitly update a new bounded window; there
+is no automatic extension or silent suppression. The YAML is public metadata, never credentials.
+
+```mermaid
+flowchart TD
+	Locks[Resolved locked packages] --> Audit[Complete advisory lookup]
+	Audit -->|No findings|Clean[Pass without exceptions]
+	Audit -->|Finding|Exact{Exact unexpired YAML approval}
+	Exact -->|No|Blocked[Fail closed]
+	Exact -->|Yes|Severity{Current LOW or MODERATE severity}
+	Severity -->|No or unknown|Blocked
+	Severity -->|Yes|Approved[Pass with finding and exception counts]
+	Mirror[Read-only approved mirror revalidation] -->|Fixed release available|Repair[Remove approval and apply verified fix]
+```
+
+The owner's current test authorization does not turn absent resources, physical measurements
+or unexecuted qualification into evidence. Actual provider/device/endurance/sink acceptance
+remains separate from this narrow library-risk exception and from automated regression tests.
 
 ## Historical Feature 001 Security Evidence
 

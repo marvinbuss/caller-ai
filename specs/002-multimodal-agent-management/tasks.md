@@ -275,7 +275,7 @@ scope boundaries. Gated live tasks may remain blocked; never convert their absen
 - [X] T097 Implement/test app-level alert classification through existing observation ports in `code/backend/src/caller_runtime/observability.py`, `code/management/management_app/observability.py` and `code/tools/tests/test_verify_multimodal.py`: cleanup uncertainty beyond ten seconds, three consecutive dependency failures in 60 seconds and p95 >2 seconds with >=20 samples/five minutes; verify correlation/privacy/receipt/recovery with controlled sinks and document accountable maintainer/response links in `docs/runbooks/monitoring.md`, without new hosting collectors or alert infrastructure.
 - [X] T098 Create feature-specific traceability/evidence in `docs/acceptance/multimodal-agent-management.md` and extend the feature-aware inventory in `code/tools/scripts/verify_release.py`, mapping every FR-001 through FR-034 and SC-001 through SC-010 to actual tests/results or an explicit blocked gate while preserving feature-001 reports and all deferred tasks.
 - [X] T099 Review and run cross-service privacy/authorization regressions in `code/backend/tests/integration/test_content_privacy.py` and `code/management/tests/contract/test_browser_tests.py`, covering endpoints/keys/permits, telemetry/browser storage, rejected/provider errors, current-policy/epoch races and five-minute disposal; record no critical/high security gaps as clean unless actually remediated or constitutionally approved.
-- [ ] T100 Run the full backend, management and tools suites, actual Reflex build/browser journeys, lint/type checks and applicable secret/dependency/public-origin gates from `specs/002-multimodal-agent-management/quickstart.md`, retaining zero failed/error/skipped required tests and recording observed counts without copying old feature evidence or creating a root frontend lock.
+- [X] T100 Run the full backend, management and tools suites, actual Reflex build/browser journeys, lint/type checks and applicable secret/dependency/public-origin gates from `specs/002-multimodal-agent-management/quickstart.md`, retaining zero failed/error/skipped required tests and recording observed counts without copying old feature evidence or creating a root frontend lock.
 - [ ] T101 Verify the existing native Windows/Linux application CI in `.github/workflows/ci.yml` collects all new contract/integration/browser tests and documentation checks, adding only missing application-test wiring; record actual executed results in `docs/acceptance/multimodal-agent-management.md`, not an inferred CI pass, image publication or hosting deployment.
 - [X] T102 Document/test safe unavailable behavior for an unsupported schema/deployment, authority outage, uncertain cleanup and an older artifact encountering schema 2 in `docs/runbooks/configuration.md` and `code/backend/tests/integration/test_conversation.py`; do not add legacy fallback, data reset/migration or hosting rollback machinery.
 - [X] T103 Audit feature-only source/dependency/contract changes and old deferred-task preservation against `specs/002-multimodal-agent-management/spec.md`, recording in `docs/acceptance/multimodal-agent-management.md` that no telephony research/integration, Azure Voice Live, Responses delegation, alternate frontend, hosting-specific code or infrastructure activation entered the change.
@@ -1683,7 +1683,7 @@ qualification. Each executable correction requires a failing-then-passing regres
 existing test files and focused validation with unchanged limits. Retain all scope, approval,
 credential, spend and publication restrictions; a task is not authorization for external use.
 
-- [ ] T106 HIGH F1: Resolve the strict frontend dependency gate per T100 and plan: reproducible locked dependencies (partial). `code/management/reflex.lock/bun.lock` still resolves `minimatch` 10.2.6, with the recorded Moderate GHSA-g3hv-75wg-m249/CVE-2026-118764 blocker. Obtain a maintainer-reviewed fixed artifact through an approved feed with verified TLS and integrity, update only the supported resolution in `code/management/reflex.lock/package.json`, `code/management/reflex.lock/bun.lock` and `code/management/rxconfig.py` as actually required, and test cross-major compatibility rather than assuming it. Rerun `code/tools/scripts/audit_dependencies.py` and the T100 build/browser/full-source gates after the local corrections, recording actual results in `docs/acceptance/multimodal-agent-management.md`. Leave blocked if no verified compatible artifact is available; no advisory ignore, unapproved registry, TLS bypass, unrelated pin churn or weakened assertion.
+- [X] T106 HIGH F1: Resolve the dependency gate per T100 using a verified fixed artifact or the owner's explicit 2026-11-03 alternative: exact, accountable, seven-day mirror-gap approvals in `code/dependency-mirror-gaps.yaml`, with bounded read-only revalidation in `code/tools/scripts/audit_dependencies.py`. Keep vulnerability counts visible, block unlisted/expired/HIGH/CRITICAL/unknown findings and audit failures, and retain actual image HIGH/CRITICAL scanning. Test the policy in `code/tools/tests/test_static_checks.py` and execute full source/browser/audit gates. This newer direction supersedes the earlier fixed-artifact-only condition, not the vulnerability itself: remove the exception and apply the verified compatible fix as soon as the approved mirror supplies it. No alternate feed, TLS/integrity bypass, unrelated pin churn or weakened assertion. Record current evidence in `docs/acceptance/multimodal-agent-management.md`.
 - [X] T107 HIGH F2: Fence stale WebSocket close/error callbacks per FR-021 and T075 (partial). In `code/management/management_app/components/live_audio.py`, `socket.onerror` and `socket.onclose` currently act on the mutable engine without checking their owning socket/epoch; an old socket's delayed normal close changes a newly starting test to ended/unavailable. Add ownership checks to all socket callbacks while preserving delivery of the current stopping session's confirmed cleanup, and extend `code/management/tests/unit/test_test_console.py` plus the existing browser journey in `code/management/tests/browser/test_configuration_editor.py` with delayed old close/error events after confirmed completion and an explicit replacement start. Assert that the replacement's media, ticket, socket and status are untouched and genuinely current failures still stop it; never auto-restart or replace an occupied session.
 - [X] T108 HIGH F3: Reject stale worklet capture across mute/interrupt flush boundaries per FR-017, FR-018, FR-027 and T073/T074 (partial). In `code/management/management_app/components/live_audio.py`, resetting `reserved` on mute without a local capture/grant identity allows a queued pre-mute PCM callback to consume fresh credit after unmute; the read-only budget probe accepted that old frame. Correlate capture, grants and flush acknowledgements so pre-flush callbacks cannot be relabelled as fresh audio or terminate an otherwise valid continuation. Extend `code/management/tests/unit/test_test_console.py` and the existing synthetic-media journey in `code/management/tests/browser/test_configuration_editor.py` with queued capture/grant/clear events across rapid mute/unmute and interrupt. Preserve protocol generation/sequence authority, PCM bounds, aggregate credits and immediate local fencing; do not renew deadlines, fabricate credit or reset runtime generation locally.
 - [X] T109 HIGH F4: Detect playback loss after readiness per FR-017, SC-005, US4/AC2 and T076 (partial). `code/management/management_app/components/live_audio.py` checks `AudioContext.state` during startup only; a read-only suspended-context probe left an active speech test ready without stopping media. Observe active context state/failure changes, surface an actionable playback-unavailable state, fence capture/playback and dispose owned resources without an unnoticed active test or automatic new provider session. Extend `code/management/tests/unit/test_test_console.py` and `code/management/tests/browser/test_configuration_editor.py` with post-ready suspension/interruption/closure and late events during teardown; retain the one-second obsolete-output and ten-second failure limits and ensure deliberate teardown is idempotent. Local doubles do not complete T086 physical playback qualification.
@@ -2003,4 +2003,59 @@ T106/T110/T111/T112/T113/T114 open. Actual paid provider/physical-device/enduran
 qualification still lacks required concrete probes, scoped execution authorization and/or
 real environment/device/recipient evidence. Test success cannot complete those tasks, and
 the failed strict advisory gate cannot be relabelled as a native CI pass or release approval.
+
+### 2026-11-03: Owner-Approved Mirror Gaps and All-Test Authorization
+
+The owner explicitly requested a separate YAML allow-list for unavailable mirrored fixed
+libraries and granted all required test approvals, including physical/browser and endurance
+tests. This supersedes older no-test-authorization notes, not technical prerequisites,
+privacy/spend controls, physical evidence, resource identity or no-provision/deployment scope.
+The owner chose to fill missing live-profile fields; never echo or publish their values.
+
+Implemented exact seven-day approvals in `code/dependency-mirror-gaps.yaml`, consumed by
+`code/tools/scripts/audit_dependencies.py` for npm/PyPI findings. Current minimatch 10.2.6 /
+GHSA-g3hv-75wg-m249 is still MODERATE, and read-only normal-TLS approved-mirror revalidation
+still finds no fixed 11.0.1. The approval expires 2026-11-09T23:42:34Z (host UTC was November 2).
+Reports retain vulnerability counts and explicit approved-exception counts; no fixed/zero
+claim. HIGH/CRITICAL/unknown severity, advisory/lookup failures, unlisted/expired entries and
+image findings are not exempted. Revalidation never renews automatically and rejects a newly
+available fixed release so the owner can apply the verified resolution and remove the entry.
+
+The complete static module passes 113 tests with 23 new policy regressions, including three
+observed red-first severity failures then passing protection. Exact source/tooling checks
+pass locks, lint/format, runtime+management typing, credential-free Terraform, whitespace,
+offline secrets and public-origin guards; complete tools passed 342 (59.55 seconds). The full
+unchanged feature-aware JUnit profile passes 857 runtime/719 management/342 tools, each zero
+failures/errors/skips, original discovery and 900-second per-suite bounds.
+
+The first actual image audit passed all hashed Python projects and accepted one visible npm
+exception, then backend dependency-install build failed before scanning. Linux Docker is
+available; one bounded diagnostic reproduced artifact/fetch errors without proving a specific
+root cause. Cleanup of a never-created audit cache also failed. No actual image vulnerability
+scan, successful repair or alternative input/feed is claimed from those attempts.
+
+Redacted readiness found models configured but exact ARM account IDs/app targets/signing keys/
+sink/recipient missing; eight concrete qualification probes remain unimplemented/unbound.
+Windows audio inventory is three inputs/three outputs; sandboxed installed Edge launches at
+155.0.4283.60, Chrome channel unavailable. Inventory is not headset/audio/timing/LINUX proof.
+No actual model/media/alert activity occurred in this readiness check. Actual provider,
+physical, full 600-second five-manager and sink recipient/recovery gates remain incomplete.
+
+The subsequent complete non-image CLI gate passed with explicit
+`dependency_audits_passed_with_exceptions`: hashed Python 69/93/68 packages, zero known
+findings in each; frontend 314 coordinates, exactly one vulnerability and one approved gap.
+Its complete source-gate tools rerun passed 342 tests (89.01 seconds). T106 is complete under
+the owner's revised alternative, not a claim that minimatch is patched. T100's full local
+checks are also complete under that explicit risk disposition. **105/114 checked**;
+T101/T114 still require actual successful current-source native/image CI gates.
+The owner confirmed only a Windows headset platform is available now; required Linux physical
+qualification remains unavailable, not removed or converted to a synthetic assertion.
+
+Final actual documentation validation rendered all 43 Mermaid sources across 53 documents
+using pinned CLI 12.0.0, existing sandbox and original bounds. A simulated 2030 clock exposed
+two calendar-dependent positive test cases; freezing only their fixture clock made the exact
+two cases pass, then full tools passed 342 again (77.55 seconds). Production real-UTC expiry
+was not changed. The previous full runtime/management suites remain source-identical.
+Local image builds remain a separately recorded failed attempt, not a passed scan or a
+reason to pretend the already-complete local application/non-image gate was unexecuted.
 

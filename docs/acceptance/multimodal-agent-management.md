@@ -7,8 +7,10 @@ one configured application-owned Agents backend, Foundry GPT-Live client delegat
 published-only browser text/speech tests and root documentation. This report is **local evidence,
 not production/live acceptance**. The owner has authorized feature-only commit/push/PR
 publication on the existing `feat/spec-002` branch for review, not merge, release, image
-publication, deployment or actual qualification. The latest full local profile
-passes 857 runtime, 719 management and 319 tools tests. The earlier responsive-shell setup
+publication or deployment. On 2026-11-03 the owner separately authorized all required tests,
+including actual qualification, without changing privacy, resource or cost controls.
+The latest full local profile passes 857 runtime, 719 management and 342 tools tests.
+The earlier responsive-shell setup
 errors remain historical with their cause unconfirmed, as recorded below.
 The dependency and external acceptance blockers remain. Feature-001 evidence and its
 deferred tasks are not recertified or reopened.
@@ -16,9 +18,10 @@ deferred tasks are not recertified or reopened.
 Actual Foundry bindings/identity/quota/retention (T062), current stable physical browser/headset
 qualification (T086), full-duration five-manager acceptance (T087), approved-sink delivery and
 current native Windows/Linux CI must not be inferred from controlled ports or screenshots.
-Those missing results block affected live acceptance. The operator separately authorized
-one bounded authentication-only attempt; no inference, provider/store access, credential
-discovery, provisioning, deployment, device/endurance/sink activity or paid model use was granted.
+Those missing results block affected live acceptance. The earlier authentication-only
+permission was superseded by the owner's current test authorization. Missing exact resources,
+working concrete probes, physical platforms and observed evidence still prevent certification;
+permission alone is not proof or a grant to provision/deploy substitute infrastructure.
 
 The operator retained the approved-mirror-only dependency policy and requested a Git-ignored
 local qualification-input template. It was created with disabled execution gates and blank
@@ -32,7 +35,64 @@ Source commit `49175e111da62d0834e483b0f7f2072cc372bf14` is published in
 completed **failed**. The staged/publication guards verified the exact reviewed feature set
 and excluded all local inputs; no merge or deployment was performed.
 
-## Current Test and Authentication Checkpoint
+## Current Mirror-Gap and Qualification Checkpoint
+
+The owner requested separate YAML allow-listing for fixed releases absent from approved
+mirrors and authorized all required tests on 2026-11-03. The exact seven-day
+[mirror-gap policy](../../code/dependency-mirror-gaps.yaml) and
+[revalidation procedure](../security.md#approved-mirror-gap-exceptions) implement that change.
+Normal TLS revalidation confirms minimatch 11.0.1 is still missing from the configured mirror;
+the current advisory reports MODERATE. Its vulnerability remains visible and counted, never
+relabeled zero or fixed. Expiry is 2026-11-09T23:42:34Z. No package/dependency lock, feed,
+integrity, TLS, test assertion or image HIGH/CRITICAL policy was changed.
+
+The full static module passes 113 tests, including 23 new mirror-gap cases. Three severity
+regressions failed before protection was implemented, then passed. Coverage includes exact
+version/advisory matches, expired/future/overlong approval, duplicate YAML keys/aliases,
+HIGH/CRITICAL/unknown severity, Python findings and mirror error/availability revalidation.
+Current full JUnit reports **857 runtime, 719 management, 342 tools**, each exit zero with
+no failures, errors or skips and unchanged full discovery/900-second per-suite limits.
+The exact source gate passed all locks, lint/format, both app type checks, credential-free
+Terraform, whitespace, secret/public-origin guards and 342 tools tests (59.55 seconds).
+
+The subsequent full non-image CLI audit passes as `dependency_audits_passed_with_exceptions`:
+hashed Python backend/management/tools 69/93/68 packages each have zero known findings;
+frontend 314 coordinates retain one vulnerability and one approved mirror gap. Its source-gate
+tools rerun passed 342 tests (89.01 seconds). T106 is complete under the owner's revised
+alternative, and T100's full local application/non-image gates are complete;
+**105/114 tasks checked**, not an assertion that the vulnerable package is fixed.
+T101/T114 still require successful current-source native/image CI evidence.
+
+Actual final documentation validation rendered all **43 Mermaid diagrams in 53 documents**
+with pinned CLI 12.0.0, the existing sandbox and original bounds. Two positive policy cases
+failed under a simulated 2030 clock before their test-only clock was frozen, then passed;
+the full tools suite passed 342 again (77.55 seconds). No production expiry check changed,
+and the full runtime/management results apply to unchanged application source.
+
+The initial `--images` attempt passed all three hashed Python audits and accepted exactly
+one visible frontend exception, then failed the backend dependency-install build stage
+before any vulnerability scan. Docker reports a Linux engine; a single bounded diagnostic
+reproduced fetch/artifact-not-found errors, without evidence of TLS/disk/engine failure.
+The original helper's failed cache cleanup obscured the build error. No image scan pass,
+root-cause repair or alternate scanner/feed/build input is claimed.
+
+A redacted readiness check found configured model endpoints/deployments but no exact ARM
+account IDs, running management/runtime targets, signing-key paths, alert sink or recipient.
+The owner chose to fill the missing ignored-profile fields; private values remain unprinted
+and the profile was not edited by this increment. Existing concrete qualification covers only
+deployment mapping; the remaining eight probes are not implemented/bound. Authorization is
+no longer the blocker, but those missing inputs/implementations and actual evidence are.
+
+Windows reports three input and three output audio endpoints. Installed Edge launches in a
+sandbox at version 155.0.4283.60; Chrome's installed channel is unavailable. These are inventory
+and launch observations only, not current-stable certification, microphone/headset playback,
+audible cutoff, unplug/navigation/logout qualification or a Linux physical-browser result.
+No audio was captured, model invoked or alert sent in this readiness check. Five-manager
+600-second endurance and actual sink recipient/recovery remain unobserved, not simulated passes.
+The owner confirmed only a Windows headset platform is available now. Required Linux physical
+qualification remains open; that requirement was not downgraded or replaced with synthetic media.
+
+## Earlier Test and Authentication Checkpoint
 
 The requested current full local profile parsed JUnit for **857 runtime, 719 management and
 319 tools tests**, each exit zero with no failures, errors or skips. Full discovery and the
@@ -323,14 +383,14 @@ destinations. Existing Terraform validation used its pinned credential-free prep
 | Principle | Evidence and Disposition |
 |-----------|--------------------------|
 | I Azure-first | Explicit Foundry/Entra/resource ports; actual model/region/quota approvals remain T062. |
-| II Security-first | Server authority, fixed signatures/origins, private-store ownership, privacy and final secret/public-origin checks pass locally; Moderate frontend advisory blocks the strict dependency gate, with no waiver. |
-| III Documentation | One root maintained tree, reconciled guides/contracts, 53 checked documents and 42 actual Mermaid renders; history preserved. |
+| II Security-first | Authority/privacy/secret/public-origin checks pass. The owner now approves one exact expiring MODERATE mirror-gap exception; finding retained, HIGH/CRITICAL/unknown still blocking. Actual image validation remains failed before scanning. |
+| III Documentation | One root maintained tree, reconciled guides/contracts, 53 checked documents and 43 actual Mermaid renders; history preserved. |
 | IV Service boundaries | Separate locks/artifacts/private stores; management publication/gateway and runtime authority communicate through versioned APIs. |
 | V Python/Reflex | Python applications and narrow Reflex-owned browser bridge; no alternate frontend application. |
 | VI Bounded realtime | Declared queues/clocks/capacity, CAS/closure proof and local pressure tests; real five-manager endurance pending. |
 | VII Observability | Bounded correlated test metadata and alert thresholds; approved-sink delivery remains unverified. |
 | VIII Terraform | No infrastructure behavior changed; only existing documentation/evidence path consumers moved. |
-| IX Automated tests | Current local and both native application suites pass 857/719/319. Native documentation/assertion gates pass; required dependency audits remain failed on minimatch. Earlier graph failures remain historical. |
+| IX Automated tests | Current local full suites pass 857/719/342. Earlier source 4496985 native app/docs passes 857/719/319 but auditing failed before the new approved policy. New-source CI and actual image validation are not inferred. |
 
 ## Final Gates
 
@@ -345,8 +405,9 @@ not silently overridden. No source was staged or committed by this implementatio
 
 - T099: Scoped privacy/authorization review and regression checks passed as recorded above;
   remaining dependency/full-source/actual environment gates are not declared clean.
-- T100: Full backend/management/tools suites pass as recorded above; the frontend advisory
-  still fails and this task remains blocked. The final exact local CI source gate passes
+- T100: Current full local backend/management/tools and source/privacy/non-image audit gates
+  pass under the owner's explicit expiring mirror-gap policy; this local task is complete.
+  The following original failed profile/source checkpoint is historical. That source gate passed
   locks, lint/format, application types, whitespace, existing credential-free Terraform checks,
   secrets/public-origin and 284 tools tests (56.82 seconds).
   The first full feature profile reported management 704 and tools 283 passed with zero
@@ -356,7 +417,8 @@ not silently overridden. No source was staged or committed by this implementatio
   passing regression and all 18 runner tests. That alone did not repair the stall; the tested
   project-module launch change produced the separate complete passing profile above with
   unchanged scope/limits. The original failed attempt remains historical, not overwritten.
-  Current Python advisory lookups passed; the frontend advisory gate remains blocked above.
+  Current Python advisory lookups pass; the retained MODERATE frontend finding now has the
+  explicit time-limited approval above, not a patched-package or zero-findings claim.
 - T101: An executed wiring regression confirms complete app suite commands, native Windows/
   Linux matrix, docs/advisory gates, read-only permissions and no test exclusions/live-endurance
   flags. Current source 4496985 passes both native application/assertion/documentation gates;

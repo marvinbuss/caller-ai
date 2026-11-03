@@ -46,9 +46,12 @@ The feature-aware profile runs all three test directories with actual JUnit coun
 original 900-second per-suite bound; it closes inherited stdin for unattended execution. It
 uses the project Python module entrypoint so Windows spawned-process tests resolve the same
 test modules as direct project execution, without changing tests or their own deadlines. It
-never turns local success into live/release approval. Current strict frontend advisories are
-blocked by [GHSA-g3hv-75wg-m249](../../docs/security.md#feature-002-current-advisory-blocker);
-do not ignore that result, alter pins blindly or substitute an unverified fixed artifact.
+never turns local success into live/release approval. The owner has approved an exact,
+seven-day YAML [mirror-gap exception](../../docs/security.md#approved-mirror-gap-exceptions)
+for GHSA-g3hv-75wg-m249 while the approved mirror lacks the fixed release. The finding remains
+visible and counted; HIGH/CRITICAL/unknown severity and expired/unlisted findings still fail.
+Revalidate with `audit_dependencies.py --revalidate-mirror-gaps`; do not renew automatically,
+alter pins blindly or substitute an unverified fixed artifact.
 
 Use `--directory` for management tests, not root-launched Reflex app imports that generate an
 unwanted root frontend lock. Default sockets remain blocked except owned loopback fixtures.
