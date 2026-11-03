@@ -2312,3 +2312,21 @@ application test files match e60796b exactly. All source/type/Terraform/privacy 
 pass73.12seconds; scoped final type/privacy/format hooks,54 documents/44 unchanged diagram
 sources and120 unique IDs/110 checked markers pass. Current native CI is still a separate gate.
 
+### 2026-11-03: Cleaned Ubuntu Failure and Exact Verification Observation
+
+Clean source52c1bdb / run41660155385 passed Windows/image but failed Ubuntu126000915296:
+857 runtime passed, management693 passed/26 failed. Earliest failure is overview text's
+confirmed Stop at line344 after actual `text.completed`; later starts are busy. There was no
+fixture startup error. The earlier fixture-exit diagnostic does not repair this condition.
+
+A narrower temporary owned-test-process probe calls the original cleanup/observe methods with
+their original arguments/deadlines, adding no I/O, await, retry, result override or capacity reset.
+It captures original observation presence and resource/closure/owner/mode matches plus SDK,
+disposal, actual processing-null versus done, watermarks, retained bytes and cleanup lock.
+The browser reads only closed booleans/bounded counters after its original assertion fails,
+then reraises. A red-first metadata privacy regression and reader/assertion test pass; owning
+backend79/console57 tests pass8.52/9.80seconds, three compiled journeys pass, and all source/
+type/Terraform/privacy gates plus368tools pass94.01seconds. No production source changed.
+This is observation only, not a root fix:110/120 checked, T101/T114 remain open, all temporary
+probes must be removed after diagnosis. No Terraform workflow, real plan or apply was invoked.
+

@@ -29,7 +29,7 @@ secret inputs, and has no automatic application loading; it must never be publis
 it supplies review inputs, not authority to execute tests. Exact existing resources, identity,
 privacy/retention, time/cost and applicable device/sink reviews still require confirmation.
 
-Source commit `49175e111da62d0834e483b0f7f2072cc372bf14` is published in
+Earlier source commit `49175e111da62d0834e483b0f7f2072cc372bf14` was published in
 [draft PR #3](https://github.com/marvinbuss/caller-ai/pull/3). Exact-source
 [CI run 41462727627](https://github.com/marvinbuss/caller-ai/actions/runs/41462727627)
 completed **failed**. The staged/publication guards verified the exact reviewed feature set
@@ -144,6 +144,18 @@ tests). All four restored application test files match clean sourcee60796b exact
 source/type/Terraform/privacy gates pass with368tools (73.12seconds); scoped final hooks,
 54-document/44-unchanged-diagram references and110/120 task accounting also pass. Required
 current-source native verification remains pending, not inferred from these local checks.
+
+Clean source52c1bdb / [run41660155385](https://github.com/marvinbuss/caller-ai/actions/runs/41660155385)
+passed Windows/image but failed Ubuntu:857 runtime passed, management693 passed/26 failed.
+The first failure is overview text's confirmed Stop after `text.completed` (line344); later
+cases are busy. No fixture startup error occurred. A narrower temporary test-only probe now
+observes the original cleanup observation result and compares resource/closure/owner/mode
+bindings, processing-null versus done, disposal, watermarks and cleanup-lock state. It adds
+no I/O/await/retry to cleanup and does not change release rules or production source. Only
+closed metadata is read after the original browser assertion fails, then that assertion reraises.
+Privacy regressions,79 backend/57 console tests and three compiled journeys pass. Complete
+source/type/Terraform/privacy gates and368tools pass94.01seconds. T101/T114 remain open;
+this probe is not a root repair and must be removed after the rejecting condition is identified.
 
 ## Earlier Input and Device-Scope Amendment
 
@@ -514,7 +526,7 @@ explicit actual gate in the final column. See [task evidence][tasks] for red-fir
 | FR-031 | [Schema-1 refusal and fresh bootstrap][validation], [runtime unavailable rules][runtime-integration] | No migration/reset/legacy fallback; controlled deployment-404 tests pass in both modes. |
 | FR-032 | [Setup][setup], [configuration guide][guide], [browser tests][browser], [task evidence][tasks] | Final full gates and actual acceptance remain explicit. |
 | FR-033 | [Independent browser/provider boundaries][runtime-integration], [scope audit][tasks] | No phone research/provider/PSTN qualification performed. |
-| FR-034 | [Existing dev/two-app verification][manager-contract], [root-only path consumers][docs-tests] | No hosting/IaC behavior or infrastructure activation. |
+| FR-034 | [Shared Terraform roots and protected reusable delivery](../runbooks/terraform-delivery.md), [root-only path consumers][docs-tests] | Owner-approved infrastructure code only; actual activation remains T120. No telephony or application release. |
 
 ## Success Traceability
 
@@ -524,7 +536,7 @@ explicit actual gate in the final column. See [task evidence][tasks] for red-fir
 | SC-002 | [Authorization/protocol negatives][manager-contract], [visibility][visibility], [grant denial][capabilities] | No unreviewed alternate service; actual environment pending. |
 | SC-003 | [All-width graph/forms/console journeys][browser] | Local complete; final full gate pending. |
 | SC-004 | [Atomic publication/conflict/reopen][publication], [drafts][drafts] | Local complete; actual store qualification separate. |
-| SC-005 | [Denied/late/unavailable/playback device doubles][browser] | T086 stable Edge/Windows and Chrome/Windows/Linux physical evidence pending. |
+| SC-005 | [Denied/late/unavailable/playback device doubles][browser] | T086 stable Edge/Windows and Chrome/Windows physical evidence pending; Linux physical qualification explicitly deferred, not passed. |
 | SC-006 | [Terminal/expiry/content/owner fences][admission], [synthetic exits][browser] | T086 actual audible cutoff pending. |
 | SC-007 | [Bounded concurrency and clocks][admission], [endurance refusal rules][qualifier] | T087 real-duration five-manager capacity/latency pending. |
 | SC-008 | [Twenty publication/new-start and revocation path][runtime-integration] | Local controlled transport complete; T087 actual evidence pending. |
@@ -560,7 +572,7 @@ destinations. Existing Terraform validation used its pinned credential-free prep
 | VI Bounded realtime | Declared queues/clocks/capacity, CAS/closure proof and local pressure tests; real five-manager endurance pending. |
 | VII Observability | Bounded correlated test metadata and alert thresholds; approved-sink delivery remains unverified. |
 | VIII Terraform | Owner-requested shared roots, protected bootstrap/plan storage, optional managed alert destinations and reusable OIDC delivery are defined/tested. Actual provisioning remains unqualified and requires reviewed plans/prerequisites. |
-| IX Automated tests | Current delivery tools367/nativeTerraform37/strict types/source/privacy gates pass. Earlier 90c3c04 native857/719/342 and image success is exact-source history, not a claimed native pass for this new increment. |
+| IX Automated tests | Current tools368/nativeTerraform37/strict types/source/privacy gates and four cleaned relay/text/speech journeys pass locally. Earlier native/image successes are exact-source history; required current cleaned-source native verification remains pending. |
 
 ## Final Gates
 
