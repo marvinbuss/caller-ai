@@ -2330,3 +2330,31 @@ type/Terraform/privacy gates plus368tools pass94.01seconds. No production source
 This is observation only, not a root fix:110/120 checked, T101/T114 remain open, all temporary
 probes must be removed after diagnosis. No Terraform workflow, real plan or apply was invoked.
 
+### 2026-11-03: Authenticated Live Closure Settlement Race Reproduced and Repaired
+
+Source770211f / run41666121935 passed image gates but failed both native jobs. Ubuntu
+126021785402 passed858 runtime; management696 passed/24 failed. The first speech case
+failed confirmed Stop, followed by busy starts. Fixed metadata showed SDK/model/processing/
+Live disposal complete, model attempted=settled=1, but observation resources/closure mismatched
+authoritative state. Windows126021785684 failed earlier in backend composition:833 passed/
+25 failed. The speech finding does not independently explain that separate failure.
+
+The Live receive path stored its authenticated receipt before awaiting authoritative settlement.
+Cancelling that reader left a receipt but no settled Live intent; later close incorrectly treated
+receipt presence as complete confirmation. A red-first deterministic regression reproduced
+attempted1/settled0 after close. The adapter now retains the original receipt and one settlement
+reference and confirms that same evidence during its existing bounded close. Both cancellation
+before write and after committed write/before reply pass, without another provider close or
+connection. Independent cleanup verification succeeds; uncertainty still cannot release slots.
+
+All110 admission/Live protocol cases pass22.24seconds; full backend860 passes with zero failures/
+errors/skips before temporary-probe removal. All source/type/Terraform/privacy gates and368tools
+pass47.07seconds. A separate compiled attempt had three setup errors before assertions,
+compilation1976bytes/unclassified; one unchanged attempt passed the three text/first-speech
+journeys. The failure remains recorded. All temporary verifier wrappers/status fields/readers
+and probe-only tests are removed; the two permanent cancellation regressions remain. Original
+assertions and all timing/cleanup/capacity rules are unchanged. Earlier text/Windows causes are
+not independently certified;110/120 checked, T101/T114 stay open pending current clean native CI.
+After removing every temporary probe, the exact relay contract and both text/first-speech
+journeys pass: four compiled tests, zero failures/errors/skips, original fixture/test limits.
+

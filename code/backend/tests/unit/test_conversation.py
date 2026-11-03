@@ -11,28 +11,6 @@ from tests.unit.test_test_admission import authority_store as authority_store
 from tests.unit.test_test_admission import live_case as live_case
 
 
-def test_owned_cleanup_verification_probe_is_closed_metadata():
-    from tests.integration.test_conversation import cleanup_verification_metadata
-
-    marker = "private-verification-fixture"
-    report = cleanup_verification_metadata(
-        {
-            "resources_match": True,
-            "processing_none": False,
-            "attempted": 4,
-            "settled": 4,
-            "arbitrary": marker,
-            "model_operations": marker,
-            "occupied": 1000001,
-            "model_clients": True,
-        }
-    )
-    assert report["resources_match"] is True and report["processing_none"] is False
-    assert report["attempted"] == report["settled"] == 4
-    assert report["occupied"] == report["model_clients"] == report["model_operations"] == 0
-    assert marker not in json.dumps(report) and "arbitrary" not in report
-
-
 def test_shared_policy_routes_initial_entry_but_rejects_missing_agent_edge(admission_case):
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
     from caller_runtime.services.conversation import ConversationPolicy

@@ -157,6 +157,27 @@ Privacy regressions,79 backend/57 console tests and three compiled journeys pass
 source/type/Terraform/privacy gates and368tools pass94.01seconds. T101/T114 remain open;
 this probe is not a root repair and must be removed after the rejecting condition is identified.
 
+Diagnostic source770211f / [run41666121935](https://github.com/marvinbuss/caller-ai/actions/runs/41666121935)
+passed images but failed both native jobs. Ubuntu858 runtime passed; management696 passed/
+24 failed. Its first speech case failed confirmed Stop, then later starts were busy. Closed
+metadata showed SDK/model/processing/Live disposal complete and one settled model request,
+but trusted resources/closure did not match authoritative state. Windows failed earlier in
+backend composition (833 passed/25 failed); its cause is not certified by the speech finding.
+
+A deterministic regression reproduced cancellation after authenticated `session.closed` was
+recorded locally but before authoritative Live settlement: `close()` previously returned while
+the Live watermark remained unsettled. The adapter now keeps one exact receipt/reference and
+confirms settlement during bounded close, including a committed write whose reply was lost.
+It does not reconnect, fabricate proof, reset capacity or extend deadlines. Both cancellation
+positions pass; all110 admission/Live contracts and the full860-test backend (including the
+temporary privacy case) pass. All source/type/Terraform/privacy gates and368tools pass47.07s.
+One compiled attempt had three pre-assertion setup errors (compilation1976bytes/unclassified);
+an unchanged attempt passed three journeys, preserving the failed setup history. All temporary
+probes/readers/status fields and probe-only tests are removed again. Earlier text/native causes
+are not independently certified, and T101/T114 remain open pending clean current native CI.
+After all temporary probes were removed, the exact relay contract plus both text/first-speech
+journeys pass again: four compiled tests, zero failures/errors/skips, unchanged limits.
+
 ## Earlier Input and Device-Scope Amendment
 
 On 2026-11-03 the owner requested exact missing-field guidance, selected the existing

@@ -447,6 +447,8 @@ class GptLiveSession:
             asyncio.Lock(),
         )
         self._receipt: ClosureReceipt | None = None
+        self._settlement_ref: str | None = None
+        self._closure_confirmed = False
         self._disposed = False
         self._transport_disposed = False
         self._retired = False
@@ -504,17 +506,26 @@ class GptLiveSession:
                     voiceSeconds=self.protocol.voice_seconds,
                     authenticated=True,
                 )
-                settlement_ref = "live-" + uuid4().hex
-                if self.adapter._settlement_observer is not None:
-                    self.adapter._settlement_observer.record(
-                        self.intent, settlement_ref, closure=self._receipt
-                    )
-                await self.adapter.admission.settle_attempt(
-                    self.intent,
-                    settlement_ref=settlement_ref,
-                    closure=self._receipt,
-                )
+                await self._confirm_closure()
             return event
+
+    async def _confirm_closure(self) -> None:
+        if self._closure_confirmed:
+            return
+        if self._receipt is None:
+            raise PermissionError("live_closure_unverified")
+        if self._settlement_ref is None:
+            self._settlement_ref = "live-" + uuid4().hex
+        if self.adapter._settlement_observer is not None:
+            self.adapter._settlement_observer.record(
+                self.intent, self._settlement_ref, closure=self._receipt
+            )
+        await self.adapter.admission.settle_attempt(
+            self.intent,
+            settlement_ref=self._settlement_ref,
+            closure=self._receipt,
+        )
+        self._closure_confirmed = True
 
     async def send_audio(self, pcm: bytes) -> None:
         try:
@@ -610,6 +621,7 @@ class GptLiveSession:
                         await self._send({"type": "session.close"})
                     while self._receipt is None:
                         await self._receive()
+                    await self._confirm_closure()
             except Exception:
                 raise PermissionError("live_closure_unverified") from None
             finally:

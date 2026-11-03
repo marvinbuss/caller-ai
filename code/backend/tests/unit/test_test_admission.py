@@ -1624,6 +1624,71 @@ def test_resource_cleanup_verifier_requires_independent_matching_disposal_and_se
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("persisted_before_cancel", [False, True])
+def test_live_close_confirms_receipt_settlement_after_reader_cancellation(
+    live_case, monkeypatch, persisted_before_cancel
+):
+    from caller_runtime.services.test_admission import CleanupObservations, ResourceCleanupVerifier
+
+    service, repository, clock, socket, opened = live_case
+
+    async def scenario():
+        original, segment = await opened()
+        observations = CleanupObservations(owner_id=service.owner_id, utc_now=clock.utc_now)
+
+        async def disposed():
+            return segment.disposed
+
+        observations.register(original, disposed=disposed)
+        monkeypatch.setattr(segment.adapter, "_settlement_observer", observations)
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_settle = service.settle_attempt
+        calls = []
+
+        async def blocked_settle(intent, **keywords):
+            calls.append(keywords["settlement_ref"])
+            result = await original_settle(intent, **keywords) if persisted_before_cancel else None
+            entered.set()
+            await release.wait()
+            return result if persisted_before_cancel else await original_settle(intent, **keywords)
+
+        monkeypatch.setattr(service, "settle_attempt", blocked_settle)
+        await socket.events.put(
+            json.dumps(
+                {
+                    "type": "session.closed",
+                    "reason": "close_requested",
+                    "usage": {"seconds": 3},
+                }
+            )
+        )
+        reader = asyncio.create_task(segment.next_event())
+        await asyncio.wait_for(entered.wait(), 1)
+        reader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reader
+        await service.mark_terminal(original.session_id, original.owner_epoch)
+        release.set()
+        receipt = await segment.close()
+        deadline = asyncio.get_running_loop().time() + 1
+        terminal = (await repository.read(deadline=deadline)).authority.slots[0]
+        assert terminal.resources["live"].attempted == terminal.resources["live"].settled == 1
+        assert terminal.closure_receipt == receipt
+        assert len(calls) == 2 and calls[0] == calls[1]
+        assert socket.closed == 1 and not any(
+            event["type"] == "session.close" for event in socket.sent
+        )
+        observed = await observations.observe(terminal, deadline)
+        assert observed is not None
+        verifier = ResourceCleanupVerifier(observe=observations.observe, utc_now=clock.utc_now)
+        assert (
+            await verifier.verify(terminal, verifier.evidence(terminal, observed), deadline)
+            == "verified"
+        )
+
+    asyncio.run(scenario())
+
+
 def test_cleanup_observation_source_uses_actual_bound_live_close_and_owned_disposal(
     live_case, monkeypatch
 ):
