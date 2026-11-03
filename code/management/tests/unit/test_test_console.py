@@ -11,53 +11,6 @@ import pytest
 from tests.contract.test_browser_tests import permit_document
 
 
-def test_owned_browser_status_probe_preserves_assertion_and_excludes_text(monkeypatch, capsys):
-    from tests.browser import test_configuration_editor as browser_tests
-
-    marker = "private-status-fixture"
-    expected = []
-
-    class FailedExpectation:
-        def to_have_text(self, value):
-            expected.append(value)
-            raise AssertionError("original-status-assertion")
-
-    class Client:
-        def __init__(self, **keywords):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *arguments):
-            pass
-
-        def get(self, endpoint):
-            return SimpleNamespace(
-                json=lambda: {
-                    "cleanupDiagnostic": {
-                        "model_unknown": True,
-                        "attempted": 1,
-                        "arbitrary": marker,
-                    }
-                }
-            )
-
-    monkeypatch.setattr(browser_tests, "expect", lambda locator: FailedExpectation())
-    monkeypatch.setattr(browser_tests.ssl, "create_default_context", lambda **keywords: object())
-    monkeypatch.setattr(browser_tests.httpx, "Client", Client)
-    page = SimpleNamespace(locator=lambda selector: SimpleNamespace(text_content=lambda: marker))
-    with pytest.raises(AssertionError, match="original-status-assertion"):
-        browser_tests.expect_console_status(
-            page, {"certificate": "fixture", "runtime": "https://runtime.fixture.example"}, "ready"
-        )
-    output = capsys.readouterr()
-    report = json.loads(output.out)
-    assert expected == ["ready"] and report["expected_status"] == "ready"
-    assert report["browser_status"] == report["browser_error"] == "unknown"
-    assert marker not in output.out + output.err and "arbitrary" not in report
-
-
 @pytest.mark.parametrize(
     "endpoint",
     [

@@ -11,32 +11,6 @@ from tests.unit.test_test_admission import authority_store as authority_store
 from tests.unit.test_test_admission import live_case as live_case
 
 
-def test_owned_browser_cleanup_diagnostic_is_metadata_only():
-    from tests.integration.test_conversation import owned_browser_cleanup_diagnostic
-
-    marker = "private-cleanup-fixture"
-    report = owned_browser_cleanup_diagnostic(
-        {
-            "sdk_drained": True,
-            "model_disposed": False,
-            "model_unknown": True,
-            "processing_done": True,
-            "model_clients": 1,
-            "model_operations": 0,
-            "retained_bytes": 0,
-            "attempted": 4,
-            "settled": 4,
-            "occupied": 1,
-            "arbitrary": marker,
-            "payload": marker,
-        }
-    )
-    assert report["sdk_drained"] is True and report["model_unknown"] is True
-    assert report["attempted"] == report["settled"] == 4
-    assert marker not in json.dumps(report)
-    assert "arbitrary" not in report and "payload" not in report
-
-
 def test_shared_policy_routes_initial_entry_but_rejects_missing_agent_edge(admission_case):
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
     from caller_runtime.services.conversation import ConversationPolicy

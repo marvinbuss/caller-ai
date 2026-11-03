@@ -2289,3 +2289,26 @@ No fixture budget, timeout, application source, capacity proof or deployment wor
 Current native verification remains unresolved:110/120 checked, T101/T114 open. Remove all
 temporary probes after diagnosis rather than presenting them as the final runtime repair.
 
+### 2026-11-03: Native Fixture Exit and Removal of Temporary Runtime Probes
+
+Sourcefe4855e / run41655655967 passed Ubuntu/image but failed Windows125985121658:
+858 runtime passed, management719 passed/one failed. All browser journeys passed; the sole
+relay contract failure was host-fixture entry at oldline27, with the fixed error
+`editor_process_exited_before_ready` from smoke.py324 before the scenario. No cleanup capture
+triggered. This does not explain or independently certify the earlier lifecycle failures.
+
+All temporary runtime cleanup wrappers/status fields/browser readers and probe-only unit tests
+are removed. Actual `text.completed` synchronization and every original assertion remain.
+The original backend conversation78 and console56 unit tests pass26.25/11.83seconds. A direct
+red-first regression now requires safe startup metadata, original failure, no arbitrary log
+content and exact owned-child cleanup. The same bounded existing build classifier/metadata
+is applied only to server early-exit failure; the test passes with no retry or limit change.
+This is diagnostic improvement, not a claimed process-exit repair. T101/T114 remain open and
+110/120 checked pending actual complete native verification. No deployment was dispatched.
+
+Final cleaned local validation passes the exact relay contract plus both text/first-speech
+journeys: four compiled tests, zero failures/errors/skips, unchanged limits. All four restored
+application test files match e60796b exactly. All source/type/Terraform/privacy gates and368tools
+pass73.12seconds; scoped final type/privacy/format hooks,54 documents/44 unchanged diagram
+sources and120 unique IDs/110 checked markers pass. Current native CI is still a separate gate.
+

@@ -10,83 +10,6 @@ from playwright.sync_api import Browser, Locator, Page, expect
 pytestmark = pytest.mark.browser
 
 
-def expect_console_status(page, configuration_host, expected_status):
-    try:
-        expect(page.locator("#test-status")).to_have_text(expected_status)
-    except AssertionError:
-        import json
-
-        try:
-            trust = ssl.create_default_context(cafile=configuration_host["certificate"])
-            with httpx.Client(verify=trust, trust_env=False, timeout=1) as diagnostic:
-                result = diagnostic.get(
-                    configuration_host["runtime"] + "/_test/runtime-status"
-                ).json()
-            fields = {
-                "sdk_drained",
-                "model_disposed",
-                "model_unknown",
-                "processing_done",
-                "cleanup_running",
-                "cleanup_result",
-                "terminal",
-                "model_clients",
-                "model_operations",
-                "retained_bytes",
-                "attempted",
-                "settled",
-                "occupied",
-                "cleanup_elapsed_ms",
-            }
-            values = {
-                key: value
-                for key, value in result.get("cleanupDiagnostic", {}).items()
-                if key in fields
-                and (type(value) is bool or type(value) is int and 0 <= value <= 1000000)
-            }
-            status = page.locator("#test-status").text_content()
-            error = page.locator("#test-error").text_content()
-            status = status.strip() if isinstance(status, str) else "unknown"
-            error = error.strip() if isinstance(error, str) else "unknown"
-            states = {
-                "ready",
-                "cleanup pending",
-                "busy",
-                "stopping",
-                "unavailable",
-                "ended",
-                "starting",
-                "permission",
-            }
-            errors = {
-                "Unavailable",
-                "Permission denied",
-                "Unsupported audio sample rate",
-                "Playback unavailable",
-                "Audio unavailable",
-                "Another test active",
-                "Output unavailable",
-                "Invalid protocol",
-                "Quota unavailable",
-            }
-            print(
-                json.dumps(
-                    {
-                        "event": "owned_browser_cleanup_failure",
-                        "expected_status": expected_status,
-                        "browser_status": status if status in states else "unknown",
-                        "browser_error": error if error in errors else "unknown",
-                        **values,
-                    }
-                )
-            )
-        except Exception:
-            print(
-                json.dumps({"event": "owned_browser_cleanup_failure", "diagnostic": "unavailable"})
-            )
-        raise
-
-
 @pytest.fixture(scope="module")
 def editor_host(editor_host_factory):
     from tests.conftest import configuration_graph_document
@@ -402,7 +325,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.locator("#test-agent")).to_have_text("agent-alpha")
         assert page.evaluate("window.callerTestCaptureCount") == 0
         page.get_by_role("button", name="Stop test", exact=True).click()
-        expect_console_status(page, configuration_host, "ended")
+        expect(page.locator("#test-status")).to_have_text("ended")
         expect(page.get_by_role("log", name="Conversation")).to_be_empty()
         expect(page.get_by_role("button", name="Start published test", exact=True)).to_be_enabled()
         page.get_by_role("button", name="Start published test", exact=True).click()
@@ -423,7 +346,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         )
         page.wait_for_function("window.callerTestCompleted === 2", timeout=5000)
         page.get_by_role("button", name="Stop test", exact=True).click()
-        expect_console_status(page, configuration_host, "ended")
+        expect(page.locator("#test-status")).to_have_text("ended")
         trust = ssl.create_default_context(cafile=configuration_host["certificate"])
         with httpx.Client(verify=trust, trust_env=False, timeout=1) as diagnostic:
             counts = diagnostic.get(configuration_host["runtime"] + "/_test/runtime-status").json()
@@ -581,7 +504,7 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
         page.get_by_label("Mode", exact=True).select_option("speech")
         assert page.evaluate("window.syntheticMedia.requests") == 0
         page.get_by_role("button", name="Start published test", exact=True).click()
-        expect_console_status(page, configuration_host, "ready")
+        expect(page.locator("#test-status")).to_have_text("ready")
         expect(page.locator("#test-capture")).to_have_text("Active")
         page.wait_for_function(
             "window.syntheticMedia.sent > 0 && window.syntheticMedia.received > 0"

@@ -18,33 +18,6 @@ from tests.unit.test_test_admission import signed_test_permit as signed_test_per
 SOCKET_URL = "wss://runtime.fixture.example/v1/internal/test-sessions"
 
 
-def owned_browser_cleanup_diagnostic(values: dict) -> dict:
-    report = {}
-    for key in (
-        "sdk_drained",
-        "model_disposed",
-        "model_unknown",
-        "processing_done",
-        "cleanup_running",
-        "cleanup_result",
-        "terminal",
-    ):
-        value = values.get(key)
-        report[key] = value if type(value) is bool else False
-    for key in (
-        "model_clients",
-        "model_operations",
-        "retained_bytes",
-        "attempted",
-        "settled",
-        "occupied",
-        "cleanup_elapsed_ms",
-    ):
-        value = values.get(key)
-        report[key] = value if type(value) is int and 0 <= value <= 1000000 else 0
-    return report
-
-
 def run_owned_browser_runtime(fixture_path):
     import asyncio
     import base64
@@ -63,7 +36,6 @@ def run_owned_browser_runtime(fixture_path):
     from caller_runtime.adapters.test_admission_repository import TestAdmissionRepository
     from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
     from caller_runtime.main import create_app
-    from caller_runtime.services.conversation import ConversationExecutor
     from tests.unit.test_session_repository import ContainerDouble
 
     path = Path(fixture_path)
@@ -74,50 +46,6 @@ def run_owned_browser_runtime(fixture_path):
     counters = {"modelRequests": 0, "liveConnections": 0, "inputFrames": 0}
     faults = {"unknown_prepare": False}
     container = ContainerDouble()
-    cleanup_state = {"executor": None, "started": 0.0, "running": False, "result": False}
-    original_close = ConversationExecutor.close
-
-    async def observed_close(executor, *, deadline=None):
-        cleanup_state.update(
-            executor=executor, started=time.monotonic(), running=True, result=False
-        )
-        try:
-            result = await original_close(executor, deadline=deadline)
-            cleanup_state["result"] = result
-            return result
-        finally:
-            cleanup_state["running"] = False
-
-    ConversationExecutor.close = observed_close
-
-    def cleanup_diagnostic():
-        executor = cleanup_state["executor"]
-        if executor is None:
-            return {}
-        slots = container.records.get("browser-test-authority-v1", {}).get("slots", [])
-        slot = next(
-            (item for item in slots if item.get("sessionId") == executor.policy.slot.session_id), {}
-        )
-        progress = slot.get("resources", {}).get("model", {})
-        active = executor._processing_task
-        return owned_browser_cleanup_diagnostic(
-            {
-                "sdk_drained": executor._sdk_drained,
-                "model_disposed": executor.text_adapter.disposed,
-                "model_unknown": executor.text_adapter._disposal_unknown,
-                "processing_done": active is None or active.done(),
-                "cleanup_running": cleanup_state["running"],
-                "cleanup_result": cleanup_state["result"],
-                "terminal": slot.get("terminalFence", False),
-                "model_clients": len(executor.text_adapter._clients),
-                "model_operations": executor.text_adapter._active_operations,
-                "retained_bytes": executor.retained_bytes,
-                "attempted": progress.get("attempted", 0),
-                "settled": progress.get("settled", 0),
-                "occupied": len(slots),
-                "cleanup_elapsed_ms": int((time.monotonic() - cleanup_state["started"]) * 1000),
-            }
-        )
 
     class Credential:
         async def get_token(self, *scopes):
@@ -346,10 +274,7 @@ def run_owned_browser_runtime(fixture_path):
     @application.get("/_test/runtime-status")
     async def status():
         return counters | {
-            "occupied": len(
-                container.records.get("browser-test-authority-v1", {}).get("slots", [])
-            ),
-            "cleanupDiagnostic": cleanup_diagnostic(),
+            "occupied": len(container.records.get("browser-test-authority-v1", {}).get("slots", []))
         }
 
     @application.post("/_test/unknown-prepare/{enabled}")

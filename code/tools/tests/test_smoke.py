@@ -208,6 +208,40 @@ def test_editor_build_failure_reports_only_safe_category(monkeypatch, tmp_path):
     assert '"node_error":"none"' in str(rejected.value)
 
 
+def test_editor_server_exit_reports_safe_metadata_without_retry(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+
+    candidate = "sensitive-server-fixture-must-not-leak"
+    children = []
+    cleaned = []
+
+    def spawn(*arguments, **options):
+        child = SimpleNamespace(wait=lambda **keywords: 0, poll=lambda: 1)
+        children.append(child)
+        if len(children) == 2:
+            options["stdout"].write("Traceback (most recent call last):\n" + candidate)
+        return child
+
+    monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
+    monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345, 12346])
+    monkeypatch.setattr(SMOKE.psutil, "Popen", spawn)
+    monkeypatch.setattr(SMOKE, "stop", lambda processes: cleaned.extend(processes))
+    monkeypatch.setattr(SMOKE, "restore_frontend_lock", lambda: None)
+    monkeypatch.setattr(SMOKE.ssl, "create_default_context", lambda **keywords: object())
+    monkeypatch.setattr(SMOKE.httpx, "Client", lambda **keywords: nullcontext())
+    with pytest.raises(
+        RuntimeError, match="editor_process_exited_before_ready:unclassified:"
+    ) as rejected:
+        with SMOKE.running_configuration_editor(
+            graph={}, identities=("manager-one",), mode="local"
+        ):
+            pytest.fail("exited_editor_server_was_accepted")
+    assert candidate not in str(rejected.value)
+    assert '"python_traceback":true' in str(rejected.value)
+    assert '"log_bytes":' in str(rejected.value)
+    assert len(children) == 2 and cleaned == children
+
+
 def test_editor_uses_canonical_absolute_temporary_paths(monkeypatch, tmp_path):
     from contextlib import contextmanager
 

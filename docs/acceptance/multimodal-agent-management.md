@@ -128,6 +128,23 @@ unclassified); one unchanged attempt then passed the three text/first-speech cas
 or deadline changed. Full console57 and all source/type/Terraform/privacy gates plus367tools
 pass. The probe remains temporary, T101/T114 remain open, and no deployment was dispatched.
 
+Sourcefe4855e / [run41655655967](https://github.com/marvinbuss/caller-ai/actions/runs/41655655967)
+passed Ubuntu/image but failed Windows:858 runtime passed, management719 passed/one failed.
+All browser journeys passed. The sole failure entered the owned relay contract's host fixture:
+`editor_process_exited_before_ready`, before the scenario, with no cleanup diagnostic emitted.
+This does not independently explain the earlier lifecycle failures. All temporary cleanup
+wrappers/readers/status fields and probe-only tests are now removed; protocol-completion waits
+and original assertions remain. The existing server-exit failure path now reports the same
+bounded category/metadata used for build failures, without raw logs, retries or budget changes.
+Its direct privacy/owned-cleanup regression failed before that change and passes afterward.
+The original backend conversation78 and console56 unit tests pass; current native verification
+remains open. A passing fixture rerun is not a certified repair of the earlier process exit.
+After removal, the exact relay contract and both text/first-speech journeys pass (four compiled
+tests). All four restored application test files match clean sourcee60796b exactly. Complete
+source/type/Terraform/privacy gates pass with368tools (73.12seconds); scoped final hooks,
+54-document/44-unchanged-diagram references and110/120 task accounting also pass. Required
+current-source native verification remains pending, not inferred from these local checks.
+
 ## Earlier Input and Device-Scope Amendment
 
 On 2026-11-03 the owner requested exact missing-field guidance, selected the existing

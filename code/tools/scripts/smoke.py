@@ -321,7 +321,19 @@ def running_configuration_editor(
                 with httpx.Client(verify=context, timeout=1, trust_env=False) as client:
                     while time.monotonic() < deadline:
                         if server.poll() is not None:
-                            raise RuntimeError("editor_process_exited_before_ready")
+                            output.flush()
+                            category = build_tools().build_failure_category(
+                                directory / "process.log"
+                            )
+                            metadata = build_tools().build_failure_metadata(
+                                directory / "process.log"
+                            )
+                            raise RuntimeError(
+                                "editor_process_exited_before_ready:"
+                                + category
+                                + ":"
+                                + json.dumps(metadata, separators=(",", ":"))
+                            )
                         try:
                             response = client.get(origin + "/readyz")
                             response.raise_for_status()
