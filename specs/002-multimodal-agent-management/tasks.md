@@ -2221,3 +2221,29 @@ passing Ubuntu result and must be removed after diagnosis.
 Current status: **110/120 checked**. The eight actual acceptance/deployment tasks remain open,
 plus T101/T114 required current native CI. No Terraform deployment workflow was dispatched.
 
+### 2026-11-03: Diagnostic Result and Confirmed-Stop Test Synchronization
+
+Diagnostic source `9959cd4ee7357e07fafa04db76dd63b08ed7c4e9` / run41639559368 again
+passed Windows and image checks but failed Ubuntu. The approved speech diagnostic showed
+busy, zero sent/received frames, and no server control; earlier text cases were also failing.
+Ubuntu management had694passed/26failed, including the text overview's confirmed Stop
+assertion (old diagnostic line380), followed by an occupied actor and downstream busy cases.
+The next text entry's existing fixture metadata showed four model requests, zero Live
+connections, one occupied slot and no new wire frames. No raw content/credentials were read.
+
+The confirmed-stop journey previously clicked Stop as soon as the complete reply string was
+visible, which can occur in `text.delta` before model completion/settlement. The actual adapter
+settles at `response.completed`, and runtime emits `text.completed` after streaming finishes.
+The test now counts that authoritative protocol event and waits for it (existing five-second
+assertion-scale bound) before each confirmed Stop. Every original Stop/restart/empty-slot/
+no-Live assertion remains; no application lifecycle, cancellation proof, timer or capacity was
+changed. This corrects the normal-path test condition, not a claim that arbitrary interrupted
+in-flight work can release capacity or that the first historical speech cause is certified.
+
+Both text-entry variants plus the next first speech journey pass locally: three actual compiled
+tests, zero failures/errors/skips. After removing the temporary speech diagnostic/helper and
+its probe-only unit test, the same three pass again and all56 original console tests pass
+12.54seconds. The console unit file is byte-identical to pre-diagnostic595a5b1. Production,
+Terraform and workflow source remain unchanged. Current full native evidence is still required;
+T101/T114 remain open and no deployment workflow was dispatched.
+

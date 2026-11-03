@@ -1,6 +1,5 @@
 """Real-browser editor contracts; identities are issued only by an owned test host."""
 
-import json
 import ssl
 from pathlib import Path
 
@@ -9,65 +8,6 @@ import pytest
 from playwright.sync_api import Browser, Locator, Page, expect
 
 pytestmark = pytest.mark.browser
-
-
-def speech_start_diagnostic(values: dict) -> dict:
-    allowed = {
-        "status": {
-            "idle",
-            "permission",
-            "starting",
-            "ready",
-            "stopping",
-            "cleanup pending",
-            "ended",
-            "unavailable",
-            "busy",
-        },
-        "error": {
-            "Permission denied",
-            "Unavailable",
-            "Invalid input",
-            "Quota unavailable",
-            "Another test active",
-            "Invalid protocol",
-            "Playback unavailable",
-            "Audio unavailable",
-            "Output unavailable",
-        },
-        "last_wire_type": {
-            "ready",
-            "error",
-            "ended",
-            "audio.credit",
-            "pong",
-            "command.ack",
-            "generation.changed",
-        },
-        "server_code": {
-            "stopped",
-            "work_busy",
-            "work_unavailable",
-            "test_unavailable",
-            "permission_denied",
-            "quota",
-            "manager_busy",
-            "session_expired",
-            "protocol_error",
-            "invalid_input",
-            "idle_expired",
-        },
-        "context_state": {"running", "suspended", "closed", "interrupted"},
-    }
-    report = {
-        key: value if isinstance(value, str) and value in options else "unknown"
-        for key, options in allowed.items()
-        for value in (values.get(key),)
-    }
-    for key in ("requests", "sent", "received", "socket_state"):
-        value = values.get(key)
-        report[key] = value if type(value) is int and 0 <= value <= 1000000 else 0
-    return report
 
 
 @pytest.fixture(scope="module")
@@ -329,13 +269,20 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
     page.on("websocket", observe)
     page.evaluate("""() => {
         window.callerTestCaptureCount = 0;
+        window.callerTestCompleted = 0;
         window.callerTestSockets = [];
         const NativeSocket = window.WebSocket;
         window.WebSocket = class extends NativeSocket {
             constructor(...arguments_) {
                 super(...arguments_);
-                if (String(arguments_[0]).endsWith('/v1/test-sessions'))
+                if (String(arguments_[0]).endsWith('/v1/test-sessions')) {
                     window.callerTestSockets.push(this);
+                    this.addEventListener('message', event => {
+                        if (typeof event.data !== 'string') return;
+                        const value = JSON.parse(event.data);
+                        if (value.type === 'text.completed') window.callerTestCompleted++;
+                    });
+                }
             }
         };
         navigator.mediaDevices.getUserMedia = () => {
@@ -374,6 +321,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.get_by_role("log", name="Conversation")).to_contain_text(
             "Synthetic shared reply"
         )
+        page.wait_for_function("window.callerTestCompleted === 1", timeout=5000)
         expect(page.locator("#test-agent")).to_have_text("agent-alpha")
         assert page.evaluate("window.callerTestCaptureCount") == 0
         page.get_by_role("button", name="Stop test", exact=True).click()
@@ -396,6 +344,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.get_by_role("log", name="Conversation")).to_contain_text(
             "Synthetic shared reply"
         )
+        page.wait_for_function("window.callerTestCompleted === 2", timeout=5000)
         page.get_by_role("button", name="Stop test", exact=True).click()
         expect(page.locator("#test-status")).to_have_text("ended")
         trust = ssl.create_default_context(cafile=configuration_host["certificate"])
@@ -526,14 +475,6 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
                     window.syntheticMedia.socket = this;
                     this.addEventListener('message', event => {
                         if (event.data instanceof ArrayBuffer) window.syntheticMedia.received++;
-                        else if (typeof event.data === 'string') {
-                            try {
-                                const control = JSON.parse(event.data);
-                                window.syntheticMedia.lastWireType = control.type;
-                                if (control.type === 'error')
-                                    window.syntheticMedia.serverCode = control.code;
-                            } catch {}
-                        }
                     });
                 }
             }
@@ -563,26 +504,7 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
         page.get_by_label("Mode", exact=True).select_option("speech")
         assert page.evaluate("window.syntheticMedia.requests") == 0
         page.get_by_role("button", name="Start published test", exact=True).click()
-        try:
-            expect(page.locator("#test-status")).to_have_text("ready")
-        except AssertionError:
-            observed = page.evaluate("""() => {
-                const media = window.syntheticMedia;
-                return {
-                    status: document.getElementById('test-status')?.textContent?.trim(),
-                    error: document.getElementById('test-error')?.textContent?.trim(),
-                    last_wire_type: media.lastWireType, server_code: media.serverCode,
-                    context_state: media.node?.context.state,
-                    socket_state: media.socket?.readyState,
-                    requests: media.requests, sent: media.sent, received: media.received,
-                };
-            }""")
-            print(
-                json.dumps(
-                    {"event": "synthetic_speech_start_failure", **speech_start_diagnostic(observed)}
-                )
-            )
-            raise
+        expect(page.locator("#test-status")).to_have_text("ready")
         expect(page.locator("#test-capture")).to_have_text("Active")
         page.wait_for_function(
             "window.syntheticMedia.sent > 0 && window.syntheticMedia.received > 0"

@@ -11,32 +11,6 @@ import pytest
 from tests.contract.test_browser_tests import permit_document
 
 
-def test_synthetic_speech_start_diagnostic_discards_private_and_unbounded_values():
-    from tests.browser.test_configuration_editor import speech_start_diagnostic
-
-    marker = "private-diagnostic-fixture"
-    report = speech_start_diagnostic(
-        {
-            "status": "cleanup pending",
-            "error": marker,
-            "last_wire_type": "error",
-            "server_code": "test_unavailable",
-            "context_state": "running",
-            "socket_state": 3,
-            "requests": 1,
-            "sent": marker,
-            "received": 2**40,
-            "arbitrary": marker,
-        }
-    )
-    assert report["status"] == "cleanup pending"
-    assert report["server_code"] == "test_unavailable"
-    assert report["error"] == "unknown"
-    assert report["sent"] == report["received"] == 0
-    assert marker not in json.dumps(report)
-    assert "arbitrary" not in report
-
-
 @pytest.mark.parametrize(
     "endpoint",
     [

@@ -89,6 +89,21 @@ artifact-upload policy was changed. The probe is not a repair or passing Ubuntu 
 T101/T114 are reopened: **110/120 checked** until the required current-source gate is observed
 passing. Earlier successful checkpoints remain historical. No deployment workflow was dispatched.
 
+The approved diagnostic source9959cd4 / run41639559368 also failed Ubuntu while Windows/image
+passed. The speech records showed only busy before any media, leading to the earlier text Stop
+failure:694management passed/26failed. Existing text metadata showed four model requests,
+zero Live and one retained slot; no raw content was inspected. The confirmed-stop text journey
+had treated visible streamed reply text as complete work. Source ordering shows model settlement
+at `response.completed` and runtime's final `text.completed` after streaming, so the normal-path
+test now waits for that protocol event before each confirmed Stop, preserving all original
+cleanup/restart assertions and production limits. It does not redefine in-flight cancellation
+or prove the first historical speech failure's cause independently.
+
+The temporary diagnostic and probe-only privacy test are removed. Both text variants and first
+speech case pass locally (three compiled tests), and the56 original console tests pass with the
+unit file restored byte-for-byte to595a5b1. Full current native verification remains pending;
+production/Terraform/workflow source is unchanged and no live deployment was attempted.
+
 ## Earlier Input and Device-Scope Amendment
 
 On 2026-11-03 the owner requested exact missing-field guidance, selected the existing
