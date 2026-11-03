@@ -16,7 +16,9 @@ qualification and live activation are not performed or authorized by this planni
 Deliver editable community and agent graphs, a published-configuration text/speech browser
 test console, a unified application-owned delegation backend and root-level repository docs.
 Only Foundry GPT-Live client delegation is permitted for the speech integration; Azure Voice
-Live, provider Responses delegation, telephony and hosting-specific work remain excluded.
+Live, provider Responses delegation and telephony remain excluded. The owner's 2026-11-03
+amendment separately adds protected Terraform bootstrap/workload CI/CD and shared roots;
+runtime hosting controllers and unapproved infrastructure activation remain excluded.
 
 First-party documentation confirms `gpt-live-1`, Foundry's Live endpoint and client delegation.
 It also states that GPT-Live outputs voice and delegates reasoning/tool work to a separate
@@ -61,7 +63,8 @@ WebSocket, graph keyboard parity, microphone lifecycle and manager-wide admissio
 Synthetic protocol tests do not establish actual Foundry or audio-device qualification.
 
 **Target Platform**: Existing Windows/Linux development workflows; audio acceptance is stable
-desktop Edge on Windows and Chrome on Windows/Linux with recorded versions. Responsive
+desktop Edge and Chrome on Windows with recorded versions. The owner deferred Linux physical
+qualification on 2026-11-03; native Windows/Linux application CI remains required. Responsive
 360/768/1440 layouts are required; mobile audio qualification is not. No hosting platform
 selection, cluster work or deployment is part of this feature.
 
@@ -95,7 +98,7 @@ Configuration schema/HTTP v2 is a documented fresh-start break; the new browser 
 | V. Python/Reflex | Python service logic and Reflex-authored UI retained. Thin framework-generated browser API/component glue is not permission to author a separate React app. Compatibility remains a test gate. |
 | VI. Bounded real-time behavior | Preserve measured goals, shared manager admission, epochs, deadlines and bounded queues. Do not expand into hosting-specific scaling or old phone workloads. |
 | VII. Observability | Require both-service content-free correlation, fixed event categories and app-level signals. No new hosting-specific collectors or alert infrastructure are planned. |
-| VIII. Terraform | No infrastructure change is required or authorized in this PR. Existing infrastructure is untouched except incidental documentation-reference updates if necessary. |
+| VIII. Terraform | The later owner amendment explicitly adds shared bootstrap/workload roots, per-environment backend/variable files and protected reusable OIDC delivery with private exact-plan storage. Actual plan/apply and reachability remain separately unqualified; no public/local/key fallback. |
 | IX. Automated tests | Plan contract/unit/integration/browser tests and separate authorized service/device verification. No test has been executed or passed by this planning command. |
 
 **Gate result**: Design-level GPT-Live evidence is verified in the official
@@ -296,8 +299,9 @@ Change existing `verify_docs.py` discovery, `ci.py` scanning and `verify_release
 feature inventory. Extend `code/tools/tests/test_static_checks.py` for root discovery, local
 links/assets/images/fragments and duplicate old maintained-tree rejection. Add feature-002
 34-FR/10-SC traceability without overwriting feature-001 evidence or assuming old phone/
-hosting profiles qualify the new app. No infrastructure definitions or runtime hosting behavior
-change. Newly authored setup/interface/retention/failure guidance belongs in moved root docs.
+hosting profiles qualify the new app. The relocation slice changes no infrastructure definitions
+or runtime hosting behavior; the later owner-requested Terraform delivery amendment is separate.
+New setup/interface/retention/failure guidance belongs in maintained root docs.
 
 ## Verification Mapping
 
@@ -305,11 +309,11 @@ change. Newly authored setup/interface/retention/failure guidance belongs in mov
 |---|---|
 | FR-001-006; SC-001/002 | Runtime Agents/Foundry adapter contract/integration tests: exact client delegation, explicit Azure clients, shared text/speech configuration and zero excluded/fallback paths. Separately approved real-model evidence. |
 | FR-007-015; SC-003/004 | Management schema/draft/publication tests and real compiled Reflex browser journeys; directed graph edits and keyboard/forms at all three widths, source-preserving routing and conflict retention. |
-| FR-016-021; SC-005/006 | Actual owned app WebSockets, native browser bridge, published-only normal entry/revision, secure upgrade, late output/track cleanup; actual Edge/Windows and Chrome/Windows/Linux audio qualification. |
+| FR-016-021; SC-005/006 | Actual owned app WebSockets, native browser bridge, published-only normal entry/revision, secure upgrade, late output/track cleanup; actual Edge/Windows and Chrome/Windows audio qualification. Linux physical evidence is owner-deferred, not reported passed. |
 | FR-022-025; SC-002/008 | Existing capability/revocation/audit tests extended for both modalities, metadata-only telemetry and volatile-retention tests; actual authority/alert verification remains explicit. |
 | FR-026-028; SC-006/007/010 | Independent-runtime CAS races, five-slot exhaustion, unknown cleanup, bounded frame/credit/queue/epoch tests, controlled clocks and blocked-egress default tests; separately measured original live latency/capacity goals. |
 | FR-029-032; SC-009 | Root documentation moves, reference/asset/fragment/render tests, feature-aware traceability, fresh schema/projection parity and the quickstart scenario matrix. |
-| FR-033/034; SC-010 | Scope review and endpoint/configuration assertions: zero telephone-service calls, Voice Live, Responses delegation, hosting-specific code or infrastructure activation. |
+| FR-033/034; SC-010 | Zero telephone-service/Voice Live/Responses fallback and zero default cloud activation. Added owner-approved Terraform delivery uses offline/native mocked and workflow contracts, with actual provisioning recorded separately rather than inferred. |
 
 Reuse existing test files/helpers rather than creating duplicate frameworks. Extend runtime
 configuration cache/visibility/routing/handover tests with modality-independent fixtures,

@@ -132,11 +132,13 @@ is needed or permitted. Missing approval leaves the integration unavailable.
    configuration. Existing default `reflex run`/local runtime commands are not a live setup
    and must not silently activate by receiving ambient environment credentials. The
    implementation must document its reviewed composition invocation and fixed safe errors.
-4. On stable Edge/Windows and Chrome/Windows/Linux, record browser/OS versions and actual
+4. On stable Edge/Windows and Chrome/Windows, record browser/OS versions and actual
    microphone/headset. Start by gesture, select available/default output, speak/hear, mute,
    interrupt, stop and test denied/no-response permission, autoplay block, unplug, logout,
    page departure and network loss. Include real loopback/audible measurements; DOM labels
    and screenshots cannot prove headset output or one-second audible cutoff.
+   Linux physical qualification is owner-deferred to a follow-up, not reported tested. Declare
+   `deferred_platforms: ["chrome_linux"]` explicitly; both Windows platforms remain required.
 5. Execute at least 20 eligible scripted journeys, ten text and ten speech, with the same
    published graph and equivalent routing/capability rules. Text requires no microphone and
    no Live speech session. Confirm every excluded endpoint/delegation/service is absent.

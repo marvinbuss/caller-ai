@@ -9,6 +9,11 @@ are now locally validated, with effective live behavior still pending qualificat
 No Azure login, backend connection, real plan, apply, provisioning or deployment was performed.
 Default application startup and all prior security/foundation/live gates are unchanged.
 
+The owner's later Terraform CI/CD request adds [reusable protected delivery](terraform-delivery.md),
+explicit environment inputs and a separate private plan/review container with its own scoped
+writers. The bootstrap's existing remote-state protections remain; its first plan still needs
+protected storage in the already approved seed account. No real apply is implied by workflow code.
+
 The authored resources describe a future reviewed environment. Names, region, principal IDs,
 existing network references and retention must be explicitly supplied; none is approved by a
 test fixture or an example. Backend/provider validation and mocked plans do not establish

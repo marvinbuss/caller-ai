@@ -116,6 +116,49 @@ run "both_service_alerts_are_explicit_private_and_disabled_pending_delivery" {
   }
 }
 
+run "managed_action_group_wires_disabled_service_alerts" {
+  command = plan
+  variables {
+    monitoring = merge(var.monitoring, {
+      action_group = {
+        name            = "ag-caller-fixture"
+        short_name      = "caller-dev"
+        email_receivers = { operations = "operations@example.invalid" }
+      }
+      services = { for name, service in var.monitoring.services : name => merge(service, { action_group_id = "" }) }
+    })
+  }
+  override_resource {
+    target          = azurerm_monitor_action_group.application[0]
+    override_during = plan
+    values = {
+      id = "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-caller-platform-fixture/providers/Microsoft.Insights/actionGroups/ag-caller-fixture"
+    }
+  }
+  assert {
+    condition = (
+      length(azurerm_monitor_action_group.application) == 1 &&
+      length(azurerm_monitor_action_group.application[0].email_receiver) == 1 &&
+      alltrue([for rule in azurerm_monitor_scheduled_query_rules_alert_v2.service : !rule.enabled && toset(rule.action[0].action_groups) == toset([azurerm_monitor_action_group.application[0].id])])
+    )
+    error_message = "Managed recipients must wire the exact group without enabling unqualified alerts."
+  }
+}
+
+run "invalid_managed_receiver_rejected" {
+  command = plan
+  variables {
+    monitoring = merge(var.monitoring, {
+      action_group = {
+        name            = "ag-caller-fixture"
+        short_name      = "caller-dev"
+        email_receivers = { operations = "not-an-address" }
+      }
+    })
+  }
+  expect_failures = [var.monitoring]
+}
+
 run "missing_monitor_owner_rejected" {
   command = plan
   variables {

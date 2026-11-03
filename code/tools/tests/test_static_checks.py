@@ -1410,7 +1410,18 @@ def test_terraform_check_uses_validate_and_mocked_tests_only(terraform_checks, m
         "validate",
         "test",
     ]
-    assert terraform_checks.ROOTS[-1] == terraform_checks.BASE / "environments/dev"
+    assert terraform_checks.ROOTS[-1] == terraform_checks.BASE / "environments"
+
+
+def test_terraform_environments_share_one_root_and_explicit_environment(terraform_checks):
+    directory = terraform_checks.BASE / "environments"
+    main = (directory / "main.tf").read_text(encoding="utf-8")
+    variables = (directory / "variables.tf").read_text(encoding="utf-8")
+    assert 'source              = "../modules/platform"' in main
+    assert "environment = var.environment" in main
+    assert 'environment = "dev"' not in main
+    assert 'variable "environment"' in variables
+    assert not list(directory.glob("*/main.tf"))
 
 
 def test_terraform_preparation_is_explicit_and_missing_tool_does_not_fall_back(

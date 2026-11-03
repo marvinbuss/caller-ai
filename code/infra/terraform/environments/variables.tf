@@ -1,6 +1,15 @@
+variable "environment" {
+  type        = string
+  description = "Explicit environment name; configuration and state remain independently bound."
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{1,15}$", var.environment))
+    error_message = "Supply a canonical environment name without paths or whitespace."
+  }
+}
+
 variable "subscription_id" {
   type        = string
-  description = "Explicit approved development subscription, never inferred from a CLI session."
+  description = "Explicit approved environment subscription, never inferred from a CLI session."
   validation {
     condition     = can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.subscription_id))
     error_message = "Supply an approved subscription UUID."
@@ -41,7 +50,7 @@ variable "tags" {
 }
 
 variable "services" {
-  description = "Explicit approved development resource names, sizes, network references and retention."
+  description = "Explicit approved resource names, sizes, network references and retention."
   type = object({
     aks_name                = string
     acr_name                = string
@@ -91,13 +100,18 @@ variable "security" {
 }
 
 variable "monitoring" {
-  description = "Required reviewed per-service owners, published runbooks, existing action-group IDs, bounded thresholds and cost cap; module validates and leaves alerts disabled."
+  description = "Reviewed owners, runbooks, existing action-group IDs, thresholds and cap; alerts remain disabled."
   type = object({
     daily_cap_gb = number
+    action_group = optional(object({
+      name            = string
+      short_name      = string
+      email_receivers = map(string)
+    }), null)
     services = map(object({
       owner                = string
       runbook_url          = string
-      action_group_id      = string
+      action_group_id      = optional(string, "")
       error_ratio          = number
       mean_latency_seconds = number
       dependency_failures  = number

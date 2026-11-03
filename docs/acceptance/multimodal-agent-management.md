@@ -35,7 +35,77 @@ Source commit `49175e111da62d0834e483b0f7f2072cc372bf14` is published in
 completed **failed**. The staged/publication guards verified the exact reviewed feature set
 and excluded all local inputs; no merge or deployment was performed.
 
-## Current Mirror-Gap and Qualification Checkpoint
+## Current Terraform Delivery Amendment
+
+The owner explicitly added Terraform bootstrap/workload CI/CD, reusable workflows and shared
+IaC definitions driven by per-environment variable/backend files. The
+[delivery runbook](../runbooks/terraform-delivery.md) documents exact prerequisites and operation;
+this is not silent reopening of feature-001 deferred work, runtime controllers or actual apply.
+The existing release-preflight workflow stays unchanged. New manual callers use one protected
+OIDC workflow, no public plan artifacts and exact private saved-plan review/apply. Hosted runners
+are the initial requested default; inability to reach private state blocks instead of enabling
+public/key/CLI fallback. Bootstrap's first plan uses existing supplied seed storage; subsequent
+workload plans use the provisioned protected state/plan account. No live configuration is invented.
+
+Native Terraform validation passes **3 roots / 37 mocked tests**. Optional managed Action Groups
+and scoped private plan storage are tested; all service alert rules remain disabled pending actual
+collection/delivery qualification. The new helper passes 17 offline contracts and strict typing;
+full source gates pass with **367 tools tests** (106.93 seconds), then 367 again in the complete
+advisory gate (93.71 seconds). All hashed Python audits are clean (69/93/68 packages); frontend
+314 coordinates retain one MODERATE vulnerability and one approved expiring mirror gap.
+All 54 documents/44 diagram sources validate; the one new diagram actually renders with pinned
+12.0.0/sandbox/original bounds. The unchanged 43 diagram sources retain earlier render evidence.
+
+The earlier actual, explicitly authorized mapping observation also passed: one token request for
+the fixed ARM scope and four exact resource GETs returned HTTP 200, both deployment bindings
+matched, and local disposal was confirmed. Metadata digest
+`7b91b3abfbaff8eed0ba4dc86ddc58b20b6f73b0c48d5fc51ea10fcbe2c0614a`;
+zero model calls, no token persistence, no raw private resource/credential/response values.
+This is only deployment mapping, not proof of model permissions or complete T062/T110.
+
+Task status is **112/120 checked** after the explicit scope addition. T062/T086/T087/T110/
+T111/T112/T113 plus T120 actual infrastructure activation remain unqualified. Source publication
+for credential-free CI is owner-authorized; no deployment workflow, real plan/apply, provisioning,
+role grant, merge or image/app release ran. Earlier exact-source native/image evidence below
+does not certify this new increment or substitute for actual private deployment qualification.
+
+## Earlier Input and Device-Scope Amendment
+
+On 2026-11-03 the owner requested exact missing-field guidance, selected the existing
+Azure Monitor/Action Group integration, increased the total test ceiling to **100 USD** and
+explicitly deferred Linux physical qualification. Current physical acceptance is actual stable
+Windows Edge and Chrome; Linux's disposition is deferred to a follow-up, not a passing test.
+Windows T086/T111 remain incomplete until actual provider/device evidence exists. Native
+Windows/Linux application CI is unaffected and remains required.
+
+The ignored [local qualification profile](../setup.md#completing-the-private-qualification-profile)
+has approved numeric review bounds (provider/device600s, endurance operation900s, total100USD)
+and blank exact ARM/model/Monitor reference slots. Existing credentials were preserved and
+all five execution flags remain disabled. The [input guide](../setup.md#completing-the-private-qualification-profile)
+identifies each field and its existing-resource source. The offline
+`--check-qualification-inputs` flag emits only fixed missing field names, never values, raw
+parse errors or credentials; it starts no network/browser/model activity and always leaves
+qualification pending. The actual current report needs six Foundry mapping fields, two app
+origins and five Monitor routing/recipient fields. An Action Group test notification or
+nonempty label is not app-event delivery, and receipt/recovery records remain unfilled.
+
+`BrowserScope.deferred_platforms=("chrome_linux",)` is explicit, fingerprint-bound and
+reported, while both Windows browsers remain required. Omitting Linux without the declaration
+rejects; existing full-platform manifests remain compatible. Two red-first scope cases and
+two red-first intake cases passed after implementation; intake boundaries/no-network cases
+also pass. Oversized test payloads keep their full size and use short parameter IDs to avoid
+Windows' pytest environment limit. Full tools pass **349 tests** (86.74 seconds), then all
+repository locks/lint/types/Terraform/whitespace/secret/public-origin gates pass with a fresh
+349-test tools run (76.62 seconds). Strict typing of the changed module passes. Application,
+infrastructure, dependency locks and workflows are unchanged by this tools/scope increment.
+
+Task status remains **107/114**. The first mapping probe still needs exact inputs; the eight
+remaining provider probes need concrete implementation/binding and actual observations.
+The owner's grant is not the blocker. No actual provider/media/alert activity was attempted
+without those prerequisites, and previous CI evidence below is bound to its exact source,
+not relabeled as a pass for this new increment.
+
+## Earlier Mirror-Gap and Qualification Checkpoint
 
 The owner requested separate YAML allow-listing for fixed releases absent from approved
 mirrors and authorized all required tests on 2026-11-03. The exact seven-day
@@ -408,13 +478,13 @@ destinations. Existing Terraform validation used its pinned credential-free prep
 |-----------|--------------------------|
 | I Azure-first | Explicit Foundry/Entra/resource ports; actual model/region/quota approvals remain T062. |
 | II Security-first | Authority/privacy/secret/public-origin checks pass. One exact expiring MODERATE mirror-gap exception retains its finding; HIGH/CRITICAL/unknown remain blocking. Exact-source CI scans three images with zero HIGH/CRITICAL findings. |
-| III Documentation | One root maintained tree, reconciled guides/contracts, 53 checked documents and 43 actual Mermaid renders; history preserved. |
+| III Documentation | One maintained tree, 54 checked documents/44 sources; the new delivery diagram actually rendered and 43 unchanged diagrams retain prior render evidence. History is preserved. |
 | IV Service boundaries | Separate locks/artifacts/private stores; management publication/gateway and runtime authority communicate through versioned APIs. |
 | V Python/Reflex | Python applications and narrow Reflex-owned browser bridge; no alternate frontend application. |
 | VI Bounded realtime | Declared queues/clocks/capacity, CAS/closure proof and local pressure tests; real five-manager endurance pending. |
 | VII Observability | Bounded correlated test metadata and alert thresholds; approved-sink delivery remains unverified. |
-| VIII Terraform | No infrastructure behavior changed; only existing documentation/evidence path consumers moved. |
-| IX Automated tests | Current local and exact-source 90c3c04 Windows/Ubuntu suites pass 857/719/342, all docs/assertion/advisory gates pass under the explicit mirror-gap policy, and actual image smoke/scans pass. Earlier failures remain historical. |
+| VIII Terraform | Owner-requested shared roots, protected bootstrap/plan storage, optional managed alert destinations and reusable OIDC delivery are defined/tested. Actual provisioning remains unqualified and requires reviewed plans/prerequisites. |
+| IX Automated tests | Current delivery tools367/nativeTerraform37/strict types/source/privacy gates pass. Earlier 90c3c04 native857/719/342 and image success is exact-source history, not a claimed native pass for this new increment. |
 
 ## Final Gates
 
@@ -457,10 +527,11 @@ not silently overridden. No source was staged or committed by this implementatio
 - T062/T086/T087 and approved-sink delivery remain unrun/unconfirmed; missing proof blocks
   affected live acceptance and never becomes release, deployment or merge approval.
 
-The unresolved task gates are T062, T086, T087, T110, T111, T112 and T113. Actual provider,
-physical headset, endurance and approved-sink evidence still block affected acceptance under
-Principles II/VI/VII and T105. No missing result is a pass; this assessment does not authorize
-merge, image publication or deployment.
+The unresolved task gates are T062, T086, T087, T110, T111, T112, T113 and T120. Remaining
+provider checks, actual Windows headset/endurance/sink evidence and actual protected dev
+deployment still block affected acceptance. Linux physical work is explicitly deferred, not
+reported passed. No missing result is a pass; this assessment does not authorize merge,
+image publication or an unreviewed deployment.
 
 [tasks]: ../../specs/002-multimodal-agent-management/tasks.md
 [live]: ../../code/backend/tests/contract/test_gpt_live.py

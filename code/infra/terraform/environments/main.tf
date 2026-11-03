@@ -38,17 +38,27 @@ provider "azuread" {
 }
 
 module "platform" {
-  source              = "../../modules/platform"
+  source              = "../modules/platform"
   location            = var.location
   resource_group_name = var.resource_group_name
   tenant_id           = var.tenant_id
   services            = var.services
   security            = var.security
   monitoring          = var.monitoring
-  tags                = merge(var.tags, { environment = "dev" })
+  tags                = merge(var.tags, { environment = var.environment })
 }
 
 output "platform_resource_group_name" {
   value       = module.platform.resource_group_name
   description = "Nonsecret platform reference; not deployment or application readiness."
+}
+
+output "environment" {
+  value       = var.environment
+  description = "Explicit environment binding shared by every workload deployment."
+}
+
+output "managed_action_group_id" {
+  value       = module.platform.managed_action_group_id
+  description = "Optional managed notification destination; application delivery remains unqualified."
 }

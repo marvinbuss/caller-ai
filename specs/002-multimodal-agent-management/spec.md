@@ -21,6 +21,13 @@ approved for the shared application-owned Agents backend, called directly for te
 GPT-Live client delegation for speech. Browser microphone/headset and text testing over
 standard secure WebSockets remain in scope and do not require a telephone integration.
 
+**Owner scope amendment (2026-11-03)**: The later explicit request adds Terraform CI/CD for
+bootstrap and workload infrastructure, reusable protected workflows, one shared definition
+per root type with environment variable/backend files, private saved-plan review and optional
+managed alert destinations. This narrowly supersedes the earlier infrastructure-code exclusion;
+it does not authorize actual apply, public-state/network exceptions, image/application deployment,
+telephony or automatic reopening of feature-001 deferred operational work.
+
 ## Clarifications
 
 ### Session 2026-10-29
@@ -28,9 +35,15 @@ standard secure WebSockets remain in scope and do not require a telephone integr
 - Q: How should managers edit communities, agents, and their connections? -> A: Editable graphs with draggable community/agent boxes and directed connections, plus forms and equivalent keyboard controls.
 - Q: What should happen to existing published configurations when the new connection graphs are introduced? -> A: There are no existing published configurations; start fresh, with no backward compatibility or migration requirement for this feature.
 - Q: Should the management test console include text chat in this feature, alongside microphone/headset testing? -> A: Yes; include both text and speech testing in management, using the same published configuration.
-- Q: Which browsers must pass microphone and headset testing before this feature is accepted? -> A: Desktop Edge on Windows and Chrome on Windows/Linux; retain mobile-width layout checks without requiring mobile audio qualification.
+- Q: Which browsers must pass microphone and headset testing before this feature is accepted? -> A: Desktop Edge and Chrome on Windows; the owner deferred Linux physical qualification on 2026-11-03. Retain mobile-width layout checks without requiring mobile audio qualification.
 - Q: What limits should apply to each manager's live test sessions? -> A: One active session per manager across modes, tabs and devices; a ten-minute maximum and a two-minute inactivity timeout.
 - Q: May a separate Azure Foundry reasoning/text model power the shared Agents backend, with GPT-Live used for speech via client delegation and text chat calling that same backend directly? -> A: Allow a separate Foundry reasoning/text model; one shared application-owned Agents backend serves both modes and GPT-Live remains the only speech service.
+
+### Session 2026-11-03
+
+- Q: How should Linux physical qualification proceed when no Linux device is available? -> A: Defer it to a follow-up; current physical acceptance covers Windows Edge and Chrome. This closes the Linux requirement by explicit deferral for this feature, not by a passing Linux test. Windows tests still require actual evidence.
+- Q: What spend limit applies to the required full-duration qualification? -> A: The owner approves a 100 USD total ceiling. Use bounded provider/device checks and a 900-second endurance operation for admission plus five participants each completing the unchanged 600-second session lifetime; no automatic spend or execution before prerequisites.
+- Q: What infrastructure delivery work is now requested? -> A: Terraform bootstrap and workload CI/CD using reusable protected workflows and shared IaC roots with per-environment variables/backends; the existing seed backend and supplied storage account are used, GitHub-hosted runners are the initial configurable default, and actual apply still requires reviewed plans and prerequisites.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -269,7 +282,8 @@ references and run the documented documentation checks without relying on the ol
   capture microphone audio, play agent audio through the available selected/default device,
   and expose connection, recording/mute, playback and terminal/error states truthfully.
   Required audio acceptance MUST cover current stable desktop Edge on Windows and Chrome on
-  Windows/Linux, with tested versions recorded. Mobile audio qualification is not required.
+  Windows, with tested versions recorded. Linux physical qualification is explicitly deferred
+  to a follow-up, not reported as passed. Mobile audio qualification is not required.
 - **FR-018**: Test controls MUST include start, stop and microphone mute/unmute. Stopping, leaving
   the test surface, losing authorization or losing the connection MUST stop capture/playback;
   background navigation MUST NOT continue an unnoticed live test.
@@ -329,12 +343,12 @@ references and run the documented documentation checks without relying on the ol
   integrations, telephone-number/PSTN connectivity, carrier callback/media adapters or actual
   telephone-call flows. Telephony decisions and implementation belong to a later specification.
   Browser text and microphone/headset tests MUST work independently of those deferred integrations.
-- **FR-034**: This PR MUST NOT introduce or modify hosting-specific features for Kubernetes,
-  AKS or any other deployment runtime, including cluster admission/RBAC, pod/node retirement,
-  autoscaling controllers, deployment/provisioning definitions or infrastructure activation.
-  Application behavior MUST be verifiable in the existing development setup without those
-  features. Updating existing documentation/verification references for the root docs move is
-  in scope, but MUST NOT add hosting behavior or reopen old hosting/release tasks.
+- **FR-034**: Application behavior MUST remain verifiable without hosting-specific changes.
+  The owner's 2026-11-03 amendment permits Terraform bootstrap/workload delivery definitions,
+  environment-neutral roots, per-environment variable/backend files, optional managed alert
+  destinations and reusable OIDC/private exact-plan workflows. It MUST NOT add runtime
+  admission/retirement/autoscaling controllers, image/application deployment, unapproved apply,
+  local/public state or key/CLI-authentication fallbacks, or silently reopen old release tasks.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -373,7 +387,8 @@ references and run the documented documentation checks without relying on the ol
 - **SC-005**: In all tested permission-denied/device-unavailable/playback-blocked scenarios,
   managers receive an actionable state and no unnoticed recording or falsely active test remains;
   text interaction does not require microphone permission. This MUST pass on desktop Edge on
-  Windows and Chrome on Windows/Linux; results identify the browser versions tested.
+  Windows and Chrome on Windows; results identify the browser versions tested. Linux physical
+  testing is owner-deferred to a follow-up and is not part of this feature's current acceptance.
 - **SC-006**: All tested interruptions, stops and disconnects suppress obsolete playback within
   one second, initiate zero post-terminal actions and release temporary content within five minutes.
   This also applies to ten-minute maximum-duration and two-minute inactivity expiry; simultaneous
@@ -391,7 +406,9 @@ references and run the documented documentation checks without relying on the ol
 - **SC-010**: Default startup and automated local checks require zero live phone/model calls,
   microphone permissions or external-service credentials. Separately approved browser/GPT-Live
   checks make zero telephone-service calls and require zero hosting-specific changes; they report
-  actual scope/results without upgrading synthetic evidence into live qualification.
+  actual scope/results without upgrading synthetic evidence into live qualification. The added
+  Terraform delivery is a separately protected manual operation, never part of default startup
+  or credential-free local/native CI; definitions/tests do not certify actual provisioning.
 
 ## Assumptions
 
@@ -437,7 +454,8 @@ references and run the documented documentation checks without relying on the ol
 - **Device scope**: Testing uses the manager's available browser/operating-system microphone and
   output-device selection, including a headset when selected. Unsupported browser device-selection
   features fail clearly rather than promising universal hardware control. Required audio coverage
-  is desktop Edge on Windows and Chrome on Windows/Linux. Responsive layout remains tested at
+  is desktop Edge and Chrome on Windows. Linux physical qualification is owner-deferred to a
+  follow-up, not a successful test. Responsive layout remains tested at
   360, 768 and 1440 pixel widths, but does not certify mobile-browser audio support; Firefox,
   Safari and mobile audio are not additional acceptance targets for this feature.
 - **Publication**: Test sessions execute published configuration only, not unsaved drafts or an

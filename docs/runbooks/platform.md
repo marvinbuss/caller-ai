@@ -2,7 +2,7 @@
 
 ## Status and Authorization
 
-T095 is locally authored and validated. The [development root](../../code/infra/terraform/environments/dev/main.tf)
+T095 is locally authored and validated. The [shared environment root](../../code/infra/terraform/environments/main.tf)
 composes the reusable platform module with required reviewed inputs. No Azure backend was
 activated, credentials resolved, real plan created, resource provisioned or application deployed.
 No production environment or deployment approval is implied. T097-T101 and the existing
@@ -34,8 +34,10 @@ flowchart LR
 ```
 
 All resource definitions remain under `code/infra/terraform`. The existing protected resource
-group and nonsecret owner tags are retained. The development root forces `environment=dev`;
-there is no production root or automatic promotion. [Remote state](terraform-state.md) remains
+group and nonsecret owner tags are retained. The shared root takes an explicit `environment`;
+dev/prod differ by reviewed variables/backend files, not copied definitions or automatic promotion.
+[Reusable Terraform delivery](terraform-delivery.md) includes separate bootstrap/platform callers
+and protected saved-plan apply. [Remote state](terraform-state.md) remains
 the separate private OIDC/Entra state foundation, not an application data store.
 
 ## Required Inputs

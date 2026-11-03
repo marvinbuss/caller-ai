@@ -1,7 +1,7 @@
 resource "azurerm_resource_group" "state" {
   name     = var.resource_group_name
   location = var.location
-  tags     = merge(var.tags, { application = "caller-ai", managed_by = "terraform" })
+  tags     = merge(var.tags, { application = "caller-ai", managed_by = "terraform", environment = var.environment })
 
   lifecycle {
     prevent_destroy = true
@@ -77,6 +77,24 @@ resource "azurerm_storage_container" "state" {
   }
 }
 
+resource "azurerm_storage_container" "plans" {
+  name                  = var.plan_container_name
+  storage_account_id    = azurerm_storage_account.state.id
+  container_access_type = "private"
+  depends_on            = [azurerm_private_endpoint.state]
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "azurerm_role_assignment" "plan_writer" {
+  for_each             = var.state_writer_principal_ids
+  scope                = azurerm_storage_container.plans.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = each.value
+}
+
 resource "azurerm_role_assignment" "state_writer" {
   for_each             = var.state_writer_principal_ids
   scope                = azurerm_storage_container.state.id
@@ -99,5 +117,7 @@ output "state_backend" {
     container_name       = azurerm_storage_container.state.name
     use_azuread_auth     = true
     use_oidc             = true
+    key                  = "${var.environment}/platform.tfstate"
+    plan_container_name  = azurerm_storage_container.plans.name
   }
 }

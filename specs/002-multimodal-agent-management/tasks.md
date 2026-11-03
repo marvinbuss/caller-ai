@@ -240,7 +240,7 @@ qualification; T086/T087 cover the separately approved actual browser/model acce
 - [X] T083 [US4] Extend `code/tools/scripts/verify_multimodal.py` and `code/tools/tests/test_verify_multimodal.py` with explicit approved stable-browser/device/loopback timing scenarios and a distinct opt-in live-endurance mode for T087, metadata-only sample/version reporting, unchanged latency/cost limits and receipt/cleanup uncertainty; absent mode/approval rejects before microphone/model use, and default local/native CI neither invokes the 600-second live run nor silently skips a required local assertion or reports live qualification passed.
 - [X] T084 [US4] Update test-console controls, exact guarded composition invocation/prerequisites and failure/cleanup guidance in `code/docs/setup.md` and `code/docs/configuration-guide.md` (or their `docs/` paths after US5), clearly separating credential-free local fixtures from authorized Foundry/headset qualification.
 - [X] T085 [US4] Execute the US4 local independent journey and complete its security/device-double regressions, then record actual local outcomes, synthetic-versus-physical evidence boundaries and still-gated T086/T087 in `specs/002-multimodal-agent-management/tasks.md`.
-- [ ] T086 [US4] Only after T062 and separate device/model approval, use `code/tools/scripts/verify_multimodal.py` to qualify current stable Edge/Windows and Chrome/Windows/Linux with actual microphone/headset output, denied/unanswered permission, mute, autoplay/unplug, interruption/stop/navigation/logout/connection loss; record exact versions, <=1-second audible cutoff, <=10-second failures and cleanup metadata in `specs/002-multimodal-agent-management/tasks.md`, not recordings/transcripts; leave blocked if unavailable.
+- [ ] T086 [US4] After actual T062 qualification, use `code/tools/scripts/verify_multimodal.py` to qualify current stable Edge/Windows and Chrome/Windows with actual microphone/headset output, denied/unanswered permission, mute, autoplay/unplug, interruption/stop/navigation/logout/connection loss; record exact versions, <=1-second audible cutoff, <=10-second failures and cleanup metadata, not recordings/transcripts. The owner granted tests and explicitly deferred Linux physical qualification on 2026-11-03: declare `deferred_platforms=("chrome_linux",)`, record that disposition rather than a passing Linux test, and leave the Windows task incomplete until observed.
 - [ ] T087 [US4] Only as a separately opted-in acceptance run under the explicit T062/T086 environment/time/spend approval, use the live-endurance mode of `code/tools/scripts/verify_multimodal.py` to execute at least 20 eligible journeys split ten text/ten speech, with five isolated concurrent managers each completing the full 600-second lifetime; supply accepted participant text/speech before idle expiry, measure p95 relevant response <=2 seconds after actual input completion excluding declared external-action waits, 20 publication/fresh-start checks <=60 seconds, next-action revocation denial and shutdown at the lifetime cap. Keep this real-duration run outside default local/native CI; record observed distributions/usage/closure in `specs/002-multimodal-agent-management/tasks.md`, leave unexecuted qualification pending and never substitute virtual time, silence/keepalives or a shorter run for its live evidence.
 
 ## Phase 7: US5 - Root-Level Maintained Documentation (P2)
@@ -1688,7 +1688,7 @@ credential, spend and publication restrictions; a task is not authorization for 
 - [X] T108 HIGH F3: Reject stale worklet capture across mute/interrupt flush boundaries per FR-017, FR-018, FR-027 and T073/T074 (partial). In `code/management/management_app/components/live_audio.py`, resetting `reserved` on mute without a local capture/grant identity allows a queued pre-mute PCM callback to consume fresh credit after unmute; the read-only budget probe accepted that old frame. Correlate capture, grants and flush acknowledgements so pre-flush callbacks cannot be relabelled as fresh audio or terminate an otherwise valid continuation. Extend `code/management/tests/unit/test_test_console.py` and the existing synthetic-media journey in `code/management/tests/browser/test_configuration_editor.py` with queued capture/grant/clear events across rapid mute/unmute and interrupt. Preserve protocol generation/sequence authority, PCM bounds, aggregate credits and immediate local fencing; do not renew deadlines, fabricate credit or reset runtime generation locally.
 - [X] T109 HIGH F4: Detect playback loss after readiness per FR-017, SC-005, US4/AC2 and T076 (partial). `code/management/management_app/components/live_audio.py` checks `AudioContext.state` during startup only; a read-only suspended-context probe left an active speech test ready without stopping media. Observe active context state/failure changes, surface an actionable playback-unavailable state, fence capture/playback and dispose owned resources without an unnoticed active test or automatic new provider session. Extend `code/management/tests/unit/test_test_console.py` and `code/management/tests/browser/test_configuration_editor.py` with post-ready suspension/interruption/closure and late events during teardown; retain the one-second obsolete-output and ten-second failure limits and ensure deliberate teardown is idempotent. Local doubles do not complete T086 physical playback qualification.
 - [ ] T110 HIGH F5: Complete actual provider qualification per FR-001, FR-006, FR-028, US3/AC1 and T062 (partial), only after separate operator authorization for the exact existing environment, identity, deployments, time and spend. Use the reviewed ports of `code/tools/scripts/verify_multimodal.py` to verify actual Foundry GPT-Live/text deployment mapping, supported client delegation, Entra access, available quota, region/residency/lifecycle/retention and authenticated exact-session closure. Record bounded metadata-only results and remaining uncertainty in `docs/acceptance/multimodal-agent-management.md` and this task's completion evidence in `specs/002-multimodal-agent-management/tasks.md`; preserve T062 until its own criteria are observed. Missing approval/access/evidence leaves this blocked. No credential discovery, provisioning, telephony, hosting work, alternate speech service or model fallback.
-- [ ] T111 HIGH F6: Complete physical browser/headset qualification per FR-017, SC-005, SC-006, US4/AC2 and T086 (partial), only after T110/T062 and separate device/model approval. Use `code/tools/scripts/verify_multimodal.py` with actual current stable Edge/Windows and Chrome/Windows/Linux, recording exact browser/OS versions and genuine microphone/output observations for denied/unanswered permission, playback/autoplay, unplug, mute, interruption, stop, navigation, logout and connection loss. Verify <=1-second audible cutoff, <=10-second failures and actual cleanup, including the T107-T109 lifecycle corrections. Record metadata-only evidence in `docs/acceptance/multimodal-agent-management.md` and `specs/002-multimodal-agent-management/tasks.md`; leave blocked when a platform/device or approval is unavailable. Bundled Chromium, synthetic media and Node probes cannot qualify T086.
+- [ ] T111 HIGH F6: Complete the owner-amended physical browser/headset scope per FR-017, SC-005, SC-006, US4/AC2 and T086 after actual T110/T062. Use `code/tools/scripts/verify_multimodal.py` with current stable Edge/Windows and Chrome/Windows, recording exact versions and genuine microphone/output observations for denied/unanswered permission, playback/autoplay, unplug, mute, interruption, stop, navigation, logout and connection loss. Verify <=1-second audible cutoff, <=10-second failures and actual cleanup, including T107-T109. Record metadata-only evidence and the owner's explicit Linux-physical deferral to a follow-up; never report Linux passed or infer Windows acceptance from bundled Chromium, synthetic media or Node. Test approval is granted; missing actual Windows/provider evidence remains blocking.
 - [ ] T112 HIGH F7: Demonstrate the actual capacity/latency/publication targets per SC-001, SC-007, SC-008 and T087 (partial), only after T110/T111 and the separately approved full-duration environment/time/spend scope. Execute the live-endurance mode of `code/tools/scripts/verify_multimodal.py` with five isolated concurrent managers each completing 600 seconds, accepted user input preventing idle expiry, at least ten text and ten speech journeys, measured p95 relevant response <=2 seconds excluding declared external-action waits, 20 new-publication starts <=60 seconds, existing-session pins and next-action revocation denial. Record actual distributions, usage and confirmed shutdown/closure in `docs/acceptance/multimodal-agent-management.md` and `specs/002-multimodal-agent-management/tasks.md`. Unknown closure, shorter runs, virtual clocks, silence or missing approval remain unqualified; do not add endurance waits to routine tests or native CI.
 - [ ] T113 HIGH F8: Demonstrate end-to-end approved alert delivery per plan: Security and Observability, Constitution VII, T097 and T105 (partial), without adding hosting collectors or reopening feature-001 work. Inspect/use the explicit observation ports in `code/backend/src/caller_runtime/observability.py` and `code/management/management_app/observability.py` and their owning `code/backend/src/caller_runtime/main.py` and `code/management/management_app/composition.py` lifecycles; preserve credential-free defaults and add only any necessary explicitly injected approved-sink binding. Extend the existing service `tests/unit/test_observability.py` files and `code/tools/tests/test_verify_multimodal.py` for bounded nonblocking delivery, shutdown, cross-service correlation and content/credential exclusion. Only after separate approval of an existing sink, record representative actual cleanup-uncertainty/dependency/latency alert receipt, accountable recipient acknowledgement and recovery evidence in `docs/acceptance/multimodal-agent-management.md`, linked to `docs/runbooks/monitoring.md`. Controlled sink assertions alone do not complete this gate; absent approval or actual delivery remains blocked.
 - [X] T114 HIGH F9: Obtain reviewer-visible current native CI evidence per plan: Verification Mapping, Constitution IX and T101 (partial). Verify `.github/workflows/ci.yml` and `code/tools/scripts/ci.py` retain complete backend/management/tools collection, compiled responsive Reflex journeys, documentation rendering and strict advisory gates after T106-T109; extend existing tooling regressions only for an observed wiring defect. Use an already authorized current run or request the operator's separate authorization for any required Git publication/workflow action, then record actual Windows and Linux results in `docs/acceptance/multimodal-agent-management.md` and `specs/002-multimodal-agent-management/tasks.md`. Local suite results and static workflow inspection are not a native CI pass. Do not stage, commit, create/switch branches, push, publish images or deploy from this task without separate explicit authorization; keep T101 blocked while results are unavailable or required gates fail.
@@ -2090,4 +2090,96 @@ and exact live inputs, supported physical Windows/Linux headset evidence, real f
 five-manager acceptance and approved sink receipt/recipient/recovery. All test authorization
 is already granted; missing resources/implementations/platforms/evidence are not approvals.
 This evidence-only follow-up does not claim another revision's CI pass or live/release acceptance.
+
+### 2026-11-03: Exact Input Guidance, Windows Scope and 100 USD Review
+
+The owner asked to use the existing private config and specify exactly what is missing;
+selected the existing Azure Monitor/Action Group integration; approved a **100 USD total**
+ceiling; and explicitly deferred unavailable Linux physical testing, closing that requirement
+by disposition for this feature without claiming a passing Linux test. Current T086/T111 still
+need actual Windows Edge/Chrome and T062 results. The spec, plan, quickstart and setup now
+record this amendment; native Windows/Linux CI is unaffected and remains required.
+
+`BrowserScope.deferred_platforms` permits only explicit `("chrome_linux",)`, included in the
+authorization fingerprint and reports, while requiring both Windows browsers. Omitting Linux
+without the deferral rejects. Legacy full-platform manifests remain valid. Two new red-first
+cases failed on missing behavior, then passed; the owning module subsequently passed 86 tests.
+No device/provider execution, timing/cost/closure rule or acceptance result was fabricated.
+
+The ignored private TOML has only approved numeric review changes (provider/device600s,
+endurance operation900s, total100USD), blank exact deployment/Monitor reference slots and
+no credential changes or enabled execution flags. A duplicate newly inserted `sink_kind`
+was repaired by removing only the added duplicate, preserving the existing original. TOML,
+all five disabled gates, ignored/untracked state and documentation references were validated.
+`docs/setup.md` names every required field and its Azure portal/deployment source; actual
+receipt/recovery references remain blank until observed.
+
+The new offline `--check-qualification-inputs` flag lists only fixed schema-owned missing
+field names, never values, raw parser errors or credentials. It rejects oversized/duplicate
+TOML and constructs no network client; five new intake/privacy tests pass. Oversized test data
+uses short explicit parameter IDs after Windows' environment limit rejected pytest's generated
+ID, without shrinking the payload/assertion. The actual config currently reports six missing
+Foundry mapping fields, two app origins and five Monitor routing/recipient fields. It is not
+an executor or completed qualification: eight concrete provider checks still need binding/
+implementation and actual evidence once the first mapping inputs are supplied.
+
+Final scope/intake validation passes all 349 tools tests (86.74 seconds), strict typing of
+the owning module, and the complete source gate including both app type checks, credential-free
+Terraform, whitespace, offline secrets and publication-origin checks plus a fresh 349-test
+tools run (76.62 seconds). Root references validate 53 documents/43 unchanged diagram sources;
+no new diagram render is needed for prose-only amendments. No application, infrastructure,
+dependency lock or workflow source changed. All 114 IDs and 107 checked markers are preserved;
+the seven actual remaining tasks stay open, with Linux explicitly deferred rather than failed
+or counted as a passing physical test. The next operator step is to fill the named references,
+not supply another generic test approval or expose credentials in chat.
+
+## Phase 10: Owner-Requested Terraform Infrastructure Delivery
+
+**Scope amendment (2026-11-03)**: The owner explicitly requested Terraform CI/CD including
+bootstrap, reusable workflows and one consistent definition across environments with different
+variable files. This adds only the named delivery work, not a blanket reopening of feature-001
+deferred tasks, runtime controllers, image/app release or unapproved apply. Existing seed backend
+coordinates will be supplied per environment; use the supplied account for protected plans.
+GitHub-hosted runners are the requested initial default, configurable later, but missing private
+network reachability must block rather than open state publicly or disable TLS/authentication.
+
+- [X] T115 Consolidate `code/infra/terraform/environments/main.tf`, `variables.tf`, provider lock and native composition tests into one shared workload root; pass explicit environment variables/tags and update `code/tools/scripts/verify_terraform.py` root discovery, preserving resource addresses, provider pins and existing private/OIDC policy. Native mocked dev/prod/invalid-environment tests pass.
+- [X] T116 Extend `code/infra/terraform/bootstrap/main.tf` and `variables.tf` with explicit environment tags, a separate private plan container and scoped writers; add optional managed Action Groups/validated recipients in `code/infra/terraform/modules/platform/monitoring.tf` and the shared input schema, preserving existing group references and disabled unqualified alert rules. Native mocked checks pass across three roots: 37 tests, no cloud.
+- [X] T117 Implement `code/tools/scripts/terraform_delivery.py` and `.github/workflows/terraform-deploy.yml` plus manual bootstrap/platform callers: trusted main/manual/OIDC environment guards, actual branch/reviewer checks, exact backend/variable/state binding, private no-overwrite plan/review/manifest storage, checksum/source/run/config/expiry-verified saved-plan apply and no destructive/public-artifact/secret fallback. Sixteen offline input/execution/YAML contracts pass; no actual deployment is inferred.
+- [X] T118 Run final complete tooling/source/type/native-Terraform/secret/public-origin checks and actual new-diagram rendering for the delivery increment; record exact counts and failure/qualification boundaries in `docs/runbooks/terraform-delivery.md`, `docs/acceptance/multimodal-agent-management.md` and this task record, with no silent skip or gate weakening.
+- [X] T119 Add nonsecret per-environment bootstrap/platform JSON variable/backend examples under `code/infra/terraform/config/`; document exact GitHub environments, OIDC bindings, storage/runner/network prerequisites, private plan review and failure recovery in `docs/runbooks/terraform-delivery.md` and current navigation. Example parsing/input binding and 54-document/44-source reference checks pass; no real environment values or secrets are invented.
+- [ ] T120 Only after supplied/reviewed real configuration, protected GitHub environments, OIDC identities, private connectivity and explicit reviewed-plan apply approval, qualify actual bootstrap then platform deployment via the new workflows. Record source/run/plan digests, state locking/permissions, resource/recipient behavior and recovery without exposing plans/state/tokens. Keep unexecuted deployment unqualified; the requested hosted runner default is not evidence that private storage is reachable, and no existing feature-001 task is marked complete by this addition.
+
+### 2026-11-03: Terraform Delivery Engineering and Actual Mapping Evidence
+
+The updated shared/managed-bootstrap/platform Terraform passes pinned native validation across
+three roots and **37 mocked tests**. The protected delivery helper passes **17 offline contracts**
+covering exact environment/backend/state binding, centralized state subscription, no credential/
+argument inheritance, private/encrypted storage, protected main/environments, independent review,
+immutable private plan transfer, source/run/config/hash/expiry, tampering, output-only changes,
+destructive-plan rejection and reusable/manual YAML. Strict typing of both delivery/qualification
+modules passes; full source gates pass all locks/lint/types/Terraform/whitespace/secret/public-origin
+checks and **367 tools tests** (106.93 seconds), followed by an audit-owned 367-test rerun
+(93.71 seconds). Python 69/93/68 packages have zero known findings; frontend 314 retains one
+vulnerability and the existing explicit expiring mirror-gap exception, not a zero-findings claim.
+
+All 54 documents/44 diagram sources validate. The one new delivery diagram was actually rendered
+with pinned Mermaid 12.0.0, existing sandbox and original bounds; 43 unchanged diagrams were not
+rerendered merely for reassurance. Initial missing EOFs/synthetic secret-shaped fixture were
+repaired without a scanner exemption; native test mock-phase and output-only-plan regressions
+were repaired without weakening assertions or enabling deployment.
+
+Separately, the owner's completed private mapping inputs were verified by the existing actual
+deployment probe: one fixed-ARM-scope token request and four exact account/deployment GETs all
+returned HTTP 200; both full mapping bindings matched, local disposal confirmed, zero model calls
+and no token persistence. Metadata digest:
+`7b91b3abfbaff8eed0ba4dc86ddc58b20b6f73b0c48d5fc51ea10fcbe2c0614a`.
+This verifies only `existing_bindings`, not model permissions/quota/features/delegation/closure or
+T062/T110 completion. No private IDs/endpoints/credentials/provider responses were emitted.
+
+Task status is **112/120 checked**: original seven live tasks plus new T120 actual infrastructure
+qualification remain open. The owner authorized source publication to the existing draft PR for
+credential-free CI only; no deployment dispatch, real Terraform plan/apply, role grant, resource
+creation, merge or image/application publication ran. Actual private connectivity and protected
+environment/OIDC/backend references must be supplied and reviewed before activation.
 

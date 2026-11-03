@@ -54,7 +54,9 @@ uv run --project code/tools --locked --no-sync python code/tools/scripts/verify_
 It returns exit 2 and pending, even for a valid scope. There is no CLI execution flag, implicit
 login, browser download, microphone request or model connection. The scope requires explicit
 `mode` (`device` or `live_endurance`), the strict existing provider scope, T062 evidence digest,
-device approval and exact current stable Edge/Windows, Chrome/Windows and Chrome/Linux versions.
+device approval and exact current stable Edge/Windows and Chrome/Windows versions. The owner
+deferred Linux physical qualification; set `deferred_platforms` to `["chrome_linux"]` for that
+explicit scope. Without a declared deferral the original three-platform matrix is still required.
 Only independently authorized `BrowserAuthorizationPort` and `BrowserProbePort` bindings can
 make programmatic observations; a reference, version string or content-free digest is not proof.
 
@@ -77,6 +79,93 @@ to test these rules and always leave live qualification pending. T062/T086/T087 
 
 ## Initial Qualification Reviews
 
+### Completing the Private Qualification Profile
+
+Use the existing ignored `code/.local/multimodal-qualification.toml`; keep private values,
+credentials and review documents there or in the approved secret/review store, never in chat
+or committed examples. All required test authorization is already granted. The owner updated
+the total review ceiling to **100 USD**, provider/device operations to **600 seconds**, and
+the endurance operation to **900 seconds** for admission and cleanup around five participants
+each completing the unchanged **600-second** lifetime. Execution flags remain disabled until
+the exact prerequisites are validated; filling fields does not automatically start resources.
+
+Complete the first group before attempting the existing read-only deployment-mapping probe:
+
+Run the safe offline intake checker from repository root to list exact missing field names:
+
+```powershell
+uv run --project code/tools --locked --no-sync python code/tools/scripts/verify_multimodal.py --check-qualification-inputs code/.local/multimodal-qualification.toml
+```
+
+Exit 2 is expected: this bounded TOML check starts no network, credential, browser or model
+operation and never prints values. `references_present_not_qualified` is not live acceptance.
+It also validates the first deployment bindings' structure when all mapping fields are present.
+
+| Section / Field | Value Needed | Where to Find or Verify It |
+|---|---|---|
+| `foundry.live_account_resource_id` | Full existing Cognitive Services account ARM ID | Azure portal, the Live deployment's parent resource, JSON View or Properties, `id`. Shape: `/subscriptions/<id>/resourceGroups/<name>/providers/Microsoft.CognitiveServices/accounts/<name>`. Do not use a project ID or deployment child ID. |
+| `foundry.text_account_resource_id` | Full account ARM ID for the reasoning deployment | The same parent-resource view for text. It may equal the Live account only when both reviewed deployments actually share that account. |
+| `foundry.live_deployment` / `foundry.text_deployment` | Exact existing deployment names | Foundry deployment details. These fields are already populated; verify rather than replace them with model names. |
+| `foundry.text_model` / `foundry.text_model_version` | Exact underlying model and deployed version | Reasoning deployment details or its ARM JSON `properties.model.name` / `version`, not a guessed version or SDK default. |
+| `foundry.text_region` / `foundry.text_sku` | Account location and actual deployment SKU | Account `location` and deployment `sku.name`. Live uses the already-reviewed Global Standard mapping; text must state its actual SKU. |
+| `identity` existing fields | Existing configured identity and secret reference | Preserve them. The metadata probe needs reviewed account/deployment read access as well as separately reviewed model invoke access. An ARM 403 is not proof that model access failed; do not grant broad roles just to suppress it. |
+
+The tools will compare returned IDs/endpoints/model/version/SKU exactly, use normal TLS and
+emit only a digest/status. No subscription listing, resource creation or role grant is implied.
+This group enables the first mapping check only; eight other provider checks still need concrete
+probe implementations and actual access/quota/features/delegation/closure observations.
+
+The end-to-end browser run additionally needs existing application and storage bindings:
+
+| Section / Reference | What to Supply |
+|---|---|
+| `applications.management_origin` / `applications.runtime_origin` | Exact reviewed HTTPS application origins. They must serve the explicit authenticated test composition, not the default unavailable apps or fixture-only login server. |
+| Existing application identity/audience/role fields | Distinct manager, workload and permit audiences plus the approved test role/client allowlists. Use the existing Entra app configuration; never treat the Foundry client ID as every service audience. |
+| Existing signing-key references | Existing reviewed RSA signing key ID/private-key path and matching verifier public-key paths. Provide paths/references, not key bytes in TOML or chat; do not generate a replacement for an established authority silently. |
+| `storage.cosmos_endpoint` and existing database/container references | Existing owned private resources, correct partitions and initialized schema-2 authorities. Runtime must not read management's private container. No missing authority is reset or created by a qualification run. |
+
+If these applications, identities, stores or keys do not exist, say so. Creating/deploying a
+new environment is separate from this application's tests and is not hidden inside a probe.
+Windows current-stable Edge and Chrome with an actual headset remain required. The owner
+explicitly deferred Linux physical qualification to a follow-up; it is recorded as deferred,
+not tested. An explicit `deferred_platforms: ["chrome_linux"]` browser manifest still requires
+both Windows browsers, remains fingerprint-bound, and reports Linux deferral in its output.
+Existing manifests without this field continue to require the original full platform set.
+
+For actual alert delivery, first identify an existing approved destination and accountable
+recipient; then complete the newly blank fields in the same private profile:
+
+| `alerts` Field | Value / Evidence Needed |
+|---|---|
+| `sink_kind` | The existing integration type, such as an approved HTTPS receiver or a reviewed local integration factory. This selects a reviewed implementation, not arbitrary code import. |
+| `sink_ref` | Accountable existing sink/resource or integration reference. A nonempty label is not evidence that a notification was delivered. |
+| `sink_endpoint` | Exact existing approved HTTPS receiver when applicable; no credential in the URL. Do not create a public webhook or new hosting collector as a workaround. |
+| `sink_credential_ref` | Approved secret-store/local secret reference only when required, not the credential value. |
+| `recipient_ref` | Accountable person/team that receives test alerts and can acknowledge the three representative failures. |
+| `delivery_ack_ref` / `recovery_ack_ref` | Leave blank until actual receipt and recovery are observed; then reference metadata-only records from the approved sink/recipient. Never fabricate them from queue acceptance. |
+
+The owner selected an existing Azure Monitor/Action Group integration. For that path, also fill
+the following existing-resource references under `[alerts]`; no resource is created by this step:
+
+| Field | Existing Reference / Location |
+|---|---|
+| `application_insights_resource_id` / `log_analytics_resource_id` | ARM `id` from the existing telemetry resource or workspace's Azure portal JSON View. Supply the actual destination used by both app services. |
+| `data_collection_rule_resource_id` / `data_collection_rule_immutable_id` | If the existing path uses the Logs Ingestion API, supply the rule's ARM `id` and `properties.immutableId` from JSON View. Do not invent a DCR for an Application Insights-only integration. |
+| `data_collection_endpoint` / `stream_name` | For that DCR path, the existing reviewed HTTPS logs-ingestion endpoint and configured custom stream. The input schema must accept the app's metadata-only event fields. |
+| `action_group_resource_id` | Existing Action Group's full ARM `id` from JSON View, including the `Microsoft.Insights/actionGroups` resource type. |
+| `alert_rule_resource_ids` | TOML array of existing alert-rule ARM IDs that route cleanup-uncertainty/dependency/latency events to that group. An unrelated Action Group test notification does not prove app-event delivery. |
+
+Keep credentials only in the existing approved reference, and fill `recipient_ref` with the
+accountable team/person. Leave delivery/recovery acknowledgements blank until that recipient
+actually observes test alerts and recovery. If no existing rule/dataflow accepts these events,
+report the gap rather than fabricating delivery or provisioning a new collector inside this test.
+
+The source sink contract is a bounded synchronous nonblocking enqueue. A reviewed resource
+factory owns the queue/worker/cleanup; blocking network I/O must not run in a realtime callback.
+Qualification needs actual delivery and recipient acknowledgement for cleanup uncertainty,
+three dependency failures and elevated latency, plus recovery and shared correlation/privacy.
+If no sink/recipient exists, that is a concrete remaining gate, not missing test permission.
+
 Keep the ignored local qualification input's execution flags disabled while completing these
 reviews. A populated field or review-reference label is not an independent authorization.
 Store actual private decisions locally or in the approved review system, not in this guide.
@@ -89,7 +178,7 @@ Store actual private decisions locally or in the approved review system, not in 
 | Residency | Check actual deployment type and permitted processing locations. A Sweden Central resource using Global Standard does not establish Sweden-only or EU-only inference. |
 | Lifecycle | Verify the deployed version's current availability, preview/lifecycle terms and any applicable retirement dates before approving the binding. |
 | Retention | Review actual provider storage, abuse-monitoring, processing and deletion terms for the proposed public/synthetic content. Application memory-only handling is not a provider zero-retention guarantee. |
-| Cost | Confirm the exact scenarios, maximum duration, expiry and total ceiling across billed Live time (including silence), reasoning and tool use. The operator's proposed 10 USD ceiling is review intent, not execution permission or a price estimate. |
+| Cost | Confirm scenarios, expiry and the owner's 100 USD total ceiling across billed Live time (including silence), reasoning and tool use. Provider/device checks are bounded to 600 seconds; the endurance operation is 900 seconds around unchanged 600-second participant lifetimes. This ceiling is not a price estimate or automatic execution. |
 
 The current Foundry [Global Standard regional table](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability?tabs=az-europe&pivots=standard)
 lists `gpt-live-1` version `2026-09-10` in `swedencentral`. The runtime and qualification

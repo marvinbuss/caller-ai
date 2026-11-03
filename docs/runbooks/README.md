@@ -16,6 +16,7 @@ or claim production acceptance. Start with [release gates](../acceptance/release
 | Exact UID-bound pre-drain/retirement and uncertainty | [Drain rollout](drain-rollout.md) |
 | Both-service metrics, fixed labels and disabled alert qualification | [Monitoring](monitoring.md) |
 | Protected remote state and Terraform verification | [Terraform state](terraform-state.md) |
+| Bootstrap/shared-environment OIDC plan, private review and protected apply | [Terraform delivery](terraform-delivery.md) |
 | Platform composition, reviewed inputs and cost boundaries | [Platform](platform.md) |
 | Workload identities, service ownership and private connectivity | [Platform security](platform-security.md) |
 

@@ -65,6 +65,68 @@ def browser_case(case):
     return module, scope, now
 
 
+def test_private_input_checker_reports_only_missing_schema_fields(case, tmp_path, capsys):
+    module, _manifest, _provider, _now = case
+    path = tmp_path / "qualification.toml"
+    marker = "private-payload-fixture"
+    path.write_text("[identity]\nclient_" + 'secret = "' + marker + '"\n[foundry]\n')
+    report = module.inspect_qualification_inputs(path)
+    assert report["mode"] == "offline_input_readiness"
+    assert report["live_qualification"] == "pending"
+    assert report["execution_started"] is False
+    assert report["missing_inputs"]["provider_mapping"] == [
+        "foundry.live_account_resource_id",
+        "foundry.text_account_resource_id",
+        "foundry.text_model",
+        "foundry.text_model_version",
+        "foundry.text_region",
+        "foundry.text_sku",
+    ]
+    assert marker not in json.dumps(report)
+    assert module.main(["--check-qualification-inputs", str(path)]) == 2
+    output = capsys.readouterr()
+    assert marker not in output.out + output.err
+    assert json.loads(output.out)["missing_inputs"] == report["missing_inputs"]
+
+
+def test_private_input_checker_invalid_toml_does_not_echo_values(case, tmp_path):
+    module, _manifest, _provider, _now = case
+    path = tmp_path / "qualification.toml"
+    marker = "private-error-fixture"
+    path.write_text('invalid = "' + marker)
+    report = module.inspect_qualification_inputs(path)
+    assert report["reason"] == "invalid_input_profile"
+    assert report["execution_started"] is False
+    assert marker not in json.dumps(report)
+
+
+@pytest.mark.parametrize(
+    "content", [b"#" * 65537, b"value = 1\nvalue = 2\n"], ids=["oversized", "duplicate-key"]
+)
+def test_private_input_checker_rejects_bounds_and_duplicate_toml(case, tmp_path, content):
+    module, _manifest, _provider, _now = case
+    path = tmp_path / "qualification.toml"
+    path.write_bytes(content)
+    report = module.inspect_qualification_inputs(path)
+    assert report["reason"] == "invalid_input_profile"
+    assert report["execution_started"] is False
+
+
+def test_private_input_checker_never_constructs_network_clients(case, tmp_path, monkeypatch):
+    module, _manifest, _provider, _now = case
+    path = tmp_path / "qualification.toml"
+    path.write_text("[foundry]\n")
+
+    def forbidden(*arguments, **keywords):
+        pytest.fail("input_checker_network_forbidden")
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", forbidden)
+    monkeypatch.setattr(module.httpx, "Client", forbidden)
+    report = module.inspect_qualification_inputs(path)
+    assert report["reason"] == "missing_reference_inputs"
+    assert report["execution_started"] is False
+
+
 def test_browser_scope_requires_explicit_mode_and_reviewed_versions(case):
     module, manifest, provider, now = case
     with pytest.raises(ValueError):
@@ -77,6 +139,36 @@ def test_browser_scope_requires_explicit_mode_and_reviewed_versions(case):
             browsers=(("bundled_chromium", "130.0.0.1"),),
             max_seconds=600,
         )
+
+
+def test_browser_linux_deferral_is_explicit_bound_and_reported(browser_case):
+    from dataclasses import asdict, replace
+
+    module, scope, now = browser_case
+    windows = tuple(item for item in scope.browsers if item[0] != "chrome_linux")
+    with pytest.raises(ValueError):
+        replace(scope, browsers=windows)
+    deferred = replace(scope, browsers=windows, deferred_platforms=("chrome_linux",))
+    assert deferred.fingerprint != scope.fingerprint
+    parsed = module.parse_browser_scope(json.dumps(asdict(deferred)).encode())
+    assert parsed == deferred
+    report = asyncio.run(module.qualify_browser(deferred, now=lambda: now))
+    assert report["deferred_platforms"] == ["chrome_linux"]
+    assert report["status"] == report["live_qualification"] == "pending"
+    assert report["samples"] == []
+    with pytest.raises(ValueError):
+        replace(scope, deferred_platforms=("edge_windows",))
+
+
+def test_browser_full_platform_manifest_remains_compatible(browser_case):
+    from dataclasses import asdict
+
+    module, scope, _now = browser_case
+    document = asdict(scope)
+    document.pop("deferred_platforms", None)
+    parsed = module.parse_browser_scope(json.dumps(document).encode())
+    assert parsed.deferred_platforms == ()
+    assert {platform for platform, _version in parsed.browsers} == module.BROWSER_PLATFORMS
 
 
 def test_browser_and_endurance_default_never_invoke_devices_or_models(browser_case):

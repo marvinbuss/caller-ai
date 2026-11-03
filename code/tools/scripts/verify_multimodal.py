@@ -10,6 +10,7 @@ import logging
 import math
 import re
 import time
+import tomllib
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import asdict, dataclass, fields
@@ -800,17 +801,21 @@ class BrowserScope:
     browsers: tuple[tuple[str, str], ...]
     max_seconds: int
     device_evidence_digest: str | None = None
+    deferred_platforms: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.deferred_platforms not in ((), ("chrome_linux",)):
+            raise ValueError("invalid_browser_scope")
+        required_platforms = BROWSER_PLATFORMS.difference(self.deferred_platforms)
         if (
             not isinstance(self.provider, MultimodalRequest)
             or self.mode not in {"device", "live_endurance"}
             or re.fullmatch(r"[a-f0-9]{64}", self.foundry_evidence_digest) is None
             or re.fullmatch(r"[a-z][a-z0-9-]{2,63}", self.device_review_ref) is None
             or not isinstance(self.browsers, tuple)
-            or len(self.browsers) != 3
+            or len(self.browsers) != len(required_platforms)
             or any(not isinstance(item, tuple) or len(item) != 2 for item in self.browsers)
-            or {item[0] for item in self.browsers} != BROWSER_PLATFORMS
+            or {item[0] for item in self.browsers} != required_platforms
             or any(
                 re.fullmatch(r"\d{1,4}(?:\.\d{1,6}){3}", item[1]) is None for item in self.browsers
             )
@@ -891,6 +896,7 @@ async def qualify_browser(
         "live_qualification": "pending",
         "reason": "authorization_required",
         "environment_fingerprint": scope.fingerprint,
+        "deferred_platforms": list(scope.deferred_platforms),
         "samples": [],
     }
     if authorization is None or probe is None:
@@ -1062,9 +1068,12 @@ def parse_browser_scope(content: bytes) -> BrowserScope:
         if not isinstance(content, bytes) or len(content) > 16384:
             raise ValueError("invalid_browser_manifest")
         document = json.loads(content, object_pairs_hook=unique_object)
-        if not isinstance(document, dict) or set(document) != {
-            item.name for item in fields(BrowserScope)
-        }:
+        required = {item.name for item in fields(BrowserScope)} - {"deferred_platforms"}
+        if (
+            not isinstance(document, dict)
+            or not required <= document.keys()
+            or not document.keys() <= required | {"deferred_platforms"}
+        ):
             raise ValueError("invalid_browser_manifest")
         document["provider"] = parse_request(
             json.dumps(document["provider"], allow_nan=False).encode()
@@ -1072,14 +1081,120 @@ def parse_browser_scope(content: bytes) -> BrowserScope:
         browsers = document["browsers"]
         if (
             not isinstance(browsers, list)
-            or len(browsers) != 3
+            or len(browsers) not in {2, 3}
             or any(not isinstance(item, list) or len(item) != 2 for item in browsers)
         ):
             raise ValueError("invalid_browser_manifest")
         document["browsers"] = tuple(tuple(item) for item in browsers)
+        deferred = document.get("deferred_platforms", [])
+        if not isinstance(deferred, list):
+            raise ValueError("invalid_browser_manifest")
+        document["deferred_platforms"] = tuple(deferred)
         return BrowserScope(**document)
     except Exception:
         raise ValueError("invalid_browser_manifest") from None
+
+
+def inspect_qualification_inputs(path: Path) -> dict[str, Any]:
+    """Inspect bounded local TOML for references only; never expose values or execute probes."""
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "mode": "offline_input_readiness",
+        "status": "pending",
+        "live_qualification": "pending",
+        "execution_started": False,
+        "reason": "invalid_input_profile",
+        "missing_inputs": {},
+        "invalid_inputs": [],
+    }
+    groups = {
+        "provider_mapping": (
+            "foundry.live_account_resource_id",
+            "foundry.text_account_resource_id",
+            "foundry.text_model",
+            "foundry.text_model_version",
+            "foundry.text_region",
+            "foundry.text_sku",
+        ),
+        "existing_provider_fields": (
+            "foundry.live_endpoint",
+            "foundry.live_deployment",
+            "foundry.live_model",
+            "foundry.live_model_version",
+            "foundry.live_region",
+            "foundry.text_endpoint",
+            "foundry.text_deployment",
+        ),
+        "applications": ("applications.management_origin", "applications.runtime_origin"),
+        "monitor_delivery": (
+            "alerts.sink_kind",
+            "alerts.sink_ref",
+            "alerts.recipient_ref",
+            "alerts.action_group_resource_id",
+            "alerts.alert_rule_resource_ids",
+        ),
+    }
+    try:
+        if path.is_symlink() or not path.is_file():
+            return report
+        with path.open("rb") as source:
+            content = source.read(65537)
+        if len(content) > 65536:
+            return report
+        document = tomllib.loads(content.decode("utf-8"))
+
+        def present(field: str) -> bool:
+            section, key = field.split(".", 1)
+            table = document.get(section, {})
+            if not isinstance(table, dict):
+                return False
+            value = table.get(key)
+            if field == "alerts.alert_rule_resource_ids":
+                return (
+                    isinstance(value, list)
+                    and bool(value)
+                    and all(isinstance(item, str) and bool(item.strip()) for item in value)
+                )
+            return isinstance(value, str) and bool(value.strip()) and len(value) <= 1024
+
+        report["missing_inputs"] = {
+            group: [field for field in names if not present(field)]
+            for group, names in groups.items()
+        }
+        if (
+            not report["missing_inputs"]["provider_mapping"]
+            and not report["missing_inputs"]["existing_provider_fields"]
+        ):
+            foundry = document["foundry"]
+            try:
+                AzureDeploymentBinding(
+                    foundry["live_account_resource_id"],
+                    foundry["live_endpoint"],
+                    foundry["live_deployment"],
+                    foundry["live_model"],
+                    foundry["live_model_version"],
+                    foundry["live_region"],
+                    "GlobalStandard",
+                )
+                AzureDeploymentBinding(
+                    foundry["text_account_resource_id"],
+                    foundry["text_endpoint"],
+                    foundry["text_deployment"],
+                    foundry["text_model"],
+                    foundry["text_model_version"],
+                    foundry["text_region"],
+                    foundry["text_sku"],
+                )
+            except ValueError:
+                report["invalid_inputs"] = ["foundry.deployment_bindings"]
+        report["reason"] = (
+            "missing_reference_inputs"
+            if any(report["missing_inputs"].values()) or report["invalid_inputs"]
+            else "references_present_not_qualified"
+        )
+    except Exception:
+        pass
+    return report
 
 
 class SafeParser(argparse.ArgumentParser):
@@ -1095,9 +1210,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser = SafeParser(add_help=False)
         parser.add_argument("--check-manifest", type=Path)
         parser.add_argument("--check-browser-manifest", type=Path)
+        parser.add_argument("--check-qualification-inputs", type=Path)
         arguments = parser.parse_args(argv)
-        if arguments.check_manifest is not None and arguments.check_browser_manifest is not None:
+        if sum(value is not None for value in vars(arguments).values()) > 1:
             raise ValueError("invalid_multimodal_arguments")
+        if arguments.check_qualification_inputs is not None:
+            print(
+                json.dumps(
+                    inspect_qualification_inputs(arguments.check_qualification_inputs),
+                    sort_keys=True,
+                )
+            )
+            return 2
         if arguments.check_manifest is not None:
             path = arguments.check_manifest
             if path.is_symlink() or not path.is_file() or path.stat().st_size > 16384:
@@ -1120,6 +1244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "live_qualification": "pending",
             "reason": "authorization_required",
             "environment_fingerprint": browser_scope.fingerprint,
+            "deferred_platforms": list(browser_scope.deferred_platforms),
             "samples": [],
         }
     print(json.dumps(report, sort_keys=True))
