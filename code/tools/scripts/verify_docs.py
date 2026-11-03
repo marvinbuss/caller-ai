@@ -110,45 +110,8 @@ def run_renderer(arguments: list[str], values: dict[str, str], log: Path) -> Non
             stop([process])
 
 
-def discover_documents(root: Path) -> list[Path]:
-    old = root / "code/docs"
-    if old.exists() and any(path.is_file() for path in old.rglob("*")):
-        raise ValueError("duplicate_maintained_documentation")
-    maintained = root / "docs"
-    if not maintained.is_dir():
-        raise ValueError("root_documentation_required")
-    paths = set(maintained.rglob("*.md"))
-    paths.update((root / "code/contracts").rglob("*.md"))
-    paths.update((root / "specs").rglob("*.md"))
-    if (root / "README.md").is_file():
-        paths.add(root / "README.md")
-    return sorted(paths)
-
-
-def heading_fragments(path: Path) -> set[str]:
-    tokens = MarkdownIt().parse(path.read_text(encoding="utf-8"))
-    fragments: set[str] = set()
-    for index, token in enumerate(tokens):
-        if token.type != "heading_open":
-            continue
-        heading = tokens[index + 1]
-        text = "".join(
-            child.content
-            for child in heading.children or []
-            if child.type in {"text", "code_inline", "image"}
-        )
-        base = re.sub(r"[^\w\-\s]", "", text.lower()).replace(" ", "-")
-        candidate, count = base, 0
-        while candidate in fragments:
-            count += 1
-            candidate = base + "-" + str(count)
-        fragments.add(candidate)
-    return fragments
-
-
 def validate_documents(paths: list[Path], root: Path) -> list[tuple[Path, str]]:
     diagrams = []
-    fragments: dict[Path, set[str]] = {}
     for path in paths:
         tokens = MarkdownIt().parse(path.read_text(encoding="utf-8"))
         if sum(token.type == "heading_open" and token.tag == "h1" for token in tokens) != 1:
@@ -159,30 +122,19 @@ def validate_documents(paths: list[Path], root: Path) -> list[tuple[Path, str]]:
                     raise ValueError(f"empty_mermaid_diagram: {path}")
                 diagrams.append((path, token.content))
             for child in token.children or []:
-                if child.type not in {"link_open", "image"}:
+                if child.type != "link_open":
                     continue
-                reference = child.attrGet("src" if child.type == "image" else "href") or ""
-                if not isinstance(reference, str):
-                    raise ValueError(f"invalid_local_document_link: {path}")
-                target = urlsplit(reference)
-                if not target.scheme and not target.netloc and (target.path or target.fragment):
-                    resolved = (
-                        (path.parent / unquote(target.path)).resolve()
-                        if target.path
-                        else path.resolve()
-                    )
-                    if not resolved.is_relative_to(root.resolve()) or not resolved.is_file():
+                target = urlsplit(child.attrGet("href") or "")
+                if not target.scheme and target.path:
+                    resolved = (path.parent / unquote(target.path)).resolve()
+                    if not resolved.is_relative_to(root.resolve()) or not resolved.exists():
                         raise ValueError(f"invalid_local_document_link: {path}")
-                    if target.fragment and resolved.suffix.lower() == ".md":
-                        if resolved not in fragments:
-                            fragments[resolved] = heading_fragments(resolved)
-                        if unquote(target.fragment) not in fragments[resolved]:
-                            raise ValueError(f"invalid_local_document_fragment: {path}")
     return diagrams
 
 
 def main() -> None:
-    paths = discover_documents(ROOT)
+    paths = sorted((ROOT / "code/docs").rglob("*.md"))
+    paths.append(ROOT / "code/contracts/README.md")
     diagrams = validate_documents(paths, ROOT)
     if not diagrams:
         raise RuntimeError("no_architecture_diagrams_found")

@@ -4,12 +4,8 @@ import asyncio
 import copy
 import hashlib
 import json
-import math
 import os
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -123,137 +119,24 @@ def isolated_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def community_configuration_v2(community_configuration) -> dict:
-    graph = copy.deepcopy(community_configuration)
-    graph.pop("revisionId")
-    graph["schemaVersion"] = "2.0.0"
-    agents = {agent["agentId"]: agent for agent in graph["agents"]}
-    graph["relationships"] = [
-        edge
-        for edge in graph["relationships"]
-        if agents[edge["sourceAgentId"]]["role"] == "ordinary"
-        and agents[edge["targetAgentId"]]["role"] == "ordinary"
-        and agents[edge["sourceAgentId"]]["communityId"]
-        == agents[edge["targetAgentId"]]["communityId"]
-    ]
-    graph["communityConnections"] = [
-        {
-            "connectionId": "alpha-to-beta",
-            "sourceCommunityId": "alpha",
-            "targetCommunityId": "beta",
-            "allowedContextFields": ["request_summary", "transfer_reason"],
-        }
-    ]
-    graph["layout"] = {
-        "communities": [
-            {"nodeId": community["communityId"], "x": index * 240, "y": 0}
-            for index, community in enumerate(graph["communities"])
-        ],
-        "agentsByCommunity": {
-            community["communityId"]: [
-                {"nodeId": agent["agentId"], "x": index * 240, "y": 0}
-                for index, agent in enumerate(
-                    member
-                    for member in graph["agents"]
-                    if member["communityId"] == community["communityId"]
-                )
-            ]
-            for community in graph["communities"]
-        },
-    }
-    return graph
-
-
-@pytest.fixture
-def revision_document_v2(community_configuration_v2):
+def revision_document(community_configuration):
     def create(number=1):
-        graph = copy.deepcopy(community_configuration_v2)
+        graph = copy.deepcopy(community_configuration)
+        graph.pop("revisionId")
         for agent in graph["agents"]:
             if agent["agentId"] == "a-source":
                 agent["prompt"] += f" revision {number}"
         body = json.dumps(
             graph, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-        ).encode("utf-8")
+        ).encode()
         return graph | {
-            "id": f"revision-browser-fixture-{number}",
+            "id": f"revision-fixture-{number}",
             "organizationId": "default",
             "revisionNumber": number,
-            "createdAt": "2026-10-30T00:00:00Z",
+            "createdAt": "2026-10-26T00:00:00Z",
             "createdBy": "manager-fixture",
             "graphHash": hashlib.sha256(body).hexdigest(),
         }
-
-    return create
-
-
-@pytest.fixture
-def runtime_revision_v2(revision_document_v2):
-    def create(number=1):
-        full = revision_document_v2(number)
-        fields = {
-            "schemaVersion",
-            "agents",
-            "communities",
-            "relationships",
-            "communityConnections",
-            "tools",
-            "mcpConnections",
-        }
-        policy = {key: copy.deepcopy(full[key]) for key in fields}
-        for connection in policy["mcpConnections"]:
-            connection.pop("credentialRef")
-        body = json.dumps(
-            policy, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-        ).encode("utf-8")
-        provenance = {
-            key: full[key]
-            for key in (
-                "id",
-                "organizationId",
-                "revisionNumber",
-                "createdAt",
-                "createdBy",
-                "graphHash",
-            )
-        }
-        return provenance | policy | {"policyHash": hashlib.sha256(body).hexdigest()}
-
-    return create
-
-
-@pytest.fixture
-def conversation_clock():
-    class Clock:
-        seconds = 0.0
-
-        def monotonic(self):
-            return self.seconds
-
-        def utc_now(self):
-            return datetime(2026, 10, 30, tzinfo=UTC) + timedelta(seconds=self.seconds)
-
-        def advance(self, seconds):
-            if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0:
-                raise ValueError("invalid_fixture_clock_advance")
-            self.seconds += seconds
-
-    return Clock()
-
-
-@pytest.fixture
-def conversation_ports():
-    return SimpleNamespace(
-        model=AsyncMock(side_effect=RuntimeError("fixture_model_not_configured")),
-        admission=AsyncMock(side_effect=RuntimeError("fixture_admission_not_configured")),
-    )
-
-
-@pytest.fixture
-def revision_document(runtime_revision_v2):
-    def create(number=1):
-        document = runtime_revision_v2(number)
-        document["id"] = f"revision-fixture-{number}"
-        return document
 
     return create
 

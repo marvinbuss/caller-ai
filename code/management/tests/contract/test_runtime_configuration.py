@@ -7,59 +7,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-PATH = "/v2/runtime/configuration"
-
-
-def test_v2_runtime_projection_has_independent_hash_and_no_layout(runtime_configuration_api):
-    from management_app.adapters.configuration_repository import graph_document
-    from management_app.services.configuration_validation import encoded
-
-    client, identity, repository, telemetry = runtime_configuration_api
-    headers = {"X-Fixture-Identity": "runtime"}
-    response = client.get("/v2/runtime/configuration", headers=headers)
-    assert response.status_code == 200
-    projection = response.json()
-    assert projection["schemaVersion"] == "2.0.0" and "layout" not in projection
-    assert (
-        projection["graphHash"]
-        == hashlib.sha256(encoded(graph_document(repository.snapshot))).hexdigest()
-    )
-    policy = {
-        key: value for key, value in graph_document(repository.snapshot).items() if key != "layout"
-    }
-    assert projection["policyHash"] == hashlib.sha256(encoded(policy)).hexdigest()
-    assert projection["id"] == repository.snapshot["id"]
-    assert response.headers["etag"] == repository.etag
-    headers["If-None-Match"] = repository.etag
-    unchanged = client.get("/v2/runtime/configuration", headers=headers)
-    assert unchanged.status_code == 304 and unchanged.content == b""
-    assert identity.calls == repository.reads == 2
-    assert client.get("/v1/runtime/configuration", headers=headers).status_code == 404
-
-
-def test_v2_runtime_projection_omits_secret_resolution_material(
-    runtime_configuration_api, capability_graph, validator
-):
-    from management_app.adapters.configuration_repository import graph_document, publication
-    from management_app.services.configuration_validation import encoded
-
-    client, identity, repository, telemetry = runtime_configuration_api
-    repository.snapshot = publication(
-        validator, capability_graph, actor="manager-fixture", previous=None, authority=None
-    )[0]
-    before = copy.deepcopy(repository.snapshot)
-    response = client.get("/v2/runtime/configuration", headers={"X-Fixture-Identity": "runtime"})
-    assert response.status_code == 200
-    projection = response.json()
-    assert "secret://" not in response.text and "credentialRef" not in response.text
-    assert "layout" not in projection and repository.snapshot == before
-    policy = graph_document(before)
-    policy.pop("layout")
-    for connection in policy["mcpConnections"]:
-        connection.pop("credentialRef")
-    assert projection["policyHash"] == hashlib.sha256(encoded(policy)).hexdigest()
-    assert projection["graphHash"] == hashlib.sha256(encoded(graph_document(before))).hexdigest()
-    assert projection["mcpConnections"][0]["connectionId"] == "connection-one"
+PATH = "/v1/runtime/configuration"
 
 
 @pytest.fixture
@@ -140,18 +88,14 @@ def test_snapshot_is_exact_integrity_checked_revision_with_private_cache_headers
 
     client, identity, repository, telemetry = runtime_configuration_api
     response = client.get(PATH, headers={"X-Fixture-Identity": "runtime"})
-    assert response.status_code == 200
-    expected = copy.deepcopy(repository.snapshot)
-    expected.pop("layout")
-    expected["policyHash"] = hashlib.sha256(encoded(graph_document(expected))).hexdigest()
-    assert response.json() == expected
+    assert response.status_code == 200 and response.json() == repository.snapshot
     assert response.headers["etag"] == repository.etag
     assert response.headers["cache-control"] == "private, no-cache"
     assert response.headers["vary"] == "Authorization"
-    assert response.json()["schemaVersion"] == "2.0.0"
+    assert response.json()["schemaVersion"] == "1.0.0"
     assert (
         response.json()["graphHash"]
-        == hashlib.sha256(encoded(graph_document(repository.snapshot))).hexdigest()
+        == hashlib.sha256(encoded(graph_document(response.json()))).hexdigest()
     )
     assert response.json()["id"].startswith("revision-")
 
@@ -174,8 +118,7 @@ def test_different_pointer_etag_returns_the_complete_current_snapshot(runtime_co
     response = client.get(
         PATH, headers={"X-Fixture-Identity": "runtime", "If-None-Match": '"older-fixture"'}
     )
-    assert response.status_code == 200 and response.json()["id"] == repository.snapshot["id"]
-    assert "layout" not in response.json() and "policyHash" in response.json()
+    assert response.status_code == 200 and response.json() == repository.snapshot
 
 
 @pytest.mark.parametrize(

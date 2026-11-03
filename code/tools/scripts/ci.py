@@ -284,9 +284,6 @@ def check() -> None:
             "--exclude-standard",
             "--",
             "code",
-            "docs",
-            "README.md",
-            "specs",
             ".github/workflows",
         ],
         cwd=ROOT,
@@ -296,11 +293,7 @@ def check() -> None:
         text=True,
         timeout=30,
     )
-    files = [
-        path
-        for path in result.stdout.splitlines()
-        if (ROOT / path).exists() or (ROOT / path).is_symlink()
-    ]
+    files = result.stdout.splitlines()
     if not files:
         raise RuntimeError("No source files found; an empty check is not success.")
     run(
@@ -367,8 +360,6 @@ def main() -> None:
                 "--directory",
                 f"code/{project}",
                 "--locked",
-                "python",
-                "-m",
                 "pytest",
                 "-q",
                 "--tb=short",

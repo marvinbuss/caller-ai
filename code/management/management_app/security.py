@@ -4,30 +4,23 @@ import asyncio
 import base64
 import hashlib
 import hmac
-import json
-import math
 import re
 import secrets
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, Self
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 import jwt
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
-from fastapi import APIRouter, HTTPException, Request, WebSocket
-from jwt.utils import base64url_decode
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from reflex import constants
 from reflex.app import EventNamespace
 from reflex.middleware.middleware import Middleware
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
-
-from management_app.models.test_session import StartPermit, utc
 
 COOKIE = "__Host-caller-session"
 OPAQUE = re.compile(r"^[A-Za-z0-9_-]{43}$")
@@ -339,144 +332,6 @@ class SessionStore:
         )
 
 
-class TestPermitSigner:
-    __test__ = False
-
-    def __init__(
-        self,
-        *,
-        issuer: str,
-        audience: str,
-        key_id: str,
-        signing_key: RSAPrivateKey,
-        verification_keys: Mapping[str, RSAPublicKey],
-        utc_now: Callable[[], datetime],
-        max_clock_skew_seconds: float,
-    ) -> None:
-        if (
-            not issuer
-            or len(issuer) > 512
-            or not audience
-            or len(audience) > 512
-            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", key_id) is None
-            or not isinstance(signing_key, RSAPrivateKey)
-            or not 2048 <= signing_key.key_size <= 8192
-            or not 1 <= len(verification_keys) <= 4
-            or key_id not in verification_keys
-            or utc_now is None
-            or type(max_clock_skew_seconds) not in (int, float)
-            or not math.isfinite(max_clock_skew_seconds)
-            or not 0 <= max_clock_skew_seconds <= 1
-        ):
-            raise ValueError("invalid_test_signing_configuration")
-        for name, key in verification_keys.items():
-            if (
-                not isinstance(name, str)
-                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", name) is None
-                or not isinstance(key, RSAPublicKey)
-                or not 2048 <= key.key_size <= 8192
-            ):
-                raise ValueError("invalid_test_signing_configuration")
-        if verification_keys[key_id].public_numbers() != signing_key.public_key().public_numbers():
-            raise ValueError("invalid_test_signing_configuration")
-        self.issuer, self.audience, self.key_id = issuer, audience, key_id
-        self._key, self._keys, self._utc_now = signing_key, dict(verification_keys), utc_now
-        self._skew = timedelta(seconds=max_clock_skew_seconds)
-        self._observed: datetime | None = None
-
-    def _time(self) -> datetime:
-        now = utc(self._utc_now())
-        if self._observed is not None and now < self._observed:
-            raise PermissionError("invalid_test_permit")
-        self._observed = now
-        return now
-
-    def _current(self, permit: StartPermit) -> None:
-        now = self._time()
-        if (
-            permit.issuer != self.issuer
-            or permit.audience != self.audience
-            or permit.issued_at > now + self._skew
-            or now + self._skew < permit.admission_started_at
-            or now + self._skew >= min(permit.admission_deadline_utc, permit.auth_expires_at)
-            or (now + self._skew).timestamp() >= permit.expires_epoch
-        ):
-            raise PermissionError("invalid_test_permit")
-
-    def sign(self, permit: StartPermit) -> str:
-        try:
-            self._current(permit)
-            raw = jwt.encode(
-                permit.model_dump(mode="json", by_alias=True),
-                self._key,
-                algorithm="RS256",
-                headers={"kid": self.key_id, "typ": "JWT"},
-            )
-            if len(raw.encode("utf-8")) > 6144:
-                raise ValueError("permit_limit")
-            return raw
-        except Exception:
-            raise PermissionError("invalid_test_permit") from None
-
-    def verify(
-        self, raw: str, *, management_session_digest: str, tenant_id: str, actor_id: str
-    ) -> StartPermit:
-        try:
-            if not isinstance(raw, str) or not raw or len(raw.encode("utf-8")) > 6144:
-                raise ValueError("invalid_permit")
-            segments = raw.split(".")
-            if len(segments) != 3:
-                raise ValueError("invalid_permit")
-
-            def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-                result: dict[str, Any] = {}
-                for name, value in pairs:
-                    if name in result:
-                        raise ValueError("duplicate_permit_field")
-                    result[name] = value
-                return result
-
-            header = json.loads(base64url_decode(segments[0]), object_pairs_hook=unique)
-            payload = json.loads(base64url_decode(segments[1]), object_pairs_hook=unique)
-            if (
-                not isinstance(header, dict)
-                or set(header) != {"alg", "typ", "kid"}
-                or header["alg"] != "RS256"
-                or header["typ"] != "JWT"
-                or not isinstance(header["kid"], str)
-                or header["kid"] not in self._keys
-            ):
-                raise ValueError("invalid_permit")
-            claims = jwt.decode(
-                raw,
-                self._keys[header["kid"]],
-                algorithms=["RS256"],
-                audience=self.audience,
-                issuer=self.issuer,
-                options={
-                    "verify_exp": False,
-                    "verify_iat": False,
-                    "verify_nbf": False,
-                    "require": ["iss", "aud", "iat", "exp"],
-                },
-            )
-            if not isinstance(payload, dict) or payload != claims:
-                raise ValueError("invalid_permit")
-            permit = StartPermit.model_validate_json(json.dumps(claims, allow_nan=False))
-            self._current(permit)
-            if (
-                permit.tenant_id != tenant_id
-                or permit.actor_id != actor_id
-                or not hmac.compare_digest(
-                    permit.management_session_digest, management_session_digest
-                )
-            ):
-                raise ValueError("foreign_permit_session")
-            return permit
-        except Exception:
-            raise PermissionError("invalid_test_permit") from None
-
-
 class IdentityService:
     cookie_name = COOKIE
 
@@ -489,7 +344,7 @@ class IdentityService:
         self.verifier = verifier
         self.sessions = sessions
 
-    def browser_session(self, request: Request | WebSocket, *, mutation: bool) -> ServerSession:
+    def browser_session(self, request: Request, *, mutation: bool) -> ServerSession:
         origin = request.headers.get("origin")
         if (origin is not None and origin != self.policy.origin) or request.headers.get(
             "sec-fetch-site"
@@ -508,29 +363,6 @@ class IdentityService:
                 or not hmac.compare_digest(self.sessions.digest(csrf), session.csrf_digest)
             ):
                 raise HTTPException(403, "csrf_validation_failed")
-        return session
-
-    def require_test_manager(
-        self, request: Request | WebSocket, *, mutation: bool, test_role: str
-    ) -> ServerSession:
-        if (
-            request.scope.get("scheme") not in {"https", "wss"}
-            or request.headers.getlist("origin") != [self.policy.origin]
-            or request.headers.getlist("authorization")
-            or len(request.headers.getlist("cookie")) != 1
-            or mutation
-            and len(request.headers.getlist("x-csrf-token")) != 1
-        ):
-            raise HTTPException(403, "test_permission_denied")
-        session = self.browser_session(request, mutation=mutation)
-        if (
-            not isinstance(test_role, str)
-            or not test_role
-            or len(test_role) > 128
-            or self.policy.manager_role not in session.principal.roles
-            or test_role not in session.principal.roles
-        ):
-            raise HTTPException(403, "test_permission_denied")
         return session
 
     async def require_manager(self, request: Request) -> str:
@@ -839,17 +671,13 @@ def install_reflex_security(application: "App", *, guard: ReflexEventGuard) -> N
 
 class ProtectedReflexBoundary:
     def __init__(self, app: ASGIApp, *, additional_paths: frozenset[str] = frozenset()) -> None:
-        if not additional_paths <= {
-            "/v1/runtime/capabilities/execute",
-            "/v1/security/revocations",
-            "/v1/test-tickets",
-        }:
+        if not additional_paths <= {"/v1/runtime/capabilities/execute", "/v1/security/revocations"}:
             raise ValueError("unreviewed_business_ingress")
         self.app = app
         self.allowed = {
             "/auth/callback",
             "/auth/logout",
-            "/v2/configuration",
+            "/v1/configuration",
             "/_event",
             "/_event/",
         } | additional_paths

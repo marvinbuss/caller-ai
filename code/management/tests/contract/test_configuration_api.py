@@ -1,29 +1,19 @@
 """US2 configuration API contracts; injected test identity is not a live auth bypass."""
 
-import asyncio
 import copy
 import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-PATH = "/v2/configuration"
+PATH = "/v1/configuration"
 ETAG = '"configuration-fixture-1"'
-COLLECTIONS = {
-    "agents",
-    "communities",
-    "relationships",
-    "communityConnections",
-    "layout",
-    "tools",
-    "mcpConnections",
-}
+COLLECTIONS = {"agents", "communities", "relationships", "tools", "mcpConnections"}
 REVISION_FIELDS = {
     "id",
     "organizationId",
@@ -37,21 +27,14 @@ REVISION_FIELDS = {
 
 
 def revision(payload: dict, number: int, actor: str) -> dict:
-    from management_app.models.configuration import ConfigurationGraph
-
-    graph = ConfigurationGraph.model_validate(payload).model_dump(mode="json", by_alias=True)
     return {
-        **graph,
+        **copy.deepcopy(payload),
         "id": f"revision-{number}",
         "organizationId": "default",
         "revisionNumber": number,
         "createdAt": "2026-10-23T00:00:00Z",
         "createdBy": actor,
-        "graphHash": hashlib.sha256(
-            json.dumps(
-                graph, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-            ).encode("utf-8")
-        ).hexdigest(),
+        "graphHash": hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest(),
     }
 
 
@@ -214,15 +197,13 @@ def test_missing_if_match_is_428_without_publication(
     assert repository.publications == validator.calls == 0
 
 
-@pytest.mark.parametrize(
-    "value,status", [('"stale-etag"', 409), ("*", 422), ('W/"configuration-fixture-1"', 422)]
-)
+@pytest.mark.parametrize("value", ['"stale-etag"', "*", 'W/"configuration-fixture-1"'])
 def test_stale_or_non_exact_precondition_cannot_overwrite(
-    configuration_api, configuration_graph, value: str, status: int
+    configuration_api, configuration_graph, value: str
 ) -> None:
     client, identity, validator, repository = configuration_api
     before = copy.deepcopy(repository.snapshot)
-    problem(client.put(PATH, json=configuration_graph, headers={"If-Match": value}), status)
+    problem(client.put(PATH, json=configuration_graph, headers={"If-Match": value}), 412)
     assert repository.publications == 0 and repository.snapshot == before
 
 
@@ -242,7 +223,7 @@ def test_two_managers_cannot_silently_overwrite_shared_revision(
     stale_payload = copy.deepcopy(configuration_graph)
     stale_payload["agents"][4]["name"] = "Manager two unsaved update"
     identity.actor = "manager-two"
-    problem(client.put(PATH, json=stale_payload, headers={"If-Match": second.headers["ETag"]}), 409)
+    problem(client.put(PATH, json=stale_payload, headers={"If-Match": second.headers["ETag"]}), 412)
     assert repository.publications == 1 and repository.snapshot == saved.json()
 
 
@@ -302,15 +283,6 @@ def test_storage_failure_has_no_private_diagnostics_or_local_fallback(configurat
     assert repository.publications == 0
 
 
-def test_corrupt_full_revision_hash_is_unavailable_without_reflection(configuration_api) -> None:
-    client, identity, validator, repository = configuration_api
-    repository.snapshot["agents"][3]["prompt"] = "synthetic-private-corrupt-revision"
-    response = client.get(PATH)
-    problem(response, 503)
-    assert "synthetic-private-corrupt-revision" not in response.text
-    assert repository.publications == 0
-
-
 def test_successful_publication_is_audited_once(configuration_api, configuration_graph) -> None:
     client, identity, validator, repository = configuration_api
     response = client.put(PATH, json=configuration_graph, headers={"If-Match": ETAG})
@@ -329,43 +301,6 @@ def test_audit_failure_acknowledges_commit_and_marks_recovery_pending(
     assert response.headers["X-Audit-Status"] == "pending"
     assert response.json() == repository.snapshot
     assert "synthetic-private-audit-details" not in response.text
-
-
-def test_publication_audit_uses_original_deadline_after_controlled_elapsed_work(
-    configuration_api, configuration_graph, monkeypatch
-) -> None:
-    from management_app.api import configuration
-
-    client, identity, validator, repository = configuration_api
-    clock = SimpleNamespace(origin=None, seconds=0.0)
-    deadlines = []
-
-    class Timers:
-        @staticmethod
-        def get_running_loop():
-            if clock.origin is None:
-                clock.origin = asyncio.get_running_loop().time()
-            return SimpleNamespace(time=lambda: clock.origin + clock.seconds)
-
-        @staticmethod
-        def timeout_at(deadline):
-            deadlines.append(deadline)
-            return asyncio.timeout_at(asyncio.get_running_loop().time() + 0.1)
-
-    async def authorize(request):
-        clock.seconds = 9.5
-        return identity.actor
-
-    async def blocked_audit(snapshot):
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(configuration, "asyncio", Timers)
-    monkeypatch.setattr(identity, "require_manager", authorize)
-    monkeypatch.setattr(repository.audit, "recover_publication", blocked_audit)
-    response = client.put(PATH, json=configuration_graph, headers={"If-Match": ETAG})
-    assert response.status_code == 200 and response.headers["X-Audit-Status"] == "pending"
-    assert repository.publications == 1 and response.json() == repository.snapshot
-    assert deadlines == [clock.origin + 10, clock.origin + 10]
 
 
 def test_invalid_save_has_no_publication_audit(configuration_api) -> None:

@@ -40,7 +40,7 @@ def test_composed_local_health_contract(route: str, schema: str) -> None:
             }
             assert response.json()["reason_codes"] == []
         assert client.get("/ping").status_code == 200
-        assert client.get("/v2/configuration").status_code == 404
+        assert client.get("/v1/configuration").status_code == 404
 
 
 def test_composed_failure_readiness_and_safe_correlation() -> None:

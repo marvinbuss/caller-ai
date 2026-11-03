@@ -10,8 +10,6 @@ dependencies = [
   "httpx>=0.28,<1",
   "azure-cosmos>=4.9,<5",
   "azure-identity>=1.21,<2",
-  "PyJWT[crypto]>=2.15,<3",
-  "jsonschema>=4.23,<5",
   "openai-agents[realtime]>=0.6,<1",
   "opentelemetry-api>=1.30,<2",
   "opentelemetry-sdk>=1.30,<2",
@@ -22,6 +20,7 @@ dev = [
   "psutil>=7,<8",
   "pytest>=8.3,<10",
   "pytest-socket>=0.7,<1",
+  "jsonschema>=4.23,<5",
   "types-jsonschema>=4.23",
   "mypy>=1.15,<2",
   "ruff>=0.12,<1",
@@ -36,7 +35,7 @@ packages = ["src/caller_runtime"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --import-mode=importlib --disable-socket --allow-hosts=127.0.0.1,::1 --allow-unix-socket"
+addopts = "-ra --strict-markers --disable-socket --allow-hosts=127.0.0.1,::1 --allow-unix-socket"
 
 [tool.mypy]
 python_version = "3.12"

@@ -95,7 +95,7 @@ class CapabilityGateway:
         with self._telemetry.span("capability.execute"):
             try:
                 async with asyncio.timeout_at(deadline):
-                    for _attempt in range(1 if request.single_attempt else 3):
+                    for _attempt in range(3):
                         dependency = "configuration_store"
                         document = await self._repository.read_authority()
                         authority = PermissionAuthority.model_validate_json(json.dumps(document))

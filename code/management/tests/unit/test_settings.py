@@ -59,12 +59,6 @@ def test_external_connections_are_blocked() -> None:
             connection.connect(("203.0.113.10", 443))
 
 
-def test_console_controls_are_not_obscured_by_framework_badge() -> None:
-    from rxconfig import config
-
-    assert config.show_built_with_reflex is False
-
-
 def test_preview_warmup_hook_is_registered_and_idempotent() -> None:
     from rxconfig import PreviewWarmupPlugin, config
 

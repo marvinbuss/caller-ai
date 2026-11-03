@@ -13,16 +13,7 @@ from management_app.services.secret_detection import Issue, SecretDetector, fiel
 SNAPSHOT_LIMIT = 512 * 1024
 BATCH_LIMIT = 768 * 1024
 GRAPH_FIELDS = frozenset(
-    {
-        "schemaVersion",
-        "agents",
-        "communities",
-        "relationships",
-        "communityConnections",
-        "layout",
-        "tools",
-        "mcpConnections",
-    }
+    {"schemaVersion", "agents", "communities", "relationships", "tools", "mcpConnections"}
 )
 
 
@@ -64,18 +55,47 @@ def relationship_rule(
     if source_id == target_id:
         return "unique_path"
     source_role, target_role = source.get("role"), target.get("role")
-    if source_role != "ordinary" or target_role != "ordinary":
+    if source_role == "goodbye" or target_role == "welcome":
         return "lifecycle_path"
-    if source.get("communityId") != target.get("communityId"):
+    if source_role == "welcome" and target_role not in {"routing", "goodbye"}:
+        return "lifecycle_path"
+    if source_role == target_role == "ordinary" and source.get("communityId") != target.get(
+        "communityId"
+    ):
         return "foreign_direct_path"
+    if source_role == "routing" and target_role == "ordinary":
+        community_id = target.get("communityId")
+        community = communities.get(community_id) if isinstance(community_id, str) else None
+        if community is None or community.get("entryAgentId") != target_id:
+            return "routing_entry_path"
     return None
 
 
 def required_relationship_pairs(
     agents: Mapping[str, Mapping[str, object]], communities: Mapping[str, Mapping[str, object]]
 ) -> set[tuple[str, str]]:
-    """Protected lifecycle transitions are runtime policy, never editable graph edges."""
-    return set()
+    roles = {
+        role: [
+            identifier
+            for identifier, agent in agents.items()
+            if agent.get("role") == role
+            and agent.get("enabled") is True
+            and agent.get("communityId") is None
+        ]
+        for role in ("welcome", "routing", "goodbye")
+    }
+    if any(len(members) != 1 for members in roles.values()):
+        return set()
+    welcome, routing, goodbye = (roles[role][0] for role in ("welcome", "routing", "goodbye"))
+    required = {(welcome, routing), (routing, goodbye)}
+    for identifier, agent in agents.items():
+        if agent.get("role") == "ordinary" and agent.get("enabled") is True:
+            required.update({(identifier, routing), (identifier, goodbye)})
+    for community in communities.values():
+        entry = community.get("entryAgentId")
+        if community.get("enabled") is True and isinstance(entry, str):
+            required.add((routing, entry))
+    return required
 
 
 class ConfigurationValidator:
@@ -128,7 +148,6 @@ class ConfigurationValidator:
             (graph.agents, "agent_id", "agents"),
             (graph.communities, "community_id", "communities"),
             (graph.relationships, "relationship_id", "relationships"),
-            (graph.community_connections, "connection_id", "communityConnections"),
             (graph.tools, "tool_id", "tools"),
             (graph.mcp_connections, "connection_id", "mcpConnections"),
         ]
@@ -136,8 +155,6 @@ class ConfigurationValidator:
             identifiers = [getattr(item, attribute) for item in items]
             if len(identifiers) != len(set(identifiers)):
                 reject(path, rule="unique_id")
-        if len(graph.relationships) + len(graph.community_connections) > 1000:
-            reject("configuration", rule="connection_count")
         names = [agent.name for agent in graph.agents]
         if len(names) != len(set(names)):
             reject("agents", rule="unique_name")
@@ -171,8 +188,6 @@ class ConfigurationValidator:
                 reject(path + ".communityId", rule="community_membership")
             if agent.role != "ordinary" and agent.capability_assignments:
                 reject(path + ".capabilityAssignments", rule="protected_capability")
-            if sum(len(item.permitted_action_names) for item in agent.capability_assignments) > 128:
-                reject(path + ".capabilityAssignments", rule="effective_tool_count")
             seen_tools: set[str] = set()
             for assignment_index, assignment in enumerate(agent.capability_assignments):
                 assignment_path = f"{path}.capabilityAssignments[{assignment_index}]"
@@ -243,45 +258,8 @@ class ConfigurationValidator:
                 set(relationship.allowed_context_fields)
             ):
                 reject(path, rule="context_fields")
-
-        community_paths: set[tuple[str, str]] = set()
-        for index, edge in enumerate(graph.community_connections):
-            path = f"communityConnections[{index}]"
-            pair = (edge.source_community_id, edge.target_community_id)
-            if pair[0] not in communities or pair[1] not in communities:
-                reject(path, rule="community_connection_reference")
-            if pair[0] == pair[1] or pair in community_paths:
-                reject(path, rule="unique_path")
-            community_paths.add(pair)
-            if len(edge.allowed_context_fields) != len(set(edge.allowed_context_fields)):
-                reject(path + ".allowedContextFields", rule="context_fields")
-
-        positions: set[str] = set()
-        for index, position in enumerate(graph.layout.communities):
-            path = f"layout.communities[{index}].nodeId"
-            if position.node_id not in communities:
-                reject(path, rule="layout_reference")
-            if position.node_id in positions:
-                reject(path, rule="unique_position")
-            positions.add(position.node_id)
-        for community_index, (community_id, rows) in enumerate(
-            graph.layout.agents_by_community.items()
-        ):
-            path = f"layout.agentsByCommunity[{community_index}]"
-            if community_id not in communities:
-                reject(path, rule="layout_reference")
-            positions = set()
-            for index, position in enumerate(rows):
-                positioned_agent = agents.get(position.node_id)
-                if (
-                    positioned_agent is None
-                    or positioned_agent.role != "ordinary"
-                    or positioned_agent.community_id != community_id
-                ):
-                    reject(f"{path}[{index}].nodeId", rule="layout_reference")
-                if position.node_id in positions:
-                    reject(f"{path}[{index}].nodeId", rule="unique_position")
-                positions.add(position.node_id)
+        if not required_relationship_pairs(agent_nodes, community_nodes) <= paths:
+            reject("relationships", rule="required_lifecycle_path")
 
         for index, connection in enumerate(graph.mcp_connections):
             path = f"mcpConnections[{index}]"

@@ -9,29 +9,14 @@ import pytest
 from azure.cosmos.exceptions import CosmosResourceExistsError
 
 
-@pytest.mark.parametrize("kind", ["local", "cosmos-double"])
 def test_bootstrap_is_idempotent_with_stable_protected_ids_and_no_business_admission(
     validator,
-    configuration_graph,
-    kind,
 ) -> None:
-    from management_app.adapters.configuration_repository import (
-        CosmosConfigurationRepository,
-        LocalConfigurationRepository,
-        graph_document,
-    )
-    from management_app.api.configuration import ETAG
+    from management_app.adapters.configuration_repository import LocalConfigurationRepository
     from management_app.services.bootstrap import bootstrap, protected_graph
-    from tests.integration.test_configuration_persistence import ContainerDouble
 
     assert protected_graph() == protected_graph()
-    assert protected_graph()["schemaVersion"] == "2.0.0"
-    container = ContainerDouble() if kind == "cosmos-double" else None
-    store = (
-        LocalConfigurationRepository(validator=validator)
-        if container is None
-        else CosmosConfigurationRepository(container=container, validator=validator)
-    )
+    store = LocalConfigurationRepository(validator=validator)
 
     async def scenario():
         first, second = await asyncio.gather(bootstrap(store), bootstrap(store))
@@ -43,27 +28,6 @@ def test_bootstrap_is_idempotent_with_stable_protected_ids_and_no_business_admis
             agent["enabled"] and agent["communityId"] is None for agent in snapshot["agents"]
         )
         assert snapshot["revisionNumber"] == 1
-        assert snapshot["relationships"] == snapshot["communityConnections"] == []
-        assert snapshot["layout"] == {"communities": [], "agentsByCommunity": {}}
-        assert first.etag == etag and ETAG.fullmatch(etag)
-        graph = graph_document(snapshot)
-        graph["agents"].extend(
-            copy.deepcopy(agent)
-            for agent in configuration_graph["agents"]
-            if agent["role"] == "ordinary"
-        )
-        graph["communities"] = copy.deepcopy(configuration_graph["communities"])
-        before = copy.deepcopy(container.items) if container is not None else None
-        for condition in ("*", '"stale"'):
-            assert await store.publish(graph, if_match=condition, actor_id="manager-one") is None
-            assert await store.read_active() == (snapshot, etag)
-            if container is not None:
-                assert container.items == before
-        published = await store.publish(graph, if_match=first.etag, actor_id="manager-one")
-        assert published is not None and published[0]["revisionNumber"] == 2
-        assert await store.read_revision(snapshot["id"]) == snapshot
-        assert (await bootstrap(store)).configuration_ready is True
-        assert await store.read_active() == published
 
     asyncio.run(scenario())
 

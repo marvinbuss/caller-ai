@@ -213,7 +213,7 @@ def running_configuration_editor(
 ) -> Iterator[dict]:
     if mode != "local":
         raise ValueError("test_identity_live_mode_prohibited")
-    port, runtime_port = free_ports(2)
+    port = free_ports(1)[0]
     origin = f"https://127.0.0.1:{port}"
     environment = {
         key: value
@@ -252,7 +252,6 @@ def running_configuration_editor(
                     "identities": identities,
                     "origin": origin,
                     "port": port,
-                    "runtime_port": runtime_port,
                 }
             )
         )
@@ -296,10 +295,6 @@ def running_configuration_editor(
                         "UV_OFFLINE": "1",
                     }
                 )
-                deadline = time.monotonic() + 120
-                fixture_document = json.loads(fixture.read_text())
-                fixture_document["readiness_deadline"] = deadline
-                fixture.write_text(json.dumps(fixture_document))
                 server = psutil.Popen(
                     [
                         "uv",
@@ -318,22 +313,11 @@ def running_configuration_editor(
                 )
                 processes.append(server)
                 context = ssl.create_default_context(cafile=str(directory / "certificate.pem"))
+                deadline = time.monotonic() + 120
                 with httpx.Client(verify=context, timeout=1, trust_env=False) as client:
                     while time.monotonic() < deadline:
                         if server.poll() is not None:
-                            output.flush()
-                            category = build_tools().build_failure_category(
-                                directory / "process.log"
-                            )
-                            metadata = build_tools().build_failure_metadata(
-                                directory / "process.log"
-                            )
-                            raise RuntimeError(
-                                "editor_process_exited_before_ready:"
-                                + category
-                                + ":"
-                                + json.dumps(metadata, separators=(",", ":"))
-                            )
+                            raise RuntimeError("editor_process_exited_before_ready")
                         try:
                             response = client.get(origin + "/readyz")
                             response.raise_for_status()
@@ -351,7 +335,6 @@ def running_configuration_editor(
                 yield {
                     "ui": origin,
                     "management": origin,
-                    "runtime": f"https://127.0.0.1:{runtime_port}",
                     "certificate": str(directory / "certificate.pem"),
                     "processes": processes,
                     "sessions": json.loads((directory / "sessions.json").read_text()),

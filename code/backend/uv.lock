@@ -93,17 +93,16 @@ dependencies = [
     { name = "azure-identity" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "jsonschema" },
     { name = "openai-agents", extra = ["realtime"] },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "pydantic-settings" },
-    { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "psutil" },
     { name = "pytest" },
@@ -118,17 +117,16 @@ requires-dist = [
     { name = "azure-identity", specifier = ">=1.21,<2" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "openai-agents", extras = ["realtime"], specifier = ">=0.6,<1" },
     { name = "opentelemetry-api", specifier = ">=1.30,<2" },
     { name = "opentelemetry-sdk", specifier = ">=1.30,<2" },
     { name = "pydantic-settings", specifier = ">=2.8,<3" },
-    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "mypy", specifier = ">=1.15,<2" },
     { name = "psutil", specifier = ">=7,<8" },
     { name = "pytest", specifier = ">=8.3,<10" },

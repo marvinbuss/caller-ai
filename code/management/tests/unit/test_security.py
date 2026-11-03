@@ -711,12 +711,12 @@ def test_real_identity_validation_publication_and_audit_roundtrip(
     )
     headers = {"Authorization": "Bearer " + signed(signing_key)}
     with TestClient(app, base_url=ORIGIN) as client:
-        assert client.get("/v2/configuration").status_code == 401
-        current = client.get("/v2/configuration", headers=headers)
+        assert client.get("/v1/configuration").status_code == 401
+        current = client.get("/v1/configuration", headers=headers)
         assert current.status_code == 200
         configuration_graph["agents"][3]["prompt"] = "Synthetic verified manager edit"
         saved = client.put(
-            "/v2/configuration",
+            "/v1/configuration",
             json=configuration_graph,
             headers={**headers, "If-Match": current.headers["ETag"]},
         )
@@ -724,13 +724,13 @@ def test_real_identity_validation_publication_and_audit_roundtrip(
         assert saved.headers["X-Audit-Status"] == "recorded"
         assert (
             client.put(
-                "/v2/configuration",
+                "/v1/configuration",
                 json=configuration_graph,
                 headers={**headers, "If-Match": current.headers["ETag"]},
             ).status_code
-            == 409
+            == 412
         )
-        assert client.get("/v2/configuration", headers=headers).json() == saved.json()
+        assert client.get("/v1/configuration", headers=headers).json() == saved.json()
     publications = [
         record for record in audit.records.values() if record["action"] == "configuration.publish"
     ]
@@ -762,7 +762,7 @@ def test_real_api_credential_rejection_is_private_and_never_published(
     configuration_graph["agents"][3]["prompt"] = "=".join(("Password", candidate))
     with TestClient(app, base_url=ORIGIN) as client:
         response = client.put(
-            "/v2/configuration",
+            "/v1/configuration",
             json=configuration_graph,
             headers={"Authorization": "Bearer " + signed(signing_key), "If-Match": initial[1]},
         )

@@ -1,7 +1,6 @@
 mock_provider "azurerm" {}
 
 variables {
-  environment                = "dev"
   subscription_id            = "00000000-0000-4000-8000-000000000001"
   tenant_id                  = "00000000-0000-4000-8000-000000000002"
   client_id                  = "00000000-0000-4000-8000-000000000003"
@@ -33,9 +32,6 @@ run "private_encrypted_entra_state" {
   assert {
     condition = (
       azurerm_storage_container.state.container_access_type == "private" &&
-      azurerm_storage_container.plans.container_access_type == "private" &&
-      azurerm_storage_container.plans.name != azurerm_storage_container.state.name &&
-      azurerm_resource_group.state.tags.environment == "dev" &&
       azurerm_storage_account.state.blob_properties[0].versioning_enabled == true &&
       azurerm_storage_account.state.blob_properties[0].delete_retention_policy[0].days == var.state_retention_days
     )
@@ -50,22 +46,6 @@ run "private_encrypted_entra_state" {
       azurerm_management_lock.state.lock_level == "CanNotDelete"
     )
     error_message = "State requires explicit least-scope writers, private Blob connectivity and deletion protection."
-  }
-}
-
-run "plan_container_has_separate_scoped_writers" {
-  command = plan
-  override_resource {
-    override_during = plan
-    target          = azurerm_storage_container.plans
-    values          = { id = "/subscriptions/00000000-0000-4000-8000-000000000001/resourceGroups/rg-caller-state-fixture/providers/Microsoft.Storage/storageAccounts/stcallerstatefixture01/blobServices/default/containers/tfplans" }
-  }
-  assert {
-    condition = (
-      length(azurerm_role_assignment.plan_writer) == length(var.state_writer_principal_ids) &&
-      alltrue([for assignment in azurerm_role_assignment.plan_writer : assignment.scope == azurerm_storage_container.plans.id && assignment.role_definition_name == "Storage Blob Data Contributor"])
-    )
-    error_message = "Plan writers must be scoped only to the separate private plan container."
   }
 }
 

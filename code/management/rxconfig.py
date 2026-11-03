@@ -53,8 +53,7 @@ config = rx.Config(
     frontend_port=3000,
     backend_host="127.0.0.1",
     telemetry_enabled=False,
-    show_built_with_reflex=False,
-    frontend_packages=["react-debounce-input@3.3.0", "@xyflow/react@12.12.0"],
+    frontend_packages=["react-debounce-input@3.3.0"],
     state_manager_mode=rx.constants.StateManagerMode.MEMORY,
     plugins=[
         PreviewWarmupPlugin(),

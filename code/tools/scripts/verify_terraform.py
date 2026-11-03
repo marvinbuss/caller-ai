@@ -18,7 +18,7 @@ import httpx
 from ci import ROOT
 
 BASE = ROOT / "code/infra/terraform"
-ROOTS = (BASE / "bootstrap", BASE / "modules/platform", BASE / "environments")
+ROOTS = (BASE / "bootstrap", BASE / "modules/platform", BASE / "environments/dev")
 
 
 def version() -> str:

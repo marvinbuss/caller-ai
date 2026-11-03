@@ -1,22 +1,3 @@
-variable "environment" {
-  type        = string
-  description = "Explicit environment name shared by bootstrap and workload configuration."
-  validation {
-    condition     = can(regex("^[a-z][a-z0-9-]{1,15}$", var.environment))
-    error_message = "Supply a canonical environment name without paths or whitespace."
-  }
-}
-
-variable "plan_container_name" {
-  type        = string
-  default     = "tfplans"
-  description = "Private plan/review container, distinct from Terraform state."
-  validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", var.plan_container_name)) && !strcontains(var.plan_container_name, "--") && var.plan_container_name != "tfstate"
-    error_message = "Supply a valid separate private plan-container name."
-  }
-}
-
 variable "subscription_id" {
   type        = string
   description = "Approved subscription for the state resources; no default environment."

@@ -383,30 +383,6 @@ async def test_retry_preserves_request_id_deadline_and_requires_fresh_admission(
 
 
 @pytest.mark.anyio
-async def test_conversation_single_attempt_never_replays_retryable_public_work(
-    gateway_case, capability_graph, monkeypatch
-):
-    from management_app.services.capability_gateway import GatewayError, RetryableCapabilityError
-
-    gateway, repository, transport, telemetry = gateway_case
-    snapshot, _ = await repository.initialize(capability_graph, actor_id="manager-fixture")
-    calls = []
-
-    async def uncertain(selected, *, request_id, deadline):
-        calls.append((request_id, deadline))
-        raise RetryableCapabilityError("synthetic-unknown")
-
-    monkeypatch.setattr(transport, "execute", uncertain)
-    with pytest.raises(GatewayError) as failure:
-        await gateway.execute(
-            attempt(pinnedRevisionId=snapshot["id"], singleAttempt=True),
-            actor_id="runtime-fixture",
-        )
-    assert failure.value.status == 503 and len(calls) == 1
-    assert (await repository.read_authority())["admissionSequence"] == 1
-
-
-@pytest.mark.anyio
 async def test_new_configuration_grant_cannot_expand_pinned_call(gateway_case, capability_graph):
     from management_app.services.capability_gateway import GatewayError
 

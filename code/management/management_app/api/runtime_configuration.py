@@ -11,7 +11,6 @@ from management_app.adapters.configuration_repository import Publication, verifi
 from management_app.api.capabilities import RuntimeIdentityPort
 from management_app.api.configuration import ETAG
 from management_app.observability import Telemetry, sanitize_correlation_id
-from management_app.services.configuration_publication import runtime_projection
 
 ERROR_CODES = {
     401: "authentication_required",
@@ -51,7 +50,7 @@ def create_router(
         raise ValueError("explicit_runtime_configuration_ports_required")
     router = APIRouter()
 
-    @router.get("/v2/runtime/configuration")
+    @router.get("/v1/runtime/configuration")
     async def configuration(request: Request) -> Response:
         correlation = sanitize_correlation_id(request.headers.get("X-Correlation-ID"))
         with telemetry.span("http.request", headers=request.headers):
@@ -72,7 +71,7 @@ def create_router(
                     document, etag = active
                     if not ETAG.fullmatch(etag):
                         raise ValueError("invalid_pointer_etag")
-                    snapshot = runtime_projection(verified_revision(document))
+                    snapshot = verified_revision(document)
                     headers = {
                         "ETag": etag,
                         "Cache-Control": "private, no-cache",

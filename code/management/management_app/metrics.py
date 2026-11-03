@@ -169,10 +169,10 @@ class ManagementMetrics:
         routes = {
             "/healthz": "health",
             "/readyz": "readiness",
-            "/v2/configuration": "configuration",
+            "/v1/configuration": "configuration",
             "/v1/runtime/capabilities/execute": "capability_execute",
             "/v1/security/revocations": "revocations",
-            "/v2/runtime/configuration": "runtime_configuration",
+            "/v1/runtime/configuration": "runtime_configuration",
             "/auth/session": "auth",
             "/auth/callback": "auth",
             "/auth/login": "auth",

@@ -1,6 +1,5 @@
 """Isolated application configuration and owned local browser-server fixtures."""
 
-import copy
 import importlib.util
 import json
 import os
@@ -41,8 +40,20 @@ def configuration_graph_document() -> dict:
         ("agent-alpha", "ordinary", "community-alpha"),
         ("agent-beta", "ordinary", "community-beta"),
     ]
+    routes = [
+        ("agent-welcome", "agent-routing"),
+        ("agent-routing", "agent-alpha"),
+        ("agent-routing", "agent-beta"),
+        ("agent-alpha", "agent-routing"),
+        ("agent-beta", "agent-routing"),
+    ]
+    routes += [
+        (identifier, "agent-goodbye")
+        for identifier, _, _ in members
+        if identifier != "agent-goodbye"
+    ]
     return {
-        "schemaVersion": "2.0.0",
+        "schemaVersion": "1.0.0",
         "agents": [
             {
                 "agentId": identifier,
@@ -65,9 +76,15 @@ def configuration_graph_document() -> dict:
             }
             for name in ("alpha", "beta")
         ],
-        "relationships": [],
-        "communityConnections": [],
-        "layout": {"communities": [], "agentsByCommunity": {}},
+        "relationships": [
+            {
+                "relationshipId": f"path-{index}",
+                "sourceAgentId": source,
+                "targetAgentId": target,
+                "allowedContextFields": ["request_summary", "transfer_reason"],
+            }
+            for index, (source, target) in enumerate(routes)
+        ],
         "tools": [],
         "mcpConnections": [],
     }
@@ -76,44 +93,6 @@ def configuration_graph_document() -> dict:
 @pytest.fixture
 def configuration_graph() -> dict:
     return configuration_graph_document()
-
-
-@pytest.fixture
-def graph_v2(configuration_graph):
-    graph = copy.deepcopy(configuration_graph)
-    graph["schemaVersion"] = "2.0.0"
-    graph["agents"].append(
-        {**graph["agents"][3], "agentId": "agent-alpha-peer", "name": "Alpha peer"}
-    )
-    graph["relationships"] = [
-        {
-            "relationshipId": "alpha-handover",
-            "sourceAgentId": "agent-alpha",
-            "targetAgentId": "agent-alpha-peer",
-            "allowedContextFields": ["request_summary", "transfer_reason"],
-        }
-    ]
-    graph["communityConnections"] = [
-        {
-            "connectionId": "alpha-to-beta",
-            "sourceCommunityId": "community-alpha",
-            "targetCommunityId": "community-beta",
-            "allowedContextFields": ["request_summary", "transfer_reason"],
-        }
-    ]
-    graph["layout"] = {
-        "communities": [
-            {"nodeId": "community-alpha", "x": 0, "y": 0},
-            {"nodeId": "community-beta", "x": 240, "y": 0},
-        ],
-        "agentsByCommunity": {
-            "community-alpha": [
-                {"nodeId": "agent-alpha", "x": 0, "y": 0},
-                {"nodeId": "agent-alpha-peer", "x": 240, "y": 0},
-            ]
-        },
-    }
-    return graph
 
 
 @pytest.fixture(autouse=True)
@@ -172,67 +151,6 @@ def capability_graph_document() -> dict:
 @pytest.fixture
 def capability_graph() -> dict:
     return capability_graph_document()
-
-
-@pytest.fixture(scope="session")
-def editor_host_factory():
-    path = Path(__file__).resolve().parents[2] / "tools/scripts/smoke.py"
-    specification = importlib.util.spec_from_file_location("caller_editor_smoke", path)
-    assert specification is not None and specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
-    sys.modules[specification.name] = module
-    specification.loader.exec_module(module)
-    return module.running_configuration_editor
-
-
-@pytest.fixture
-def editor_test_app(tmp_path, monkeypatch, configuration_graph):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("__REFLEX_SKIP_COMPILE", "true")
-    monkeypatch.setenv("REFLEX_WEB_WORKDIR", str(tmp_path / "web"))
-
-    def reject_frontend_install(*arguments, **keywords):
-        pytest.fail("backend_editor_fixture_must_not_prepare_frontend_packages")
-
-    monkeypatch.setattr(
-        "reflex.utils.js_runtimes.install_frontend_packages", reject_frontend_install
-    )
-    fixture_path = tmp_path / "fixture.json"
-    fixture_path.write_text(
-        json.dumps(
-            {
-                "mode": "local",
-                "graph": configuration_graph,
-                "identities": ["manager-one", "manager-two"],
-                "origin": "https://editor.example.invalid",
-                "port": 9443,
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CALLER_EDITOR_TEST_FIXTURE", str(fixture_path))
-
-    from reflex.config import get_config
-
-    config = get_config()
-    original_import = config.app_module_import
-    name = "tests.editor_app"
-    original_module = sys.modules.get(name)
-    specification = importlib.util.spec_from_file_location(
-        name, Path(__file__).with_name("editor_app.py")
-    )
-    assert specification is not None and specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
-    sys.modules[name] = module
-    try:
-        specification.loader.exec_module(module)
-        yield module
-    finally:
-        config.app_module_import = original_import
-        if original_module is None:
-            sys.modules.pop(name, None)
-        else:
-            sys.modules[name] = original_module
 
 
 @pytest.fixture(scope="session")

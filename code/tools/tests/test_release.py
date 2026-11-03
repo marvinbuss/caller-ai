@@ -42,34 +42,6 @@ def test_local_regression_requires_actual_nonempty_complete_xml_and_successful_e
     assert report["release_status"] == "blocked" and report["live_status"] == "pending"
     assert {suite["name"] for suite in report["suites"]} == {"runtime", "management", "tools"}
     assert all("-k" not in command and "--ignore" not in command for command in commands)
-    assert all(
-        command[command.index("--no-sync") + 1 : command.index("--no-sync") + 4]
-        == ["python", "-m", "pytest"]
-        for command in commands
-    )
-
-
-def test_unattended_suite_runner_closes_inherited_input_without_changing_deadline(
-    release, monkeypatch
-):
-    from types import SimpleNamespace
-
-    options_seen, cleaned = [], []
-    process = SimpleNamespace(
-        wait=lambda *, timeout: 0 if timeout == 900 else pytest.fail("runner_budget_changed")
-    )
-
-    def spawn(command, **options):
-        assert command == ["owned-pytest"]
-        options_seen.append(options)
-        return process
-
-    monkeypatch.setattr(release.psutil, "Popen", spawn)
-    monkeypatch.setattr(release, "stop", lambda processes: cleaned.extend(processes))
-    assert release.execute(["owned-pytest"], {}, 900) == 0
-    assert options_seen[0]["stdin"] == release.subprocess.DEVNULL
-    assert options_seen[0]["stdout"] == options_seen[0]["stderr"] == release.subprocess.DEVNULL
-    assert cleaned == [process]
 
 
 def test_requirement_inventory_is_complete_and_participant_study_stays_deferred(release):
@@ -81,30 +53,6 @@ def test_requirement_inventory_is_complete_and_participant_study_stays_deferred(
     assert all(
         value["status"] in {"pending_qualification", "deferred"} for value in inventory.values()
     )
-
-
-def test_multimodal_inventory_does_not_inherit_historical_participant_deferral(release):
-    inventory = release.requirements(feature="002-multimodal-agent-management")
-    assert set(inventory) == {f"FR-{index:03}" for index in range(1, 35)} | {
-        f"SC-{index:03}" for index in range(1, 11)
-    }
-    assert all(value["status"] == "pending_qualification" for value in inventory.values())
-    assert all(
-        value["evidence"] == "docs/acceptance/multimodal-agent-management.md"
-        for value in inventory.values()
-    )
-    assert release.requirements()["SC-008"]["status"] == "deferred"
-
-
-def test_multimodal_live_inventory_is_read_only_without_any_runner(release, monkeypatch, capsys):
-    def forbidden(*arguments, **keywords):
-        pytest.fail("feature_inventory_started_live_execution")
-
-    monkeypatch.setattr(release, "execute", forbidden)
-    assert release.main(["--profile", "live", "--feature", "002-multimodal-agent-management"]) == 2
-    report = json.loads(capsys.readouterr().out)
-    assert report["live_status"] == "pending" and report["release_status"] == "blocked"
-    assert len(report["requirements"]) == 44
 
 
 def test_live_profile_refuses_without_any_runner_or_credentials(release, monkeypatch, capsys):

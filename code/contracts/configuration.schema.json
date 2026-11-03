@@ -1,575 +1,458 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$defs": {
-    "Agent": {
-      "additionalProperties": false,
-      "properties": {
-        "agentId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Agentid",
-          "type": "string"
-        },
-        "name": {
-          "maxLength": 128,
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
-        },
-        "prompt": {
-          "title": "Prompt",
-          "type": "string"
-        },
-        "enabled": {
-          "title": "Enabled",
-          "type": "boolean"
-        },
-        "role": {
-          "enum": [
-            "ordinary",
-            "welcome",
-            "routing",
-            "goodbye"
-          ],
-          "title": "Role",
-          "type": "string"
-        },
-        "communityId": {
-          "anyOf": [
-            {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-              "type": "string"
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+        "Agent": {
+            "additionalProperties": false,
+            "properties": {
+                "agentId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Agentid",
+                    "type": "string"
+                },
+                "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "title": "Name",
+                    "type": "string"
+                },
+                "prompt": {
+                    "title": "Prompt",
+                    "type": "string"
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "role": {
+                    "enum": [
+                        "ordinary",
+                        "welcome",
+                        "routing",
+                        "goodbye"
+                    ],
+                    "title": "Role",
+                    "type": "string"
+                },
+                "communityId": {
+                    "anyOf": [
+                        {
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "title": "Communityid"
+                },
+                "capabilityAssignments": {
+                    "items": {
+                        "$ref": "#/$defs/CapabilityAssignment"
+                    },
+                    "title": "Capabilityassignments",
+                    "type": "array"
+                }
             },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Communityid"
-        },
-        "capabilityAssignments": {
-          "items": {
-            "$ref": "#/$defs/CapabilityAssignment"
-          },
-          "title": "Capabilityassignments",
-          "type": "array"
-        }
-      },
-      "required": [
-        "agentId",
-        "name",
-        "prompt",
-        "enabled",
-        "role",
-        "communityId",
-        "capabilityAssignments"
-      ],
-      "title": "Agent",
-      "type": "object"
-    },
-    "CapabilityAssignment": {
-      "additionalProperties": false,
-      "properties": {
-        "agentId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Agentid",
-          "type": "string"
-        },
-        "toolId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Toolid",
-          "type": "string"
-        },
-        "permittedActionNames": {
-          "items": {
-            "maxLength": 128,
-            "minLength": 1,
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Permittedactionnames",
-          "type": "array"
-        },
-        "allowedInputConstraints": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Allowedinputconstraints",
-          "type": "object"
-        }
-      },
-      "required": [
-        "agentId",
-        "toolId",
-        "permittedActionNames",
-        "allowedInputConstraints"
-      ],
-      "title": "CapabilityAssignment",
-      "type": "object"
-    },
-    "Community": {
-      "additionalProperties": false,
-      "properties": {
-        "communityId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Communityid",
-          "type": "string"
-        },
-        "name": {
-          "maxLength": 128,
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
-        },
-        "routingDescription": {
-          "title": "Routingdescription",
-          "type": "string"
-        },
-        "enabled": {
-          "title": "Enabled",
-          "type": "boolean"
-        },
-        "entryAgentId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Entryagentid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "communityId",
-        "name",
-        "routingDescription",
-        "enabled",
-        "entryAgentId"
-      ],
-      "title": "Community",
-      "type": "object"
-    },
-    "CommunityConnection": {
-      "additionalProperties": false,
-      "properties": {
-        "connectionId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Connectionid",
-          "type": "string"
-        },
-        "sourceCommunityId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Sourcecommunityid",
-          "type": "string"
-        },
-        "targetCommunityId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Targetcommunityid",
-          "type": "string"
-        },
-        "allowedContextFields": {
-          "items": {
-            "enum": [
-              "request_summary",
-              "transfer_reason"
+            "required": [
+                "agentId",
+                "name",
+                "prompt",
+                "enabled",
+                "role",
+                "communityId",
+                "capabilityAssignments"
             ],
-            "type": "string"
-          },
-          "maxItems": 2,
-          "title": "Allowedcontextfields",
-          "type": "array"
-        }
-      },
-      "required": [
-        "connectionId",
-        "sourceCommunityId",
-        "targetCommunityId",
-        "allowedContextFields"
-      ],
-      "title": "CommunityConnection",
-      "type": "object"
-    },
-    "GraphLayout": {
-      "additionalProperties": false,
-      "properties": {
-        "communities": {
-          "items": {
-            "$ref": "#/$defs/GraphPosition"
-          },
-          "title": "Communities",
-          "type": "array"
+            "title": "Agent",
+            "type": "object"
         },
-        "agentsByCommunity": {
-          "patternProperties": {
-            "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$": {
-              "items": {
-                "$ref": "#/$defs/GraphPosition"
-              },
-              "type": "array"
-            }
-          },
-          "title": "Agentsbycommunity",
-          "type": "object"
-        }
-      },
-      "required": [
-        "communities",
-        "agentsByCommunity"
-      ],
-      "title": "GraphLayout",
-      "type": "object"
-    },
-    "GraphPosition": {
-      "additionalProperties": false,
-      "properties": {
-        "nodeId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Nodeid",
-          "type": "string"
-        },
-        "x": {
-          "maximum": 100000,
-          "minimum": -100000,
-          "title": "X",
-          "type": "number"
-        },
-        "y": {
-          "maximum": 100000,
-          "minimum": -100000,
-          "title": "Y",
-          "type": "number"
-        }
-      },
-      "required": [
-        "nodeId",
-        "x",
-        "y"
-      ],
-      "title": "GraphPosition",
-      "type": "object"
-    },
-    "JsonValue": {},
-    "MCPConnection": {
-      "additionalProperties": false,
-      "properties": {
-        "connectionId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Connectionid",
-          "type": "string"
-        },
-        "name": {
-          "maxLength": 128,
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
-        },
-        "approvedEndpointRef": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Approvedendpointref",
-          "type": "string"
-        },
-        "enabled": {
-          "title": "Enabled",
-          "type": "boolean"
-        },
-        "credentialRef": {
-          "title": "Credentialref",
-          "type": "string"
-        },
-        "reviewedCapabilityCatalog": {
-          "items": {
-            "$ref": "#/$defs/ReviewedCapability"
-          },
-          "title": "Reviewedcapabilitycatalog",
-          "type": "array"
-        }
-      },
-      "required": [
-        "connectionId",
-        "name",
-        "approvedEndpointRef",
-        "enabled",
-        "credentialRef",
-        "reviewedCapabilityCatalog"
-      ],
-      "title": "MCPConnection",
-      "type": "object"
-    },
-    "Relationship": {
-      "additionalProperties": false,
-      "properties": {
-        "relationshipId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Relationshipid",
-          "type": "string"
-        },
-        "sourceAgentId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Sourceagentid",
-          "type": "string"
-        },
-        "targetAgentId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Targetagentid",
-          "type": "string"
-        },
-        "allowedContextFields": {
-          "items": {
-            "enum": [
-              "request_summary",
-              "transfer_reason"
+        "CapabilityAssignment": {
+            "additionalProperties": false,
+            "properties": {
+                "agentId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Agentid",
+                    "type": "string"
+                },
+                "toolId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Toolid",
+                    "type": "string"
+                },
+                "permittedActionNames": {
+                    "items": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                    },
+                    "minItems": 1,
+                    "title": "Permittedactionnames",
+                    "type": "array"
+                },
+                "allowedInputConstraints": {
+                    "additionalProperties": {
+                        "$ref": "#/$defs/JsonValue"
+                    },
+                    "title": "Allowedinputconstraints",
+                    "type": "object"
+                }
+            },
+            "required": [
+                "agentId",
+                "toolId",
+                "permittedActionNames",
+                "allowedInputConstraints"
             ],
-            "type": "string"
-          },
-          "maxItems": 2,
-          "title": "Allowedcontextfields",
-          "type": "array"
+            "title": "CapabilityAssignment",
+            "type": "object"
+        },
+        "Community": {
+            "additionalProperties": false,
+            "properties": {
+                "communityId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Communityid",
+                    "type": "string"
+                },
+                "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "title": "Name",
+                    "type": "string"
+                },
+                "routingDescription": {
+                    "title": "Routingdescription",
+                    "type": "string"
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "entryAgentId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Entryagentid",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "communityId",
+                "name",
+                "routingDescription",
+                "enabled",
+                "entryAgentId"
+            ],
+            "title": "Community",
+            "type": "object"
+        },
+        "JsonValue": {},
+        "MCPConnection": {
+            "additionalProperties": false,
+            "properties": {
+                "connectionId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Connectionid",
+                    "type": "string"
+                },
+                "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "title": "Name",
+                    "type": "string"
+                },
+                "approvedEndpointRef": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Approvedendpointref",
+                    "type": "string"
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "credentialRef": {
+                    "title": "Credentialref",
+                    "type": "string"
+                },
+                "reviewedCapabilityCatalog": {
+                    "items": {
+                        "$ref": "#/$defs/ReviewedCapability"
+                    },
+                    "title": "Reviewedcapabilitycatalog",
+                    "type": "array"
+                }
+            },
+            "required": [
+                "connectionId",
+                "name",
+                "approvedEndpointRef",
+                "enabled",
+                "credentialRef",
+                "reviewedCapabilityCatalog"
+            ],
+            "title": "MCPConnection",
+            "type": "object"
+        },
+        "Relationship": {
+            "additionalProperties": false,
+            "properties": {
+                "relationshipId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Relationshipid",
+                    "type": "string"
+                },
+                "sourceAgentId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Sourceagentid",
+                    "type": "string"
+                },
+                "targetAgentId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Targetagentid",
+                    "type": "string"
+                },
+                "allowedContextFields": {
+                    "items": {
+                        "enum": [
+                            "request_summary",
+                            "transfer_reason"
+                        ],
+                        "type": "string"
+                    },
+                    "maxItems": 2,
+                    "title": "Allowedcontextfields",
+                    "type": "array"
+                }
+            },
+            "required": [
+                "relationshipId",
+                "sourceAgentId",
+                "targetAgentId",
+                "allowedContextFields"
+            ],
+            "title": "Relationship",
+            "type": "object"
+        },
+        "ReviewedCapability": {
+            "additionalProperties": false,
+            "properties": {
+                "actionName": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "title": "Actionname",
+                    "type": "string"
+                },
+                "inputSchema": {
+                    "additionalProperties": {
+                        "$ref": "#/$defs/JsonValue"
+                    },
+                    "title": "Inputschema",
+                    "type": "object"
+                },
+                "outputAllowlist": {
+                    "items": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                    },
+                    "minItems": 1,
+                    "title": "Outputallowlist",
+                    "type": "array"
+                },
+                "effect": {
+                    "const": "read_only",
+                    "title": "Effect",
+                    "type": "string"
+                },
+                "classification": {
+                    "const": "public",
+                    "title": "Classification",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "actionName",
+                "inputSchema",
+                "outputAllowlist",
+                "effect",
+                "classification"
+            ],
+            "title": "ReviewedCapability",
+            "type": "object"
+        },
+        "ToolDefinition": {
+            "additionalProperties": false,
+            "properties": {
+                "toolId": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Toolid",
+                    "type": "string"
+                },
+                "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "title": "Name",
+                    "type": "string"
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "schemaVersion": {
+                    "const": "1.0.0",
+                    "title": "Schemaversion",
+                    "type": "string"
+                },
+                "inputSchema": {
+                    "additionalProperties": {
+                        "$ref": "#/$defs/JsonValue"
+                    },
+                    "title": "Inputschema",
+                    "type": "object"
+                },
+                "outputAllowlist": {
+                    "items": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                    },
+                    "minItems": 1,
+                    "title": "Outputallowlist",
+                    "type": "array"
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "approvedDestinationRef": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                    "title": "Approveddestinationref",
+                    "type": "string"
+                },
+                "mcpConnectionId": {
+                    "anyOf": [
+                        {
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Mcpconnectionid"
+                },
+                "effect": {
+                    "const": "read_only",
+                    "title": "Effect",
+                    "type": "string"
+                },
+                "classification": {
+                    "const": "public",
+                    "title": "Classification",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "toolId",
+                "name",
+                "description",
+                "schemaVersion",
+                "inputSchema",
+                "outputAllowlist",
+                "enabled",
+                "approvedDestinationRef",
+                "effect",
+                "classification"
+            ],
+            "title": "ToolDefinition",
+            "type": "object"
         }
-      },
-      "required": [
-        "relationshipId",
-        "sourceAgentId",
-        "targetAgentId",
-        "allowedContextFields"
-      ],
-      "title": "Relationship",
-      "type": "object"
     },
-    "ReviewedCapability": {
-      "additionalProperties": false,
-      "properties": {
-        "actionName": {
-          "maxLength": 128,
-          "minLength": 1,
-          "title": "Actionname",
-          "type": "string"
-        },
-        "inputSchema": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Inputschema",
-          "type": "object"
-        },
-        "outputAllowlist": {
-          "items": {
-            "maxLength": 128,
-            "minLength": 1,
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Outputallowlist",
-          "type": "array"
-        },
-        "effect": {
-          "const": "read_only",
-          "title": "Effect",
-          "type": "string"
-        },
-        "classification": {
-          "const": "public",
-          "title": "Classification",
-          "type": "string"
-        }
-      },
-      "required": [
-        "actionName",
-        "inputSchema",
-        "outputAllowlist",
-        "effect",
-        "classification"
-      ],
-      "title": "ReviewedCapability",
-      "type": "object"
-    },
-    "ToolDefinition": {
-      "additionalProperties": false,
-      "properties": {
-        "toolId": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Toolid",
-          "type": "string"
-        },
-        "name": {
-          "maxLength": 128,
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
-        },
-        "description": {
-          "title": "Description",
-          "type": "string"
-        },
+    "additionalProperties": false,
+    "properties": {
         "schemaVersion": {
-          "const": "1.0.0",
-          "title": "Schemaversion",
-          "type": "string"
-        },
-        "inputSchema": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Inputschema",
-          "type": "object"
-        },
-        "outputAllowlist": {
-          "items": {
-            "maxLength": 128,
-            "minLength": 1,
+            "const": "1.0.0",
+            "title": "Schemaversion",
             "type": "string"
-          },
-          "minItems": 1,
-          "title": "Outputallowlist",
-          "type": "array"
         },
-        "enabled": {
-          "title": "Enabled",
-          "type": "boolean"
-        },
-        "approvedDestinationRef": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-          "title": "Approveddestinationref",
-          "type": "string"
-        },
-        "mcpConnectionId": {
-          "anyOf": [
-            {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-              "type": "string"
+        "agents": {
+            "items": {
+                "$ref": "#/$defs/Agent"
             },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Mcpconnectionid"
+            "title": "Agents",
+            "type": "array"
         },
-        "effect": {
-          "const": "read_only",
-          "title": "Effect",
-          "type": "string"
+        "communities": {
+            "items": {
+                "$ref": "#/$defs/Community"
+            },
+            "title": "Communities",
+            "type": "array"
         },
-        "classification": {
-          "const": "public",
-          "title": "Classification",
-          "type": "string"
+        "relationships": {
+            "items": {
+                "$ref": "#/$defs/Relationship"
+            },
+            "title": "Relationships",
+            "type": "array"
+        },
+        "tools": {
+            "items": {
+                "$ref": "#/$defs/ToolDefinition"
+            },
+            "title": "Tools",
+            "type": "array"
+        },
+        "mcpConnections": {
+            "items": {
+                "$ref": "#/$defs/MCPConnection"
+            },
+            "title": "Mcpconnections",
+            "type": "array"
+        },
+        "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+            "title": "Id",
+            "type": "string"
+        },
+        "organizationId": {
+            "const": "default",
+            "title": "Organizationid",
+            "type": "string"
+        },
+        "revisionNumber": {
+            "minimum": 1,
+            "title": "Revisionnumber",
+            "type": "integer"
+        },
+        "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+        },
+        "createdBy": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+            "title": "Createdby",
+            "type": "string"
+        },
+        "graphHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Graphhash",
+            "type": "string"
         }
-      },
-      "required": [
-        "toolId",
-        "name",
-        "description",
+    },
+    "required": [
         "schemaVersion",
-        "inputSchema",
-        "outputAllowlist",
-        "enabled",
-        "approvedDestinationRef",
-        "effect",
-        "classification"
-      ],
-      "title": "ToolDefinition",
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
-  "properties": {
-    "schemaVersion": {
-      "const": "2.0.0",
-      "title": "Schemaversion",
-      "type": "string"
-    },
-    "agents": {
-      "items": {
-        "$ref": "#/$defs/Agent"
-      },
-      "maxItems": 200,
-      "title": "Agents",
-      "type": "array"
-    },
-    "communities": {
-      "items": {
-        "$ref": "#/$defs/Community"
-      },
-      "maxItems": 50,
-      "title": "Communities",
-      "type": "array"
-    },
-    "relationships": {
-      "items": {
-        "$ref": "#/$defs/Relationship"
-      },
-      "maxItems": 1000,
-      "title": "Relationships",
-      "type": "array"
-    },
-    "communityConnections": {
-      "items": {
-        "$ref": "#/$defs/CommunityConnection"
-      },
-      "maxItems": 1000,
-      "title": "Communityconnections",
-      "type": "array"
-    },
-    "layout": {
-      "$ref": "#/$defs/GraphLayout"
-    },
-    "tools": {
-      "items": {
-        "$ref": "#/$defs/ToolDefinition"
-      },
-      "maxItems": 256,
-      "title": "Tools",
-      "type": "array"
-    },
-    "mcpConnections": {
-      "items": {
-        "$ref": "#/$defs/MCPConnection"
-      },
-      "maxItems": 128,
-      "title": "Mcpconnections",
-      "type": "array"
-    },
-    "id": {
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-      "title": "Id",
-      "type": "string"
-    },
-    "organizationId": {
-      "const": "default",
-      "title": "Organizationid",
-      "type": "string"
-    },
-    "revisionNumber": {
-      "minimum": 1,
-      "title": "Revisionnumber",
-      "type": "integer"
-    },
-    "createdAt": {
-      "format": "date-time",
-      "title": "Createdat",
-      "type": "string"
-    },
-    "createdBy": {
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
-      "title": "Createdby",
-      "type": "string"
-    },
-    "graphHash": {
-      "pattern": "^[0-9a-f]{64}$",
-      "title": "Graphhash",
-      "type": "string"
-    }
-  },
-  "required": [
-    "schemaVersion",
-    "agents",
-    "communities",
-    "relationships",
-    "communityConnections",
-    "layout",
-    "tools",
-    "mcpConnections",
-    "id",
-    "organizationId",
-    "revisionNumber",
-    "createdAt",
-    "createdBy",
-    "graphHash"
-  ],
-  "title": "ConfigurationRevision",
-  "type": "object"
+        "agents",
+        "communities",
+        "relationships",
+        "tools",
+        "mcpConnections",
+        "id",
+        "organizationId",
+        "revisionNumber",
+        "createdAt",
+        "createdBy",
+        "graphHash"
+    ],
+    "title": "ConfigurationRevision",
+    "type": "object"
 }

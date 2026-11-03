@@ -3,20 +3,17 @@
 import asyncio
 import copy
 import json
-import math
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from typing import Any, Self, cast
+from typing import Any, Self
 from uuid import uuid4
 
 import httpx
 import reflex as rx
 from fastapi import FastAPI
-from reflex.event import EventHandler, EventSpec
 from reflex_base.registry import RegistrationContext
 
 from management_app.models.capabilities import ApprovedCapabilities
-from management_app.models.configuration import GraphPosition
 from management_app.security import ReflexEventGuard
 from management_app.services.configuration_validation import (
     GRAPH_FIELDS,
@@ -52,7 +49,7 @@ class EditorServices:
                 trust_env=False,
             ) as client:
                 return await client.request(
-                    method, "/v2/configuration", headers=headers, json=graph
+                    method, "/v1/configuration", headers=headers, json=graph
                 )
 
 
@@ -64,7 +61,6 @@ class EditorDraft:
     conflict: bool = False
     labels: dict[str, str] = field(default_factory=dict, repr=False)
     reviewed: ApprovedCapabilities = field(default_factory=ApprovedCapabilities, repr=False)
-    _identity: str = field(default_factory=lambda: uuid4().hex, init=False, repr=False)
 
     @classmethod
     def from_revision(
@@ -107,20 +103,6 @@ class EditorDraft:
                 community["entryAgentId"] == identifier for community in self.graph["communities"]
             ):
                 raise ValueError("entry_agent_required")
-            if value != agent["communityId"]:
-                if any(
-                    identifier in {edge["sourceAgentId"], edge["targetAgentId"]}
-                    for edge in self.graph["relationships"]
-                ):
-                    raise ValueError("agent_connections_require_repair")
-                positions = self.graph["layout"]["agentsByCommunity"]
-                old_community = agent["communityId"]
-                if old_community in positions:
-                    positions[old_community] = [
-                        position
-                        for position in positions[old_community]
-                        if position["nodeId"] != identifier
-                    ]
         agent[name] = value
 
     def edit_community(self, identifier: str, name: str, value: str | bool) -> None:
@@ -133,7 +115,21 @@ class EditorDraft:
             agent["agentId"] for agent in self.entry_choices(identifier)
         }:
             raise ValueError("invalid_entry_agent")
+        old_entry = community["entryAgentId"]
         community[name] = value
+        if name == "entryAgentId" and old_entry != value:
+            routing = next(
+                agent["agentId"] for agent in self.graph["agents"] if agent["role"] == "routing"
+            )
+            self.graph["relationships"] = [
+                relationship
+                for relationship in self.graph["relationships"]
+                if not (
+                    relationship["sourceAgentId"] == routing
+                    and relationship["targetAgentId"] == old_entry
+                )
+            ]
+            self._path(routing, str(value))
 
     def entry_choices(self, community_id: str) -> list[Document]:
         return [
@@ -228,6 +224,11 @@ class EditorDraft:
             }
         )
         self.labels[identifier] = name or "New agent"
+        for role in ("routing", "goodbye"):
+            target = next(
+                agent["agentId"] for agent in self.graph["agents"] if agent["role"] == role
+            )
+            self._path(identifier, target)
         return identifier
 
     def add_community(self, name: str, description: str, entry_name: str, prompt: str) -> str:
@@ -243,6 +244,10 @@ class EditorDraft:
         )
         entry_id = self.add_agent(identifier, entry_name, prompt)
         self.graph["communities"][-1]["entryAgentId"] = entry_id
+        routing = next(
+            agent["agentId"] for agent in self.graph["agents"] if agent["role"] == "routing"
+        )
+        self._path(routing, entry_id)
         return identifier
 
     def delete_agent(self, identifier: str) -> None:
@@ -257,88 +262,13 @@ class EditorDraft:
             for relationship in self.graph["relationships"]
             if identifier not in {relationship["sourceAgentId"], relationship["targetAgentId"]}
         ]
-        positions = self.graph["layout"]["agentsByCommunity"]
-        if agent["communityId"] in positions:
-            positions[agent["communityId"]] = [
-                position
-                for position in positions[agent["communityId"]]
-                if position["nodeId"] != identifier
-            ]
 
-    def set_agent_position(self, community_id: str, identifier: str, x: float, y: float) -> None:
-        self._community(community_id)
-        agent = self._agent(identifier)
-        if agent["role"] != "ordinary" or agent["communityId"] != community_id:
-            raise ValueError("invalid_agent_position")
-        position = GraphPosition(nodeId=identifier, x=x, y=y).model_dump(by_alias=True)
-        positions = self.graph["layout"]["agentsByCommunity"]
-        positions[community_id] = [
-            current
-            for current in positions.get(community_id, [])
-            if current["nodeId"] != identifier
-        ] + [position]
-
-    def add_community_connection(self, source_id: str, target_id: str) -> str:
-        self._community(source_id)
-        self._community(target_id)
-        if source_id == target_id:
-            raise ValueError("community_connection_prohibited")
-        if any(
-            edge["sourceCommunityId"] == source_id and edge["targetCommunityId"] == target_id
-            for edge in self.graph["communityConnections"]
-        ):
-            raise ValueError("duplicate_community_connection")
-        if len(self.graph["relationships"]) + len(self.graph["communityConnections"]) >= 1000:
-            raise ValueError("connection_limit")
-        identifier = "community-path-" + uuid4().hex
-        self.graph["communityConnections"].append(
-            {
-                "connectionId": identifier,
-                "sourceCommunityId": source_id,
-                "targetCommunityId": target_id,
-                "allowedContextFields": ["request_summary", "transfer_reason"],
-            }
-        )
-        return identifier
-
-    def delete_community_connection(self, identifier: str) -> None:
-        edge = self._capability("communityConnections", "connectionId", identifier)
-        self.graph["communityConnections"].remove(edge)
-
-    def set_community_position(self, identifier: str, x: float, y: float) -> None:
-        self._community(identifier)
-        if any(
-            type(coordinate) not in (int, float)
-            or not math.isfinite(coordinate)
-            or not -100000 <= coordinate <= 100000
-            for coordinate in (x, y)
-        ):
-            raise ValueError("invalid_graph_position")
-        positions = [
-            position
-            for position in self.graph["layout"]["communities"]
-            if position["nodeId"] != identifier
-        ]
-        positions.append({"nodeId": identifier, "x": x, "y": y})
-        self.graph["layout"]["communities"] = positions
-
-    def delete_community(self, identifier: str, *, confirmed: bool = False) -> None:
+    def delete_community(self, identifier: str) -> None:
         community = self._community(identifier)
         members = [agent for agent in self.graph["agents"] if agent["communityId"] == identifier]
         if any(agent["role"] != "ordinary" for agent in members):
             raise ValueError("protected_role")
         removed = {agent["agentId"] for agent in members}
-        if not confirmed and (
-            any(
-                identifier in {edge["sourceCommunityId"], edge["targetCommunityId"]}
-                for edge in self.graph["communityConnections"]
-            )
-            or any(
-                removed.intersection({edge["sourceAgentId"], edge["targetAgentId"]})
-                for edge in self.graph["relationships"]
-            )
-        ):
-            raise ValueError("community_connections_require_confirmation")
         self.graph["agents"] = [
             agent for agent in self.graph["agents"] if agent["agentId"] not in removed
         ]
@@ -350,17 +280,6 @@ class EditorDraft:
             )
         ]
         self.graph["communities"].remove(community)
-        self.graph["communityConnections"] = [
-            edge
-            for edge in self.graph["communityConnections"]
-            if identifier not in {edge["sourceCommunityId"], edge["targetCommunityId"]}
-        ]
-        self.graph["layout"]["communities"] = [
-            position
-            for position in self.graph["layout"]["communities"]
-            if position["nodeId"] != identifier
-        ]
-        self.graph["layout"]["agentsByCommunity"].pop(identifier, None)
 
     def _capability(self, collection: str, key: str, identifier: str) -> Document:
         rows: list[Document] = self.graph[collection]
@@ -464,7 +383,7 @@ class EditorDraft:
         )
 
     def rejected(self, status: int, problem: Document) -> None:
-        self.conflict = status == 409
+        self.conflict = status == 412
         self.errors = {
             item["path"]: item["code"]
             for item in problem.get("errors", [])
@@ -485,8 +404,6 @@ class ConfigurationEditorState(rx.State):
     error: str = ""
     active_tab: str = "Communities"
     relationship_source: str = ""
-    selected_community_id: str = ""
-    selection_error: str = ""
     errors: dict[str, str] = {}
     generation: int = 0
     _draft: EditorDraft | None = None
@@ -522,236 +439,34 @@ class ConfigurationEditorState(rx.State):
     def agent_rows(self) -> list[Document]:
         if not self.authorized or self._draft is None:
             return []
-        scoped = [
-            (index, agent)
-            for index, agent in enumerate(self._draft.graph["agents"])
-            if not self.selected_community_id
-            or (agent["role"] == "ordinary" and agent["communityId"] == self.selected_community_id)
-        ]
-        positions = {
-            position["nodeId"]: position
-            for rows in self._draft.graph["layout"]["agentsByCommunity"].values()
-            for position in rows
-        }
-        ordinals: dict[str, int] = {}
-        counts: dict[str, int] = {}
-        for configured in self._draft.graph["agents"]:
-            if configured["role"] != "ordinary":
-                continue
-            community_id = configured["communityId"]
-            ordinals[configured["agentId"]] = counts.get(community_id, 0)
-            counts[community_id] = counts.get(community_id, 0) + 1
         return [
             {
                 **copy.deepcopy(agent),
                 "index": index,
                 "groupLabel": self._draft.labels.get(agent["agentId"], agent["name"]),
                 "protected": agent["role"] != "ordinary",
-                "positionX": positions.get(agent["agentId"], {}).get(
-                    "x", 40 + ordinals.get(agent["agentId"], 0) % 2 * 260
-                ),
-                "positionY": positions.get(agent["agentId"], {}).get(
-                    "y", 40 + ordinals.get(agent["agentId"], 0) // 2 * 220
-                ),
-                "positionXText": format(
-                    positions.get(agent["agentId"], {}).get(
-                        "x", 40 + ordinals.get(agent["agentId"], 0) % 2 * 260
-                    ),
-                    ".2f",
-                ),
-                "positionYText": format(
-                    positions.get(agent["agentId"], {}).get(
-                        "y", 40 + ordinals.get(agent["agentId"], 0) // 2 * 220
-                    ),
-                    ".2f",
-                ),
                 "communityOptions": [
                     {"id": community["communityId"], "name": community["name"]}
                     for community in self._draft.graph["communities"]
-                    if not self.selected_community_id
-                    or community["communityId"] == self.selected_community_id
                 ],
             }
-            for index, agent in scoped
+            for index, agent in enumerate(self._draft.graph["agents"])
         ]
 
     @rx.var(cache=False)
     def community_rows(self) -> list[Document]:
         if not self.authorized or self._draft is None:
             return []
-        positions = {
-            position["nodeId"]: position for position in self._draft.graph["layout"]["communities"]
-        }
         return [
             {
                 **copy.deepcopy(community),
                 "index": index,
-                "positionX": positions.get(community["communityId"], {}).get("x", 40),
-                "positionY": positions.get(community["communityId"], {}).get("y", 40 + index * 220),
-                "positionXText": format(
-                    positions.get(community["communityId"], {}).get("x", 40), ".2f"
-                ),
-                "positionYText": format(
-                    positions.get(community["communityId"], {}).get("y", 40 + index * 220), ".2f"
-                ),
                 "entryOptions": [
                     {"id": agent["agentId"], "name": agent["name"]}
                     for agent in self._draft.entry_choices(community["communityId"])
                 ],
             }
             for index, community in enumerate(self._draft.graph["communities"])
-        ]
-
-    @rx.var(cache=False)
-    def dirty(self) -> bool:
-        return self.status in {"Unsaved", "Saving"}
-
-    @rx.var(cache=False)
-    def selected_community_name(self) -> str:
-        if not self.authorized or self._draft is None:
-            return ""
-        return next(
-            (
-                community["name"]
-                for community in self._draft.graph["communities"]
-                if community["communityId"] == self.selected_community_id
-            ),
-            "",
-        )
-
-    @rx.var(cache=False)
-    def selected_community_entry(self) -> str:
-        if not self.authorized or self._draft is None:
-            return ""
-        return next(
-            (
-                row["entryAgentId"]
-                for row in self._draft.graph["communities"]
-                if row["communityId"] == self.selected_community_id
-            ),
-            "",
-        )
-
-    @rx.var(cache=False)
-    def selected_entry_choices(self) -> list[Document]:
-        if not self.authorized or self._draft is None or not self.selected_community_id:
-            return []
-        return self._draft.entry_choices(self.selected_community_id)
-
-    @rx.var(cache=False)
-    def agent_community_options(self) -> list[Document]:
-        return [
-            row
-            for row in self.community_rows
-            if not self.selected_community_id or row["communityId"] == self.selected_community_id
-        ]
-
-    @rx.var(cache=False)
-    def agent_nodes(self) -> list[Document]:
-        if not self.selected_community_id:
-            return []
-        return [
-            {
-                "id": agent["agentId"],
-                "data": {"label": agent["name"] or "Unnamed agent"},
-                "position": {"x": agent["positionX"], "y": agent["positionY"]},
-                "sourcePosition": "bottom",
-                "targetPosition": "top",
-                "deletable": False,
-                "ariaLabel": "Select agent " + agent["name"],
-                "style": {
-                    "width": 200,
-                    "minHeight": 64,
-                    "borderRadius": 4,
-                    "fontSize": 18,
-                    "lineHeight": "1.2",
-                    "fontWeight": 600,
-                    "whiteSpace": "normal",
-                    "overflowWrap": "anywhere",
-                    "borderColor": "#197767",
-                    "opacity": 1 if agent["enabled"] else 0.65,
-                },
-            }
-            for agent in self.agent_rows
-            if not agent["protected"]
-        ]
-
-    @rx.var(cache=False)
-    def agent_edges(self) -> list[Document]:
-        if not self.authorized or self._draft is None or not self.selected_community_id:
-            return []
-        members = {agent["agentId"] for agent in self.agent_rows if not agent["protected"]}
-        return [
-            {
-                "id": edge["relationshipId"],
-                "source": edge["sourceAgentId"],
-                "target": edge["targetAgentId"],
-                "deletable": False,
-                "markerEnd": {"type": "arrowclosed", "color": "#197767"},
-                "style": {"stroke": "#197767", "strokeWidth": 2},
-            }
-            for edge in self._draft.graph["relationships"]
-            if edge["sourceAgentId"] in members and edge["targetAgentId"] in members
-        ]
-
-    @rx.var(cache=False)
-    def community_nodes(self) -> list[Document]:
-        return [
-            {
-                "id": community["communityId"],
-                "data": {"label": community["name"]},
-                "position": {"x": community["positionX"], "y": community["positionY"]},
-                "sourcePosition": "bottom",
-                "targetPosition": "top",
-                "deletable": False,
-                "ariaLabel": "Open community " + community["name"],
-                "style": {
-                    "width": 200,
-                    "minHeight": 64,
-                    "borderRadius": 4,
-                    "fontSize": 18,
-                    "lineHeight": "1.2",
-                    "fontWeight": 600,
-                    "whiteSpace": "normal",
-                    "overflowWrap": "anywhere",
-                    "borderColor": "#197767" if community["enabled"] else "#8a9290",
-                    "opacity": 1 if community["enabled"] else 0.65,
-                },
-            }
-            for community in self.community_rows
-        ]
-
-    @rx.var(cache=False)
-    def community_edges(self) -> list[Document]:
-        if not self.authorized or self._draft is None:
-            return []
-        return [
-            {
-                "id": edge["connectionId"],
-                "source": edge["sourceCommunityId"],
-                "target": edge["targetCommunityId"],
-                "deletable": False,
-                "markerEnd": {"type": "arrowclosed", "color": "#197767"},
-                "style": {"stroke": "#197767", "strokeWidth": 2},
-            }
-            for edge in self._draft.graph["communityConnections"]
-        ]
-
-    @rx.var(cache=False)
-    def community_connection_rows(self) -> list[Document]:
-        if not self.authorized or self._draft is None:
-            return []
-        names = {
-            community["communityId"]: community["name"]
-            for community in self._draft.graph["communities"]
-        }
-        return [
-            {
-                "id": edge["connectionId"],
-                "source": names.get(edge["sourceCommunityId"], "Unavailable"),
-                "target": names.get(edge["targetCommunityId"], "Unavailable"),
-            }
-            for edge in self._draft.graph["communityConnections"]
         ]
 
     @rx.var(cache=False)
@@ -820,8 +535,6 @@ class ConfigurationEditorState(rx.State):
         for agent in self._draft.graph["agents"]:
             if agent["role"] != "ordinary":
                 continue
-            if self.selected_community_id and agent["communityId"] != self.selected_community_id:
-                continue
             assignments = {item["toolId"]: item for item in agent["capabilityAssignments"]}
             tools = []
             for tool in self._draft.graph["tools"]:
@@ -875,10 +588,7 @@ class ConfigurationEditorState(rx.State):
                 "name": self._draft.labels.get(agent["agentId"], agent["name"]),
             }
             for agent in self._draft.graph["agents"]
-            if agent["role"] == "ordinary"
-            and (
-                not self.selected_community_id or agent["communityId"] == self.selected_community_id
-            )
+            if agent["role"] != "goodbye"
         ]
 
     @rx.var(cache=False)
@@ -901,7 +611,6 @@ class ConfigurationEditorState(rx.State):
                 ),
             }
             for agent in self._draft.relationship_targets(self.relationship_source)
-            if not self.selected_community_id or agent["communityId"] == self.selected_community_id
         ]
 
     @rx.var(cache=False)
@@ -909,14 +618,8 @@ class ConfigurationEditorState(rx.State):
         if not self.authorized or self._draft is None:
             return []
         required = self._draft.required_relationship_ids
-        members = {agent["agentId"] for agent in self.agent_rows if not agent["protected"]}
         rows = []
         for index, relationship in enumerate(self._draft.graph["relationships"]):
-            if self.selected_community_id and (
-                relationship["sourceAgentId"] not in members
-                or relationship["targetAgentId"] not in members
-            ):
-                continue
             rows.append(
                 {
                     "id": relationship["relationshipId"],
@@ -933,145 +636,6 @@ class ConfigurationEditorState(rx.State):
                 }
             )
         return rows
-
-    @rx.event
-    async def enter_view(self) -> None:
-        try:
-            self._services()
-            if self._draft is None:
-                await cast(EventHandler, ConfigurationEditorState.load).fn(self)
-            if not self.authorized or self._draft is None:
-                return
-            selected = self.router.page.params.get("community_id", "")
-            if not isinstance(selected, str):
-                self.selected_community_id = ""
-                self.selection_error = "Community unavailable"
-                return
-            self.selected_community_id = selected
-            self.selection_error = ""
-            if selected and not any(
-                community["communityId"] == selected
-                for community in self._draft.graph["communities"]
-            ):
-                self.selection_error = "Community unavailable"
-        except Exception:
-            self.authorized = False
-            self._draft = None
-            self.selection_error = "Configuration unavailable"
-
-    @rx.event
-    def open_community(self, identifier: str) -> EventSpec | None:
-        try:
-            self._editing()._community(identifier)
-            return rx.redirect("/configuration/communities/" + identifier)
-        except ValueError:
-            self.selection_error = "Community unavailable"
-            return None
-
-    @rx.event
-    def select_community_entry(self, identifier: str) -> None:
-        try:
-            self._editing().edit_community(self.selected_community_id, "entryAgentId", identifier)
-            self._changed()
-        except ValueError:
-            self.error = "Invalid community entry agent"
-
-    @rx.event
-    def move_agent(self, identifier: str, x: float, y: float) -> None:
-        try:
-            self._editing().set_agent_position(self.selected_community_id, identifier, x, y)
-            self._changed()
-        except ValueError:
-            self.error = "Invalid agent position"
-
-    @rx.event
-    def set_agent_coordinate(self, identifier: str, axis: str, value: str | float) -> None:
-        try:
-            if axis not in {"x", "y"} or isinstance(value, bool):
-                raise ValueError("invalid_graph_axis")
-            agent = next(row for row in self.agent_rows if row["agentId"] == identifier)
-            position = {"x": agent["positionX"], "y": agent["positionY"]}
-            position[axis] = float(value)
-            self._editing().set_agent_position(
-                agent["communityId"], identifier, position["x"], position["y"]
-            )
-            self._changed()
-        except (ValueError, TypeError, StopIteration):
-            self.error = "Invalid agent position"
-
-    @rx.event
-    def connect_agents(self, source: str, target: str) -> None:
-        try:
-            draft = self._editing()
-            if any(
-                draft._agent(identifier)["communityId"] != self.selected_community_id
-                for identifier in (source, target)
-            ):
-                raise ValueError("foreign_agent")
-            draft.add_relationship(source, target)
-            self._changed()
-        except ValueError:
-            self.error = "Agent relationship unavailable"
-
-    @rx.event
-    def focus_agent(self, identifier: str) -> EventSpec | None:
-        try:
-            agent = self._editing()._agent(identifier)
-            if agent["role"] != "ordinary" or agent["communityId"] != self.selected_community_id:
-                raise ValueError("foreign_agent")
-            return rx.call_script(
-                "document.getElementById("
-                + json.dumps(identifier)
-                + ")?.scrollIntoView({block:'center'})"
-            )
-        except ValueError:
-            self.error = "Agent unavailable"
-            return None
-
-    @rx.event
-    def move_community(self, identifier: str, x: float, y: float) -> None:
-        try:
-            self._editing().set_community_position(identifier, x, y)
-            self._changed()
-        except ValueError:
-            self.error = "Invalid community position"
-
-    @rx.event
-    def set_community_coordinate(self, identifier: str, axis: str, value: str | float) -> None:
-        try:
-            if axis not in {"x", "y"} or isinstance(value, bool):
-                raise ValueError("invalid_graph_axis")
-            community = next(row for row in self.community_rows if row["communityId"] == identifier)
-            position = {"x": community["positionX"], "y": community["positionY"]}
-            position[axis] = float(value)
-            self._editing().set_community_position(identifier, position["x"], position["y"])
-            self._changed()
-        except (ValueError, TypeError, StopIteration):
-            self.error = "Invalid community position"
-
-    @rx.event
-    def connect_communities(self, source: str, target: str) -> None:
-        try:
-            self._editing().add_community_connection(source, target)
-            self._changed()
-        except ValueError:
-            self.error = "Community connection unavailable"
-
-    @rx.event
-    def add_community_connection(self, data: dict[str, Any]) -> None:
-        source, target = data.get("source"), data.get("target")
-        if not isinstance(source, str) or not isinstance(target, str):
-            self.error = "Community connection unavailable"
-            return
-        cast(EventHandler, ConfigurationEditorState.connect_communities).fn(self, source, target)
-
-    @rx.event
-    def delete_community_connection(self, identifier: str) -> None:
-        try:
-            self._editing().delete_community_connection(identifier)
-            self._changed()
-        except ValueError:
-            self.error = "Community connection unavailable"
 
     @rx.event
     async def load(self) -> None:
@@ -1100,10 +664,6 @@ class ConfigurationEditorState(rx.State):
             return
         try:
             draft = self._editing()
-            submitted_graph = copy.deepcopy(draft.graph)
-            submitted_generation = self.generation
-            submitted_identity = draft._identity
-            submitted_etag = draft.etag
             self.busy = True
             self.status = "Saving"
             services = self._services()
@@ -1112,25 +672,16 @@ class ConfigurationEditorState(rx.State):
                 self.router.session.session_id,
                 self.router.session.client_token,
                 "PUT",
-                graph=submitted_graph,
-                etag=submitted_etag,
+                graph=draft.graph,
+                etag=draft.etag,
             )
-            current_draft = self._editing()
-            if current_draft._identity != submitted_identity:
-                return
-            draft = current_draft
             if response.status_code == 200:
-                if self.generation == submitted_generation:
-                    draft.committed(response.json(), response.headers["ETag"])
-                    self.status = (
-                        "Saved"
-                        if response.headers.get("X-Audit-Status") != "pending"
-                        else "Saved; audit pending"
-                    )
-                else:
-                    draft.etag = response.headers["ETag"]
-                    draft.errors, draft.conflict = {}, False
-                    self.status = "Unsaved"
+                draft.committed(response.json(), response.headers["ETag"])
+                self.status = (
+                    "Saved"
+                    if response.headers.get("X-Audit-Status") != "pending"
+                    else "Saved; audit pending"
+                )
                 self.errors, self.error = {}, ""
             else:
                 draft.rejected(response.status_code, response.json())
@@ -1202,7 +753,7 @@ class ConfigurationEditorState(rx.State):
     @rx.event
     def delete_community(self, identifier: str) -> None:
         try:
-            self._editing().delete_community(identifier, confirmed=True)
+            self._editing().delete_community(identifier)
             self._changed()
         except ValueError:
             self.error = "Community deletion unavailable"

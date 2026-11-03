@@ -2,91 +2,9 @@
 
 import asyncio
 import copy
-import hashlib
 from datetime import UTC, datetime, timedelta
 
-import httpx
 import pytest
-
-
-def test_v2_layout_publication_keeps_atomic_authority_and_full_hash(publication_store, graph_v2):
-    from management_app.adapters.configuration_repository import graph_document
-    from management_app.services.configuration_validation import encoded
-
-    repository, container = publication_store
-
-    async def scenario():
-        before, etag = await repository.initialize(graph_v2, actor_id="manager-fixture")
-        authority = await repository.read_authority()
-        changed = copy.deepcopy(graph_v2)
-        changed["layout"]["communities"][0]["x"] += 100
-        saved = await repository.publish(changed, if_match=etag, actor_id="manager-fixture")
-        assert saved is not None and saved[1] != etag
-        assert saved[0]["graphHash"] != before["graphHash"]
-        assert (
-            saved[0]["graphHash"] == hashlib.sha256(encoded(graph_document(saved[0]))).hexdigest()
-        )
-        current_authority = await repository.read_authority()
-        for field in (
-            "policyVersion",
-            "disabledToolIds",
-            "disabledConnectionIds",
-            "revokedAssignments",
-        ):
-            assert current_authority[field] == authority[field]
-        assert await repository.read_revision(before["id"]) == before
-        assert await repository.read_active() == saved
-        assert await repository.publish(changed, if_match=etag, actor_id="other-manager") is None
-        assert await repository.read_active() == saved
-
-    asyncio.run(scenario())
-
-
-def test_v2_manager_conditions_and_legacy_route_rejection(editor_test_app, graph_v2):
-    from management_app.health import lifecycle
-
-    editor_test_app.fixture["graph"] = graph_v2
-
-    async def scenario():
-        async with (
-            lifecycle(editor_test_app.api, editor_test_app.settings),
-            editor_test_app.seed_editor(),
-        ):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=editor_test_app.api),
-                base_url=editor_test_app.origin,
-            ) as client:
-                assert (await client.get("/v2/configuration")).status_code == 401
-                await client.get("/_test/login/manager-one")
-                current = await client.get("/v2/configuration")
-                assert current.status_code == 200 and current.json()["schemaVersion"] == "2.0.0"
-                assert (
-                    current.headers["etag"] == (await editor_test_app.repository.read_active())[1]
-                )
-                assert (await client.get("/v1/configuration")).status_code == 404
-                csrf = (await client.get("/auth/session")).json()["csrf"]
-                headers = {"Origin": editor_test_app.origin, "X-CSRF-Token": csrf}
-                assert (
-                    await client.put("/v2/configuration", json=graph_v2, headers=headers)
-                ).status_code == 428
-                headers["If-Match"] = "*"
-                assert (
-                    await client.put("/v2/configuration", json=graph_v2, headers=headers)
-                ).status_code == 422
-                headers["If-Match"] = '"stale"'
-                assert (
-                    await client.put("/v2/configuration", json=graph_v2, headers=headers)
-                ).status_code == 409
-                headers["If-Match"] = current.headers["etag"]
-                changed = copy.deepcopy(graph_v2)
-                changed["layout"]["communities"][0]["x"] += 100
-                saved = await client.put("/v2/configuration", json=changed, headers=headers)
-                assert saved.status_code == 200 and saved.headers["etag"] != current.headers["etag"]
-                assert saved.json()["revisionNumber"] == current.json()["revisionNumber"] + 1
-                assert saved.headers["X-Audit-Status"] == "recorded"
-                assert (await client.get("/v2/configuration")).json() == saved.json()
-
-    asyncio.run(scenario())
 
 
 @pytest.fixture(params=["local", "cosmos-double"])

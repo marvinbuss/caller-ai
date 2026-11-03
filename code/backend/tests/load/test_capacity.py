@@ -24,7 +24,7 @@ US6_LIVE_PROFILE = {
     "defaultEnabled": False,
     "explicitOptIn": "us6-live",
     "requiredTasks": ["T099", "T112", "T117", "T118"],
-    "environmentEvidence": "docs/acceptance/live-environment.md",
+    "environmentEvidence": "code/docs/acceptance/live-environment.md",
     "clock": "wall",
     "initialCalls": 100,
     "initialSustainSeconds": 1800,
