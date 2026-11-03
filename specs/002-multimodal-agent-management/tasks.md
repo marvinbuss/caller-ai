@@ -2247,3 +2247,26 @@ its probe-only unit test, the same three pass again and all56 original console t
 Terraform and workflow source remain unchanged. Current full native evidence is still required;
 T101/T114 remain open and no deployment workflow was dispatched.
 
+### 2026-11-03: Remaining Confirmed-Cleanup Failure and Local-Fact Probe
+
+Cleaned sourcee60796b / run41644520603 again passed Windows/image but failed Ubuntu:
+runtime857 passed, management694passed/25failed. The text overview now passes; the earliest
+failure is the community variant's second confirmed Stop at oldline344, after the new
+`text.completed` synchronization. Downstream speech cases are again busy. The synchronization
+correction is therefore insufficient to resolve the required native gate; it is not promoted
+to a complete runtime repair or passing Ubuntu evidence.
+
+Inspection of the pinned SDK falsified the proposed immediate-cancel-on-normal-completion
+theory: `stream_events()` awaits the run loop and provider cleanup before finishing. Production
+cancellation/disposal semantics were not changed. The next temporary diagnostic is confined to
+the owned test runtime/status endpoint and a failure-only browser reader. It captures only
+closed booleans/bounded counters for SDK drain, model disposal/unknown/active clients/operations,
+processing completion, cleanup-running/result/elapsed time and authoritative attempted/settled
+model counts. It wraps the original close result without adding I/O, retries, waits, time budget,
+capacity release or production endpoints. The original Stop assertion still raises.
+
+A red-first metadata-privacy regression passed, all79 backend conversation unit tests pass
+11.08seconds, and both compiled text journeys pass locally. Full source/type/Terraform/secret/
+public-origin gates plus367tools pass153.51seconds. This is safe observation, not a root fix;
+T101/T114 stay open (110/120 checked) and the probe must be removed after diagnosis.
+

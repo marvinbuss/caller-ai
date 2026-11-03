@@ -104,6 +104,18 @@ speech case pass locally (three compiled tests), and the56 original console test
 unit file restored byte-for-byte to595a5b1. Full current native verification remains pending;
 production/Terraform/workflow source is unchanged and no live deployment was attempted.
 
+Cleaned sourcee60796b / run41644520603 still failed Ubuntu (runtime857 pass; management
+694pass/25fail), while Windows/image passed. The overview text case now passes; the first
+community failure is second confirmed Stop after actual `text.completed`. The completion wait
+alone is insufficient, and no complete cleanup/root repair is claimed. The pinned SDK method
+read also rejected the normal-stream cancellation hypothesis, so production code remains intact.
+A second temporary test-harness-only probe observes fixed cleanup/disposal/settlement facts
+and bounded elapsed time via the existing owned status endpoint, captured only after the
+original Stop assertion fails. It changes no result, I/O, retry, deadline or release rule.
+Privacy regression,79 backend unit tests and both compiled text journeys pass locally;
+all source/type/Terraform/privacy gates and367tools pass. Current required native CI remains
+failed/unresolved, with T101/T114 open and110/120 checked. This probe is not live evidence.
+
 ## Earlier Input and Device-Scope Amendment
 
 On 2026-11-03 the owner requested exact missing-field guidance, selected the existing

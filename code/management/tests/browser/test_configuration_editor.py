@@ -10,6 +10,48 @@ from playwright.sync_api import Browser, Locator, Page, expect
 pytestmark = pytest.mark.browser
 
 
+def expect_confirmed_text_stop(page, configuration_host):
+    try:
+        expect(page.locator("#test-status")).to_have_text("ended")
+    except AssertionError:
+        import json
+
+        try:
+            trust = ssl.create_default_context(cafile=configuration_host["certificate"])
+            with httpx.Client(verify=trust, trust_env=False, timeout=1) as diagnostic:
+                result = diagnostic.get(
+                    configuration_host["runtime"] + "/_test/runtime-status"
+                ).json()
+            fields = {
+                "sdk_drained",
+                "model_disposed",
+                "model_unknown",
+                "processing_done",
+                "cleanup_running",
+                "cleanup_result",
+                "terminal",
+                "model_clients",
+                "model_operations",
+                "retained_bytes",
+                "attempted",
+                "settled",
+                "occupied",
+                "cleanup_elapsed_ms",
+            }
+            values = {
+                key: value
+                for key, value in result.get("cleanupDiagnostic", {}).items()
+                if key in fields
+                and (type(value) is bool or type(value) is int and 0 <= value <= 1000000)
+            }
+            print(json.dumps({"event": "owned_browser_cleanup_failure", **values}))
+        except Exception:
+            print(
+                json.dumps({"event": "owned_browser_cleanup_failure", "diagnostic": "unavailable"})
+            )
+        raise
+
+
 @pytest.fixture(scope="module")
 def editor_host(editor_host_factory):
     from tests.conftest import configuration_graph_document
@@ -325,7 +367,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.locator("#test-agent")).to_have_text("agent-alpha")
         assert page.evaluate("window.callerTestCaptureCount") == 0
         page.get_by_role("button", name="Stop test", exact=True).click()
-        expect(page.locator("#test-status")).to_have_text("ended")
+        expect_confirmed_text_stop(page, configuration_host)
         expect(page.get_by_role("log", name="Conversation")).to_be_empty()
         expect(page.get_by_role("button", name="Start published test", exact=True)).to_be_enabled()
         page.get_by_role("button", name="Start published test", exact=True).click()
@@ -346,7 +388,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         )
         page.wait_for_function("window.callerTestCompleted === 2", timeout=5000)
         page.get_by_role("button", name="Stop test", exact=True).click()
-        expect(page.locator("#test-status")).to_have_text("ended")
+        expect_confirmed_text_stop(page, configuration_host)
         trust = ssl.create_default_context(cafile=configuration_host["certificate"])
         with httpx.Client(verify=trust, trust_env=False, timeout=1) as diagnostic:
             counts = diagnostic.get(configuration_host["runtime"] + "/_test/runtime-status").json()
