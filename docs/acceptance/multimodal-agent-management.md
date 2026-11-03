@@ -4,20 +4,20 @@
 
 Feature `002-multimodal-agent-management` implements the Python/Reflex management graphs,
 one configured application-owned Agents backend, Foundry GPT-Live client delegation, explicit
-published-only browser text/speech tests and root documentation. This report is **local evidence,
+published-only browser text/speech tests and root documentation. This report is **engineering evidence,
 not production/live acceptance**. The owner has authorized feature-only commit/push/PR
 publication on the existing `feat/spec-002` branch for review, not merge, release, image
 publication or deployment. On 2026-11-03 the owner separately authorized all required tests,
 including actual qualification, without changing privacy, resource or cost controls.
-The latest full local profile passes 857 runtime, 719 management and 342 tools tests.
+The current native profile passes 859 runtime, 719 management and 368 tools tests on both platforms.
 The earlier responsive-shell setup
 errors remain historical with their cause unconfirmed, as recorded below.
 The reviewed library exception remains active; external acceptance gates remain. Feature-001 evidence and its
 deferred tasks are not recertified or reopened.
 
 Actual Foundry bindings/identity/quota/retention (T062), current stable physical browser/headset
-qualification (T086), full-duration five-manager acceptance (T087), approved-sink delivery and
-current native Windows/Linux CI must not be inferred from controlled ports or screenshots.
+qualification (T086), full-duration five-manager acceptance (T087) and approved-sink delivery
+must not be inferred from controlled ports or screenshots.
 Those missing results block affected live acceptance. The earlier authentication-only
 permission was superseded by the owner's current test authorization. Missing exact resources,
 working concrete probes, physical platforms and observed evidence still prevent certification;
@@ -34,6 +34,24 @@ Earlier source commit `49175e111da62d0834e483b0f7f2072cc372bf14` was published i
 [CI run 41462727627](https://github.com/marvinbuss/caller-ai/actions/runs/41462727627)
 completed **failed**. The staged/publication guards verified the exact reviewed feature set
 and excluded all local inputs; no merge or deployment was performed.
+
+## Current Clean-Source Verification
+
+Source `5eadfbfcfe5faa405746f6bab786b4e088596ca2` passed
+[run 41672927903](https://github.com/marvinbuss/caller-ai/actions/runs/41672927903).
+Windows126045779378 and Ubuntu126045779231 each passed859 runtime/719 management/368tools,
+complete source/type/Terraform/privacy gates, assertion restoration, dependency auditing with
+the approved mirror-gap exception, and actual54-document/44-diagram rendering. Browser versions
+were156.0.8078.48 and156.0.8078.47. No job steps failed or were skipped. Image126045778686
+passed three-width/offline smoke and scanned three actual images with zero HIGH/CRITICAL.
+
+All temporary diagnostics and probe-only tests are removed. The permanent Live receipt/
+settlement repair and both cancellation regressions remain; no assertion, timeout, sandbox,
+TLS or capacity rule was weakened. This observed pass completes T101/T114 on this source,
+not an independent explanation of every earlier text/Windows/fixture failure. Their history
+is retained below. Task status is **112/120 checked**; the eight actual provider/device/
+endurance/alert/deployment tasks remain open. No Terraform workflow, real plan/apply, resource
+creation, role grant, merge or image/application publication was performed.
 
 ## Current Terraform Delivery Amendment
 
@@ -593,7 +611,7 @@ destinations. Existing Terraform validation used its pinned credential-free prep
 | VI Bounded realtime | Declared queues/clocks/capacity, CAS/closure proof and local pressure tests; real five-manager endurance pending. |
 | VII Observability | Bounded correlated test metadata and alert thresholds; approved-sink delivery remains unverified. |
 | VIII Terraform | Owner-requested shared roots, protected bootstrap/plan storage, optional managed alert destinations and reusable OIDC delivery are defined/tested. Actual provisioning remains unqualified and requires reviewed plans/prerequisites. |
-| IX Automated tests | Current tools368/nativeTerraform37/strict types/source/privacy gates and four cleaned relay/text/speech journeys pass locally. Earlier native/image successes are exact-source history; required current cleaned-source native verification remains pending. |
+| IX Automated tests | Clean source5eadfbf passes both native profiles859/719/368, source/type/Terraform/privacy/assertion/advisory gates and54-document/44-diagram rendering. Image smoke/scans pass; one explicit mirror-gap exception remains, not a patched-package claim. |
 
 ## Final Gates
 
@@ -622,7 +640,7 @@ not silently overridden. No source was staged or committed by this implementatio
   unchanged scope/limits. The original failed attempt remains historical, not overwritten.
   Current Python advisory lookups pass; the retained MODERATE frontend finding now has the
   explicit time-limited approval above, not a patched-package or zero-findings claim.
-- T101/T114: Exact-source 90c3c04 run 41553750695 passed both native application/assertion/
+- T101/T114: Exact-source 5eadfbf run 41672927903 passed both native application/assertion/
   documentation/advisory jobs and actual image smoke/scans under the explicit mirror-gap
   policy. Wiring retains complete collection, read-only permissions, no test exclusions or
   default live endurance. Earlier source-specific failures/unexecuted gates remain historical.
@@ -630,7 +648,7 @@ not silently overridden. No source was staged or committed by this implementatio
 - T103: Read-only excluded-scope/constitution/deferred-task preservation checks passed above.
 - T104/T105: Contracts/quickstart are reconciled and the completed nine-principle assessment
   explicitly withholds live/release acceptance; final source/reference/security checks pass.
-  Final root/contract/spec validation passed 53 documents and actually rendered all 43
+  Final root/contract/spec validation passed 54 documents and actually rendered all 44
   Mermaid diagrams with pinned 12.0.0, original sandbox and budgets. Later prose-only
   evidence updates pass local reference/whitespace/secret/public-origin checks.
 - T062/T086/T087 and approved-sink delivery remain unrun/unconfirmed; missing proof blocks
