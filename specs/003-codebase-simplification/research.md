@@ -276,6 +276,13 @@ Test speed-up decisions (T071 to T076):
   fails before the change). That this was the cause of the CI failure is not confirmed. A failed
   speech case now also prints the runtime's last lifecycle events from the host log (T100), so the
   next occurrence shows the server side.
+- **Fifth Windows failure** (run 41877194314, commit `f260566`, with the stop fix): the text case
+  `[chromium-overview]` never showed `Synthetic shared reply` within 15 s, and `[community]` then
+  failed its runtime-wide `occupied == 0` check because the overview session stayed occupied
+  (737 passed, 2 failed). Ubuntu and the image job were green. The text case now prints the same
+  failure context as the speech case (console status and error plus the runtime's last work,
+  latency, relay and cleanup events), so the next occurrence shows whether the turn failed or only
+  stalled. No cause is known.
 - **Relay contract test flake**: `test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots`
   failed in two of five full management runs on an otherwise idle workstation and passed alone
   (twice, 2 min 25 s) and in the next full run (733 passed in 8 min). It was already recorded as

@@ -91,9 +91,17 @@ def press_mute_when_no_audio_is_queued(page: Page) -> None:
     )
 
 
-def runtime_events(host: dict, limit: int = 14) -> list[str]:
+def runtime_events(host: dict, limit: int = 16) -> list[str]:
     # The runtime's own account of a session's end, which the browser assertion cannot show.
-    keep = {"test.admission", "test.relay", "test.session", "test.cleanup", "test.alert"}
+    keep = {
+        "test.admission",
+        "test.relay",
+        "test.work",
+        "test.session",
+        "test.cleanup",
+        "test.alert",
+        "test.latency",
+    }
     rows = []
     for line in Path(host["log"]).read_text(encoding="utf-8", errors="replace").splitlines():
         try:
@@ -104,10 +112,27 @@ def runtime_events(host: dict, limit: int = 14) -> list[str]:
             rows.append(
                 " ".join(
                     str(value.get(key, ""))
-                    for key in ("timestamp", "service", "event", "outcome", "reason")
+                    for key in ("timestamp", "service", "event", "outcome", "reason", "value")
                 ).strip()
             )
     return rows[-limit:]
+
+
+def print_failure_context(page: Page, host: dict) -> None:
+    # A session that did not end as expected shows its reason here, which the assertion does not.
+    try:
+        print(
+            {
+                key: page.locator("#test-" + key).inner_text(timeout=1000)
+                for key in ("status", "error", "capture", "playback")
+            }
+        )
+    except Exception:
+        pass
+    try:
+        print({"runtime_events": runtime_events(host)})
+    except Exception:
+        pass
 
 
 def open_manager(
@@ -414,6 +439,9 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
                 "group", name="Community Synthetic unsaved alpha", exact=True
             ).get_by_label("Name", exact=True)
         ).to_have_value("Synthetic unsaved alpha")
+    except AssertionError:
+        print_failure_context(page, configuration_host)
+        raise
     finally:
         context.close()
 
@@ -631,20 +659,7 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
         expect(page.get_by_role("button", name="Start published test", exact=True)).to_be_enabled()
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     except AssertionError:
-        # A session that ended on its own shows its reason here, which the assertion alone does not.
-        try:
-            print(
-                {
-                    key: page.locator("#test-" + key).inner_text(timeout=1000)
-                    for key in ("status", "error", "capture", "playback")
-                }
-            )
-        except Exception:
-            pass
-        try:
-            print({"runtime_events": runtime_events(configuration_host)})
-        except Exception:
-            pass
+        print_failure_context(page, configuration_host)
         raise
     finally:
         context.close()
