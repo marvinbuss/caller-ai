@@ -1,4 +1,10 @@
-"""Explicit bounded runtime WSS relay; no policy/model execution or credential discovery."""
+"""Bounded relay between the browser console socket and the backend conversation endpoints.
+
+Voice is relayed frame by frame to `WS /v1/conversations/voice`; text is relayed turn by turn
+through `text_relay.py`. The relay executes no policy and no model and discovers no credential:
+it forwards what the browser sends after checking sequence, size and generation bounds, and it
+ends the session as soon as the console session or the permit window is no longer valid.
+"""
 
 import asyncio
 import hashlib
@@ -14,12 +20,16 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
+import httpx
 from azure.core.credentials import AccessToken
 from fastapi import HTTPException, WebSocket
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
-from management_app.api.configuration import unique_object
+from management_app.adapters.backend_connection import TurnPermits, compose_request
+from management_app.adapters.backend_errors import BACKEND_CLOSE_CODES, PUBLIC_CODES, BackendRefusal
+from management_app.adapters.relay_frames import RelayFrames, RelayLimit, parse_control
+from management_app.adapters.text_relay import ActiveRevision, TextRelay
 from management_app.models.test_session import ConsoleSnapshot, StartPermit, utc
 from management_app.observability import Telemetry
 from management_app.security import ServerSession
@@ -35,10 +45,6 @@ class RuntimeSocket(Protocol):
     async def close(self) -> None: ...
 
 
-class RelayLimit(PermissionError):
-    pass
-
-
 class NoRedirectConnect(connect):
     def process_redirect(self, exc: Exception) -> Exception | str:
         return exc
@@ -46,239 +52,6 @@ class NoRedirectConnect(connect):
 
 async def direct_socket(url: str, **options: Any) -> RuntimeSocket:
     return cast(RuntimeSocket, await NoRedirectConnect(url, **options))
-
-
-class RelayFrames:
-    def __init__(self, *, mode: str, session_id: str, generation: int) -> None:
-        if (
-            mode not in {"text", "speech"}
-            or not session_id
-            or type(generation) is not int
-            or not 1 <= generation <= 2**32 - 1
-        ):
-            raise ValueError("invalid_relay_frames")
-        self.mode, self.session_id, self.generation = mode, session_id, generation
-        self.input_sequence = 0
-        self.output_sequence = 0
-        self.sent_sequence = 0
-        self.played_sequence = 0
-        self.server_sequence = 1
-        self.client_sequence = 0
-        self._credit = 0
-        self._input: dict[int, int] = {}
-        self._output: dict[int, int] = {}
-        self._seen: dict[int, str] = {}
-        self._muted = False
-        self._output_blocked = False
-
-    @property
-    def capture_bytes(self) -> int:
-        return sum(self._input.values())
-
-    @property
-    def playback_bytes(self) -> int:
-        return sum(self._output.values())
-
-    def _audio(self, raw: bytes) -> tuple[int, int]:
-        if self.mode != "speech" or len(raw) < 11 or (len(raw) - 9) % 2:
-            raise PermissionError("invalid_audio_frame")
-        if len(raw) - 9 > 1920:
-            raise RelayLimit("audio_frame_limit")
-        protocol, generation, sequence = struct.unpack(">BII", raw[:9])
-        if protocol != 1 or not sequence:
-            raise PermissionError("invalid_audio_frame")
-        return generation, sequence
-
-    def from_browser(self, raw: str | bytes) -> bool:
-        if isinstance(raw, bytes):
-            generation, sequence = self._audio(raw)
-            if self._muted:
-                raise PermissionError("test_input_muted")
-            if generation != self.generation:
-                raise PermissionError("stale_generation")
-            if sequence != self.input_sequence + 1:
-                raise PermissionError("invalid_audio_sequence")
-            count = len(raw) - 9
-            if count // 2 > self._credit or self.capture_bytes + count > 12000:
-                raise PermissionError("capture_credit_exhausted")
-            self._credit -= count // 2
-            self.input_sequence = sequence
-            self._input[sequence] = count
-            return True
-        value = TestSessionClient._json(raw)
-        kind = value.get("type")
-        fields = {
-            "text.submit": {"text"},
-            "stop": set(),
-            "ping": {"nonce"},
-            "pong": {"nonce"},
-            "input.mute": {"muted"},
-            "output.interrupt": {"generation"},
-            "audio.played": {"generation", "audioSequence"},
-        }
-        if (
-            not isinstance(kind, str)
-            or kind not in fields
-            or set(value) != {"type", "sessionId", "sequence"} | fields[kind]
-            or value["sessionId"] != self.session_id
-            or type(value["sequence"]) is not int
-            or not 1 <= value["sequence"] <= 2**32 - 1
-        ):
-            raise PermissionError("invalid_test_control")
-        digest = hashlib.sha256(
-            json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        sequence = value["sequence"]
-        if sequence in self._seen:
-            if self._seen[sequence] != digest:
-                raise PermissionError("invalid_test_sequence")
-            return True
-        if sequence != self.client_sequence + 1:
-            raise PermissionError("invalid_test_sequence")
-        if kind in {"input.mute", "output.interrupt", "audio.played"} and self.mode != "speech":
-            raise PermissionError("invalid_test_mode")
-        if kind in {"output.interrupt", "audio.played"} and (
-            type(value["generation"]) is not int or value["generation"] != self.generation
-        ):
-            raise PermissionError("stale_generation")
-        if kind == "audio.played":
-            played = value["audioSequence"]
-            if type(played) is not int or not self.played_sequence <= played <= self.sent_sequence:
-                raise PermissionError("invalid_played_ack")
-            self.played_sequence = played
-            self._output = {key: count for key, count in self._output.items() if key > played}
-        elif kind == "input.mute":
-            if type(value["muted"]) is not bool:
-                raise PermissionError("invalid_test_control")
-            self._muted = value["muted"]
-        elif kind in {"output.interrupt", "stop"}:
-            self._output_blocked = True
-        elif kind == "text.submit":
-            if (
-                self.mode != "text"
-                or not isinstance(value["text"], str)
-                or not value["text"].strip()
-                or len(value["text"].encode("utf-8")) > 4096
-            ):
-                raise PermissionError("invalid_test_control")
-        elif kind in {"ping", "pong"}:
-            if (
-                not isinstance(value["nonce"], str)
-                or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value["nonce"]) is None
-            ):
-                raise PermissionError("invalid_test_control")
-        self.client_sequence = sequence
-        self._seen[sequence] = digest
-        if len(self._seen) > 64:
-            self._seen.pop(next(iter(self._seen)))
-        return True
-
-    def from_runtime(self, raw: str | bytes) -> bool:
-        if isinstance(raw, bytes):
-            generation, sequence = self._audio(raw)
-            if generation < self.generation:
-                return False
-            if self._output_blocked and generation == self.generation:
-                return False
-            if generation != self.generation or sequence != self.output_sequence + 1:
-                raise PermissionError("invalid_audio_sequence")
-            count = len(raw) - 9
-            if self.playback_bytes + count > 24000:
-                raise PermissionError("playback_credit_exhausted")
-            self.output_sequence = sequence
-            self._output[sequence] = count
-            return True
-        value = TestSessionClient._json(raw)
-        if (
-            value.get("sessionId") != self.session_id
-            or type(value.get("sequence")) is not int
-            or not self.server_sequence < value["sequence"] <= 2**32 - 1
-            or type(value.get("generation")) is not int
-            or not 1 <= value["generation"] <= 2**32 - 1
-        ):
-            raise PermissionError("invalid_test_sequence")
-        kind = value.get("type")
-        if kind in {"generation.changed", "agent.changed"}:
-            fields = {"reason"} if kind == "generation.changed" else {"agentId", "communityId"}
-            if (
-                set(value) != {"type", "sessionId", "sequence", "generation"} | fields
-                or value["generation"] <= self.generation
-            ):
-                raise PermissionError("invalid_test_generation")
-            if kind == "generation.changed" and value["reason"] not in {
-                "segment_retired",
-                "agent_changed",
-                "interrupted",
-                "stopped",
-            }:
-                raise PermissionError("invalid_test_generation")
-            if kind == "agent.changed" and (
-                not isinstance(value["agentId"], str)
-                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value["agentId"]) is None
-            ):
-                raise PermissionError("invalid_test_control")
-            if kind == "agent.changed" and value["communityId"] is not None:
-                if (
-                    not isinstance(value["communityId"], str)
-                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value["communityId"])
-                    is None
-                ):
-                    raise PermissionError("invalid_test_control")
-            self.generation = value["generation"]
-            self.input_sequence = self.output_sequence = self.sent_sequence = (
-                self.played_sequence
-            ) = 0
-            self._input.clear()
-            self._output.clear()
-            self._credit = 0
-            self._output_blocked = False
-        elif kind == "audio.credit":
-            if (
-                self.mode != "speech"
-                or set(value)
-                != {
-                    "type",
-                    "sessionId",
-                    "sequence",
-                    "generation",
-                    "availableSamples",
-                    "acceptedAudioSequence",
-                }
-                or value["generation"] != self.generation
-                or type(value["availableSamples"]) is not int
-                or not 0 <= value["availableSamples"] <= 6000
-                or type(value["acceptedAudioSequence"]) is not int
-                or not 0 <= value["acceptedAudioSequence"] <= self.input_sequence
-            ):
-                raise PermissionError("invalid_audio_credit")
-            self._input = {
-                key: count
-                for key, count in self._input.items()
-                if key > value["acceptedAudioSequence"]
-            }
-            self._credit = max(0, value["availableSamples"] - self.capture_bytes // 2)
-        else:
-            raise PermissionError("invalid_test_control")
-        self.server_sequence = value["sequence"]
-        return True
-
-    def sent_audio(self, sequence: int, *, generation: int) -> None:
-        if generation != self.generation:
-            return
-        if (
-            type(sequence) is not int
-            or sequence != self.sent_sequence + 1
-            or sequence > self.output_sequence
-        ):
-            raise PermissionError("invalid_audio_sequence")
-        self.sent_sequence = sequence
-
-    def clear(self) -> None:
-        self._input.clear()
-        self._output.clear()
-        self._seen.clear()
-        self._credit = 0
-        self._output_blocked = True
 
 
 class TestSessionClient:
@@ -296,6 +69,9 @@ class TestSessionClient:
         max_clock_skew_seconds: float,
         socket_factory: Callable[..., Awaitable[RuntimeSocket]] = direct_socket,
         telemetry: Telemetry | None = None,
+        permits: TurnPermits | None = None,
+        active_revision: Callable[[], Awaitable[ActiveRevision]] | None = None,
+        http_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         try:
             parts = urlsplit(endpoint)
@@ -320,7 +96,22 @@ class TestSessionClient:
             self._audience = str(UUID(audience))
         except Exception:
             raise ValueError("invalid_test_relay_binding") from None
-        self._url = "wss://" + parts.netloc + "/v1/internal/test-sessions"
+        self._origin = parts.netloc
+        self._text = (
+            TextRelay(
+                origin=parts.netloc,
+                audience=self._audience,
+                credential=credential,
+                permits=permits,
+                active_revision=active_revision,
+                utc_now=utc_now,
+                skew=max_clock_skew_seconds,
+                transport=http_transport,
+                telemetry=telemetry,
+            )
+            if permits is not None and active_revision is not None
+            else None
+        )
         self._credential, self._factory = credential, socket_factory
         self._utc_now, self._monotonic, self._skew = utc_now, monotonic, max_clock_skew_seconds
         self._clock: tuple[datetime, float] | None = None
@@ -380,26 +171,10 @@ class TestSessionClient:
         self._cleanup.add(task)
         task.add_done_callback(self._cleanup.discard)
 
-    @staticmethod
-    def _json(raw: str) -> dict[str, Any]:
-        try:
-            if not isinstance(raw, str):
-                raise ValueError("invalid_control")
-            if len(raw.encode("utf-8")) > 8192:
-                raise RelayLimit("control_limit")
-                raise ValueError("control_limit")
-            value = json.loads(raw, object_pairs_hook=unique_object)
-            if not isinstance(value, dict):
-                raise ValueError("object_required")
-            json.dumps(value, allow_nan=False)
-            return value
-        except RelayLimit:
-            raise
-        except Exception:
-            raise PermissionError("invalid_test_control") from None
-
     def _ready(self, raw: str, permit: StartPermit) -> ConsoleSnapshot:
-        envelope = self._json(raw)
+        envelope = parse_control(raw)
+        if envelope.get("type") == "error" and "sessionId" not in envelope:
+            raise BackendRefusal.from_message(envelope)
         expected = {
             "type",
             "sessionId",
@@ -414,7 +189,7 @@ class TestSessionClient:
             "bounds",
         }
         if (
-            set(envelope) != expected | ({"audioFormat"} if permit.mode == "speech" else set())
+            set(envelope) != expected | {"audioFormat"}
             or envelope["type"] != "ready"
             or envelope["mode"] != permit.mode
             or type(envelope["sequence"]) is not int
@@ -430,7 +205,7 @@ class TestSessionClient:
             }
         ):
             raise PermissionError("invalid_test_ready")
-        if permit.mode == "speech" and envelope["audioFormat"] != {
+        if envelope["audioFormat"] != {
             "codec": "pcm16le",
             "sampleRate": 24000,
             "channels": 1,
@@ -475,7 +250,6 @@ class TestSessionClient:
         frames = RelayFrames(
             mode=permit.mode, session_id=str(snapshot.session_id), generation=generation
         )
-        reply_bytes: dict[str, int] = {}
         seen: dict[int, str] = {}
 
         def current() -> None:
@@ -531,9 +305,8 @@ class TestSessionClient:
                 raw = message.get("text")
                 if not isinstance(raw, str):
                     raise PermissionError("invalid_test_control")
-                value = self._json(raw)
+                value = parse_control(raw)
                 fields = {
-                    "text.submit": {"text"},
                     "stop": set(),
                     "ping": {"nonce"},
                     "pong": {"nonce"},
@@ -545,13 +318,6 @@ class TestSessionClient:
                 if (
                     kind not in fields
                     or set(value) != {"type", "sequence", "sessionId"} | fields[kind]
-                ):
-                    raise PermissionError("invalid_test_control")
-                if kind == "text.submit" and (
-                    permit.mode != "text"
-                    or not isinstance(value["text"], str)
-                    or not value["text"].strip()
-                    or len(value["text"].encode("utf-8")) > 4096
                 ):
                     raise PermissionError("invalid_test_control")
                 if kind in {"ping", "pong"} and (
@@ -584,12 +350,12 @@ class TestSessionClient:
                     continue
                 if not isinstance(raw, str):
                     raise PermissionError("invalid_test_control")
-                value = self._json(raw)
+                value = parse_control(raw)
+                if value.get("type") == "error" and "sessionId" not in value:
+                    raise BackendRefusal.from_message(value)
                 envelope(value, server=True)
                 kind = value.get("type")
                 fields = {
-                    "text.delta": {"messageId", "text"},
-                    "text.completed": {"messageId", "text"},
                     "pong": {"nonce"},
                     "ping": {"nonce"},
                     "command.ack": {"acceptedSequence"},
@@ -607,7 +373,7 @@ class TestSessionClient:
                     "generation",
                 } | fields[kind] | (
                     {"messageId"} if kind == "error" and "messageId" in value else set()
-                ):
+                ) | ({"reason"} if kind == "error" and "reason" in value else set()):
                     raise PermissionError("invalid_test_control")
                 if (
                     kind == "error"
@@ -627,18 +393,7 @@ class TestSessionClient:
                 if kind in {"error", "ended"}:
                     if (
                         not isinstance(value["code"], str)
-                        or value["code"]
-                        not in {
-                            "stopped",
-                            "work_busy",
-                            "work_unavailable",
-                            "test_unavailable",
-                            "test_policy_denied",
-                            "invalid_input",
-                            "quota",
-                            "manager_busy",
-                            "session_expired",
-                        }
+                        or value["code"] not in (PUBLIC_CODES if kind == "error" else {"stopped"})
                         or value["cleanupStatus"] not in {"active", "complete", "pending"}
                         or not isinstance(value["correlationId"], str)
                         or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value["correlationId"]) is None
@@ -676,28 +431,6 @@ class TestSessionClient:
                     or not 0 <= value["start_ms"] <= value["end_ms"] <= 3600000
                 ):
                     raise PermissionError("invalid_test_control")
-                if kind in {"text.delta", "text.completed"}:
-                    if (
-                        permit.mode != "text"
-                        or not isinstance(value["text"], str)
-                        or len(value["text"].encode("utf-8")) > 4096
-                    ):
-                        raise PermissionError("invalid_test_control")
-                    message_id = value["messageId"]
-                    if (
-                        not isinstance(message_id, str)
-                        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", message_id) is None
-                    ):
-                        raise PermissionError("invalid_test_control")
-                    if message_id not in reply_bytes and len(reply_bytes) >= 2:
-                        raise PermissionError("test_reply_limit")
-                    reply_bytes[message_id] = reply_bytes.get(message_id, 0) + len(
-                        value["text"].encode("utf-8")
-                    )
-                    if reply_bytes[message_id] > 65536:
-                        raise PermissionError("test_reply_limit")
-                    if kind == "text.completed":
-                        reply_bytes.pop(message_id, None)
                 if kind not in {"error", "ended"}:
                     current()
                 async with asyncio.timeout(1):
@@ -732,7 +465,6 @@ class TestSessionClient:
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
-            reply_bytes.clear()
             seen.clear()
             frames.clear()
 
@@ -753,10 +485,20 @@ class TestSessionClient:
         if runner is not None:
             self._runners.add(runner)
         runtime: RuntimeSocket | None = None
-        ready_delivered = False
         try:
             self._current(permit, validate_current)
             remaining = self._startup(permit, deadline)
+            if permit.mode == "text":
+                if self._text is None:
+                    raise PermissionError("test_text_unavailable")
+                await self._text.run(
+                    browser,
+                    permit=permit,
+                    validate_current=validate_current,
+                    deadline=deadline,
+                    current=lambda: self._current(permit, validate_current),
+                )
+                return
             async with asyncio.timeout_at(
                 min(deadline, asyncio.get_running_loop().time() + remaining)
             ):
@@ -769,10 +511,17 @@ class TestSessionClient:
                     or token.expires_on <= permit.admission_deadline_utc.timestamp()
                 ):
                     raise PermissionError("test_workload_expired")
+                request = compose_request(
+                    "voice",
+                    origin=self._origin,
+                    token=token.token,
+                    signed_permit=signed_permit,
+                    request_id=permit.request_id,
+                )
                 runtime = await self._factory(
-                    self._url,
-                    additional_headers={"Authorization": "Bearer " + token.token},
-                    subprotocols=["caller.test.v1"],
+                    request.url,
+                    additional_headers=request.headers,
+                    subprotocols=list(request.subprotocols),
                     ssl=ssl.create_default_context(),
                     proxy=None,
                     compression=None,
@@ -787,16 +536,7 @@ class TestSessionClient:
                 )
                 self._startup(permit, deadline)
                 self._current(permit, validate_current)
-                await runtime.send(
-                    json.dumps(
-                        {
-                            "type": "authenticate",
-                            "permit": signed_permit,
-                            "requestId": permit.request_id,
-                        },
-                        separators=(",", ":"),
-                    )
-                )
+                await runtime.send(json.dumps(request.message, separators=(",", ":")))
                 ready = await runtime.recv()
                 self._startup(permit, deadline)
                 self._current(permit, validate_current)
@@ -806,7 +546,6 @@ class TestSessionClient:
                 self._startup(permit, deadline)
                 async with asyncio.timeout_at(deadline):
                     await browser.send_text(ready)
-                    ready_delivered = True
                     if self._telemetry is not None:
                         self._telemetry.event(
                             "test.relay", "success", mode=permit.mode, reason="ready"
@@ -825,14 +564,18 @@ class TestSessionClient:
         except Exception as error:
             code = 1011
             reason = "test_unavailable"
-            if isinstance(error, RelayLimit):
+            if isinstance(error, BackendRefusal):
+                code, reason = error.browser_close()
+            elif isinstance(error, RelayLimit):
                 code = 1009
             elif isinstance(error, ConnectionClosed) and error.rcvd is not None:
-                code = (
-                    error.rcvd.code if error.rcvd.code in {1000, 1008, 1009, 1011, 1013} else 1011
-                )
-                if not ready_delivered and code == 1013 and error.rcvd.reason == "manager_busy":
-                    reason = "manager_busy"
+                refusal = BACKEND_CLOSE_CODES.get(error.rcvd.code)
+                if refusal is not None:
+                    code, reason = BackendRefusal(
+                        refusal, error.rcvd.reason or None
+                    ).browser_close()
+                elif error.rcvd.code in {1000, 1008, 1009, 1011, 1013}:
+                    code = error.rcvd.code
             elif isinstance(error, (HTTPException, PermissionError, ValueError)):
                 code = 1008
             if self._telemetry is not None and code in {1011, 1013} and reason != "manager_busy":

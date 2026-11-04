@@ -8,7 +8,6 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from http import HTTPStatus
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket
@@ -16,6 +15,7 @@ from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from management_app.api.configuration import unique_object
+from management_app.api.problems import problem_response
 from management_app.models.test_session import (
     Authenticate,
     StartPermit,
@@ -59,21 +59,7 @@ class RelayPort(Protocol):
 
 
 def problem(status: int, correlation: str) -> JSONResponse:
-    headers = {"Cache-Control": "no-store", "X-Correlation-ID": correlation}
-    if status == 401:
-        headers["WWW-Authenticate"] = "Bearer"
-    return JSONResponse(
-        {
-            "type": "about:blank",
-            "title": HTTPStatus(status).phrase,
-            "status": status,
-            "code": ERROR_CODES[status],
-            "correlation_id": correlation,
-        },
-        status_code=status,
-        media_type="application/problem+json",
-        headers=headers,
-    )
+    return problem_response(status, correlation, ERROR_CODES[status])
 
 
 def create_router(
@@ -137,7 +123,7 @@ def create_router(
             elif now.timestamp() >= record.claims.expires_epoch:
                 record.response = None
 
-    @router.post("/v1/test-tickets")
+    @router.post("/v1/console/tickets")
     async def ticket(request: Request) -> JSONResponse:
         correlation = sanitize_correlation_id(request.headers.get("X-Correlation-ID"))
         mode = "text"
@@ -213,7 +199,7 @@ def create_router(
                     permit=raw,
                     mode=mode,
                     requestId=control.request_id,
-                    socketPath="/v1/test-sessions",
+                    socketPath="/v1/console/sessions",
                     expiresAt=datetime.fromtimestamp(claims.expires_epoch, UTC),
                     admissionDeadlineUtc=claims.admission_deadline_utc,
                 )
@@ -240,7 +226,7 @@ def create_router(
         )
         return problem(status, correlation)
 
-    @router.websocket("/v1/test-sessions")
+    @router.websocket("/v1/console/sessions")
     async def test_socket(socket: WebSocket) -> None:
         nonlocal pending
         actor_key: str | None = None
@@ -249,7 +235,7 @@ def create_router(
             if (
                 socket.scope.get("scheme") != "wss"
                 or socket.query_params
-                or socket.scope.get("subprotocols", []).count("caller.test.v1") != 1
+                or socket.scope.get("subprotocols", []).count("caller.console.v1") != 1
             ):
                 raise PermissionError("test_permission_denied")
             session = identity.require_test_manager(socket, mutation=False, test_role=test_role)
@@ -281,7 +267,7 @@ def create_router(
             ]
             first_deadline = asyncio.get_running_loop().time() + min(3, min(remaining_bounds))
             await socket.accept(
-                subprotocol="caller.test.v1", headers=[(b"cache-control", b"no-store")]
+                subprotocol="caller.console.v1", headers=[(b"cache-control", b"no-store")]
             )
             async with asyncio.timeout_at(first_deadline):
                 message = await socket.receive()

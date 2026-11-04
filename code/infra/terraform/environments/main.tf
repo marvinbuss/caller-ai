@@ -45,17 +45,12 @@ module "platform" {
   services            = var.services
   security            = var.security
   monitoring          = var.monitoring
-  tags                = merge(var.tags, { environment = var.environment })
+  tags                = merge(var.tags, var.label == null ? {} : { label = var.label })
 }
 
 output "platform_resource_group_name" {
   value       = module.platform.resource_group_name
   description = "Nonsecret platform reference; not deployment or application readiness."
-}
-
-output "environment" {
-  value       = var.environment
-  description = "Explicit environment binding shared by every workload deployment."
 }
 
 output "managed_action_group_id" {

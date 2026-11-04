@@ -2,7 +2,7 @@ mock_provider "azurerm" {}
 mock_provider "azuread" {}
 
 variables {
-  environment         = "dev"
+  label               = "dev"
   monitoring          = jsondecode(file("../test-fixtures/monitoring.json"))
   security            = jsondecode(file("../test-fixtures/security.json"))
   subscription_id     = "00000000-0000-4000-8000-000000000001"
@@ -38,31 +38,42 @@ variables {
   }
 }
 
-run "environment_module_is_composed_with_explicit_inputs" {
+run "root_is_composed_with_explicit_inputs" {
   command = plan
   assert {
-    condition     = output.platform_resource_group_name == var.resource_group_name && output.environment == "dev"
-    error_message = "The shared root must compose the reviewed module with explicit environment inputs."
+    condition     = output.platform_resource_group_name == var.resource_group_name
+    error_message = "The shared root must compose the reviewed module with explicit inputs."
   }
 }
 
-run "same_root_supports_another_environment" {
+run "same_root_supports_any_stage_label" {
   command = plan
   variables {
-    environment = "prod"
+    label = "a-stage-nobody-listed"
   }
   assert {
-    condition     = output.environment == "prod"
-    error_message = "Environments must differ by input values, not copied Terraform definitions."
+    condition     = output.platform_resource_group_name == var.resource_group_name
+    error_message = "Stages must differ by input values only; no stage name has special behavior."
   }
 }
 
-run "invalid_environment_rejected" {
+run "stage_label_is_optional" {
   command = plan
   variables {
-    environment = "../prod"
+    label = null
   }
-  expect_failures = [var.environment]
+  assert {
+    condition     = output.platform_resource_group_name == var.resource_group_name
+    error_message = "The label is optional and used only in tags."
+  }
+}
+
+run "invalid_label_rejected" {
+  command = plan
+  variables {
+    label = "../prod"
+  }
+  expect_failures = [var.label]
 }
 
 run "invalid_provisioning_identity_rejected" {

@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from reflex_base.registry import RegistrationContext
 
 from management_app.models.test_session import ConsoleSnapshot, Mode
-from management_app.security import ReflexEventGuard
+from management_app.reflex_security import ReflexEventGuard
 
 
 @dataclass(slots=True)

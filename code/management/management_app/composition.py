@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from management_app.adapters.audit_repository import AuditContainer, CosmosAuditRepository
+from management_app.adapters.backend_connection import TurnPermits
 from management_app.adapters.configuration_repository import (
     ContainerPort,
     CosmosConfigurationRepository,
@@ -30,6 +31,7 @@ from management_app.adapters.public_tools import (
     resolve_public,
 )
 from management_app.adapters.test_session_client import TestSessionClient, WorkloadCredential
+from management_app.adapters.text_relay import ActiveRevision
 from management_app.api.capabilities import create_router as capability_router
 from management_app.api.configuration import create_router as configuration_router
 from management_app.api.runtime_configuration import create_router as runtime_router
@@ -37,11 +39,11 @@ from management_app.health import create_health_api
 from management_app.metrics import ManagementMetrics
 from management_app.models.capabilities import ApprovedCapabilities
 from management_app.observability import Telemetry
+from management_app.reflex_security import ReflexEventGuard
 from management_app.security import (
     EntraPolicy,
     IdentityService,
     OidcFlow,
-    ReflexEventGuard,
     RuntimeIdentity,
     SessionStore,
     SigningKeys,
@@ -56,7 +58,7 @@ from management_app.services.capability_policy import CapabilityPolicy
 from management_app.services.configuration_validation import ConfigurationValidator
 from management_app.services.ports import ReadinessPort
 from management_app.settings import Settings
-from management_app.state.configuration_editor import EditorServices
+from management_app.state.editor_draft import EditorServices
 from management_app.state.test_console import ConsoleServices
 
 
@@ -361,6 +363,19 @@ async def compose_management(
                     utc_now=lambda: datetime.now(UTC),
                     max_clock_skew_seconds=request.tests.max_clock_skew_seconds,
                 )
+
+                async def active_revision() -> ActiveRevision:
+                    publication = await repository.read_active()
+                    if publication is None:
+                        raise PermissionError("test_configuration_unavailable")
+                    document, _etag = publication
+                    welcome = next(
+                        agent["agentId"]
+                        for agent in document["agents"]
+                        if agent["role"] == "welcome"
+                    )
+                    return ActiveRevision(document["id"], document["revisionNumber"], welcome)
+
                 startup.test_relay = TestSessionClient(
                     endpoint=request.tests.runtime_endpoint,
                     audience=request.tests.runtime_audience,
@@ -372,6 +387,8 @@ async def compose_management(
                     monotonic=time.monotonic,
                     max_clock_skew_seconds=request.tests.max_clock_skew_seconds,
                     telemetry=telemetry,
+                    permits=TurnPermits(signer, lambda: datetime.now(UTC)),
+                    active_revision=active_revision,
                 )
             gateway = CapabilityGateway(
                 repository=repository,
@@ -443,7 +460,9 @@ async def compose_management(
                         "/v1/security/revocations",
                     }
                 )
-                | (frozenset({"/v1/test-tickets"}) if request.tests is not None else frozenset()),
+                | (
+                    frozenset({"/v1/console/tickets"}) if request.tests is not None else frozenset()
+                ),
             )
             return ManagedApplication(application, api, asgi)
         except BaseException as error:

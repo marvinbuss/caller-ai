@@ -11,7 +11,7 @@ import pytest
 
 @pytest.fixture
 def draft(configuration_graph):
-    from management_app.state.configuration_editor import EditorDraft
+    from management_app.state.editor_draft import EditorDraft
 
     return EditorDraft.from_revision({**configuration_graph, "id": "revision-one"}, '"etag-one"')
 
@@ -181,7 +181,8 @@ def test_us1_save_acknowledgement_tracks_logical_draft_across_framework_copies(d
 
     import httpx
 
-    from management_app.state.configuration_editor import ConfigurationEditorState, EditorDraft
+    from management_app.state.configuration_editor import ConfigurationEditorState
+    from management_app.state.editor_draft import EditorDraft
 
     current = [draft]
 
@@ -639,7 +640,7 @@ def test_direct_tool_requires_separately_reviewed_actions(
 ) -> None:
     from management_app.models.capabilities import ApprovedCapabilities
     from management_app.services.configuration_validation import ConfigurationValidator
-    from management_app.state.configuration_editor import EditorDraft
+    from management_app.state.editor_draft import EditorDraft
 
     review = copy.deepcopy(capability_graph)
     review["tools"][0]["mcpConnectionId"] = None
@@ -665,7 +666,7 @@ def test_direct_tool_requires_separately_reviewed_actions(
 @pytest.fixture
 def capability_draft(configuration_graph, capability_graph):
     from management_app.models.capabilities import ApprovedCapabilities
-    from management_app.state.configuration_editor import EditorDraft
+    from management_app.state.editor_draft import EditorDraft
 
     return EditorDraft.from_revision(
         configuration_graph,
@@ -753,17 +754,16 @@ def test_editor_api_client_uses_real_session_and_rechecks_revocation(
     from management_app.adapters.audit_repository import LocalAuditRepository
     from management_app.adapters.configuration_repository import LocalConfigurationRepository
     from management_app.api.configuration import create_router
+    from management_app.reflex_security import EventAuthorizationMiddleware, ReflexEventGuard
     from management_app.security import (
         EntraPolicy,
-        EventAuthorizationMiddleware,
         IdentityService,
         Principal,
-        ReflexEventGuard,
         SessionStore,
         TokenVerifier,
     )
     from management_app.services.audit import AuditService
-    from management_app.state.configuration_editor import EditorServices
+    from management_app.state.editor_draft import EditorServices
 
     class NoKeys:
         async def signing_keys(self):

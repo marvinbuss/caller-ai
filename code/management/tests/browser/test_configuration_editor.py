@@ -122,7 +122,7 @@ def test_console_entry_is_explicit_accessible_and_never_requests_media_or_ticket
     page.on(
         "request",
         lambda request: (
-            requested.append(request.url) if request.url.endswith("/v1/test-tickets") else None
+            requested.append(request.url) if request.url.endswith("/v1/console/tickets") else None
         ),
     )
     permission_script = """
@@ -176,7 +176,7 @@ def test_console_denied_permission_is_visible_and_precedes_ticket(
     page.on(
         "request",
         lambda request: (
-            requested.append(request.url) if request.url.endswith("/v1/test-tickets") else None
+            requested.append(request.url) if request.url.endswith("/v1/console/tickets") else None
         ),
     )
     page.evaluate("""
@@ -212,7 +212,7 @@ def test_console_stop_disposes_late_permission_without_ticket(browser: Browser, 
     page.on(
         "request",
         lambda request: (
-            requests.append(request.url) if request.url.endswith("/v1/test-tickets") else None
+            requests.append(request.url) if request.url.endswith("/v1/console/tickets") else None
         ),
     )
     page.evaluate("""() => {
@@ -249,7 +249,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
     wire = []
 
     def observe(socket):
-        if socket.url.endswith("/v1/test-sessions"):
+        if socket.url.endswith("/v1/console/sessions"):
 
             def receive(raw):
                 import json
@@ -275,7 +275,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         window.WebSocket = class extends NativeSocket {
             constructor(...arguments_) {
                 super(...arguments_);
-                if (String(arguments_[0]).endsWith('/v1/test-sessions')) {
+                if (String(arguments_[0]).endsWith('/v1/console/sessions')) {
                     window.callerTestSockets.push(this);
                     this.addEventListener('message', event => {
                         if (typeof event.data !== 'string') return;
@@ -380,7 +380,7 @@ def test_console_unavailable_media_is_visible_before_ticket(
     page.on(
         "request",
         lambda request: (
-            requested.append(request.url) if request.url.endswith("/v1/test-tickets") else None
+            requested.append(request.url) if request.url.endswith("/v1/console/tickets") else None
         ),
     )
     page.evaluate(
@@ -471,7 +471,7 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
         window.WebSocket = class extends NativeSocket {
             constructor(...arguments_) {
                 super(...arguments_);
-                if (String(arguments_[0]).endsWith('/v1/test-sessions')) {
+                if (String(arguments_[0]).endsWith('/v1/console/sessions')) {
                     window.syntheticMedia.socket = this;
                     this.addEventListener('message', event => {
                         if (event.data instanceof ArrayBuffer) window.syntheticMedia.received++;
@@ -961,13 +961,14 @@ def test_us1_protected_only_overview_is_explicitly_empty_without_model_resources
         expect(page.get_by_role("button", name="Add connection", exact=True)).to_be_disabled()
         expect(page.get_by_role("button", name="Add community", exact=True)).to_be_enabled()
         assert (
-            context.request.get(configuration_host["management"] + "/v1/test-tickets").status == 404
+            context.request.get(configuration_host["management"] + "/v1/console/tickets").status
+            == 404
         )
         denied = context.request.post(
             configuration_host["management"] + "/v1/unreviewed-test-tickets"
         )
         assert denied.status == 403 and denied.json()["error"] == "unreviewed_ingress_prohibited"
-        guarded = context.request.post(configuration_host["management"] + "/v1/test-tickets")
+        guarded = context.request.post(configuration_host["management"] + "/v1/console/tickets")
         assert guarded.status == 403 and guarded.json()["code"] == "test_permission_denied"
     finally:
         context.close()
@@ -1537,7 +1538,7 @@ def test_api_rejects_forged_relationship_policy_changes(
             "csrf"
         ]
         graph = configuration_graph_document()
-        from management_app.state.configuration_editor import EditorDraft
+        from management_app.state.editor_draft import EditorDraft
 
         draft = EditorDraft.from_revision(graph, current.headers["etag"])
         peer = draft.add_agent("community-alpha", "Alpha peer", "Synthetic peer prompt")
@@ -1586,7 +1587,7 @@ def test_api_rejects_forged_relationship_policy_changes(
 def test_conflict_retains_relationship_context_and_agent_edits_across_views(
     browser: Browser, configuration_host
 ) -> None:
-    from management_app.state.configuration_editor import EditorDraft
+    from management_app.state.editor_draft import EditorDraft
 
     with browser.new_context(ignore_https_errors=True) as setup:
         setup.add_cookies(configuration_host["sessions"]["manager-one"])

@@ -73,12 +73,13 @@ def test_owned_console_fixture_has_explicit_test_role_and_no_allocation_on_ticke
             await client.get("/_test/login/manager-one", params={"target": "test"})
             csrf = (await client.get("/auth/session")).json()["csrf"]
             response = await client.post(
-                "/v1/test-tickets",
+                "/v1/console/tickets",
                 json={"mode": "text", "requestId": "fixture-ticket"},
                 headers={"Origin": editor_test_app.origin, "X-CSRF-Token": csrf},
             )
             assert (
-                response.status_code == 200 and response.json()["socketPath"] == "/v1/test-sessions"
+                response.status_code == 200
+                and response.json()["socketPath"] == "/v1/console/sessions"
             )
             assert (
                 editor_test_app.api.state.test_console_services.test_role == "Conversation.Tester"
@@ -591,7 +592,7 @@ def test_composed_oidc_session_drives_reflex_drafts_conflicts_and_revocation(
     from management_app.health import lifecycle
     from management_app.management_app import create_managed_app
     from management_app.security import COOKIE
-    from management_app.state.configuration_editor import EditorDraft
+    from management_app.state.editor_draft import EditorDraft
 
     settings, request, authority, resources, _resolved, container, effects, _audit = (
         composition_case
@@ -969,7 +970,7 @@ def test_explicit_test_composition_exposes_guarded_ticket_without_model_or_workl
                 transport=httpx.ASGITransport(app=managed.asgi), base_url=request.policy.origin
             ) as client:
                 denied = await client.post(
-                    "/v1/test-tickets",
+                    "/v1/console/tickets",
                     json={"mode": "text", "requestId": "denied"},
                     headers={
                         "Origin": request.policy.origin,
@@ -979,7 +980,7 @@ def test_explicit_test_composition_exposes_guarded_ticket_without_model_or_workl
                 )
                 assert denied.status_code == 401
                 response = await client.post(
-                    "/v1/test-tickets",
+                    "/v1/console/tickets",
                     json={"mode": "text", "requestId": "fixture-request"},
                     headers={
                         "Cookie": identity.cookie_name + "=" + ticket.cookie,
@@ -989,7 +990,7 @@ def test_explicit_test_composition_exposes_guarded_ticket_without_model_or_workl
                 )
                 assert (
                     response.status_code == 200
-                    and response.json()["socketPath"] == "/v1/test-sessions"
+                    and response.json()["socketPath"] == "/v1/console/sessions"
                 )
                 assert response.headers["cache-control"] == "no-store"
                 assert managed.api.state.management_startup.test_relay._active == 0
@@ -1005,7 +1006,7 @@ def test_explicit_test_composition_exposes_guarded_ticket_without_model_or_workl
 def test_managed_factory_returns_initialized_protected_reflex_boundary(composition_case):
     from management_app.composition import ManagedApplication
     from management_app.management_app import create_managed_app
-    from management_app.security import ProtectedReflexBoundary, SecureEventNamespace
+    from management_app.reflex_security import ProtectedReflexBoundary, SecureEventNamespace
 
     settings, request, authority, resources, _resolved, _container, _effects, _audit = (
         composition_case

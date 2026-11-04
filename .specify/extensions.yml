@@ -1,0 +1,68 @@
+installed:
+- caller-github
+- git
+- github
+settings:
+  auto_execute_hooks: false
+hooks:
+  before_specify:
+  - extension: git
+    command: speckit.git.feature
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Create a feature branch before the specification?
+    description: Create the feature branch
+    condition: null
+  after_specify:
+  - extension: git
+    command: speckit.git.commit
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Commit the specification?
+    description: Commit the specification artifacts
+    condition: null
+  after_plan:
+  - extension: git
+    command: speckit.git.commit
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Commit the plan?
+    description: Commit the planning artifacts
+    condition: null
+  after_tasks:
+  - extension: git
+    command: speckit.git.commit
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Commit the tasks?
+    description: Commit the task list
+    condition: null
+  - extension: github
+    command: speckit.github.taskstoissues
+    enabled: true
+    optional: true
+    priority: 20
+    prompt: Convert the tasks to GitHub issues?
+    description: Create GitHub issues from tasks.md
+    condition: null
+  after_implement:
+  - extension: git
+    command: speckit.git.commit
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Commit the implementation?
+    description: Commit the implementation
+    condition: null
+  - extension: caller-github
+    command: speckit.caller-github.push-pr
+    enabled: true
+    optional: true
+    priority: 20
+    prompt: Push the branch and open a pull request (you confirm branch, target and title first)?
+    description: Push the feature branch and open a pull request with gh
+    condition: null

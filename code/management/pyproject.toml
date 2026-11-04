@@ -41,7 +41,10 @@ packages = ["management_app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --disable-socket --allow-hosts=127.0.0.1,::1 --allow-unix-socket"
-markers = ["browser: requires prepared Chromium and local application processes"]
+markers = [
+  "browser: requires prepared Chromium and local application processes",
+  "quick: fast unit and contract tests with no process, browser or build setup",
+]
 
 [tool.mypy]
 python_version = "3.12"

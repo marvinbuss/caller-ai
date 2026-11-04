@@ -27,7 +27,7 @@ ledger contracts, the full 545-case backend and strict typing of 34 runtime sour
 A ledger is not independent-deletion enforcement: authenticated controller/cluster wiring,
 reviewed enforcement definitions and actual environment qualification remain missing.
 T124 stays unchecked and completion remains 114/129; provider/live scope is unchanged.
-See [ledger contract](../runbooks/drain-rollout.md).
+The drain ledger contract (retired with feature 003) is no longer documented.
 
 **Earlier remaining-task invocation: local operations client implemented.**
 The user explicitly kept telephony deferred/local-only and confirmed that no live environment
@@ -39,7 +39,7 @@ remains validation-only. T124 is still partial because durable cluster enforceme
 reconciliation are missing; other implementation and live tasks remain open. No provider,
 cloud login, deployment, image publication or live call is performed or authorized.
 Completion remains 114/129. See [remaining-task gates](release-gates.md) and the
-[operations client contract](../runbooks/drain-rollout.md).
+operations client contract (retired with feature 003).
 
 **T123 complete and hosted-verified; full feature/live acceptance remains pending.** Observed
 [run 40700747209](https://github.com/marvinbuss/caller-ai/actions/runs/40700747209) on 9c5cd78

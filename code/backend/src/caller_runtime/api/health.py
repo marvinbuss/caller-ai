@@ -36,6 +36,10 @@ async def readiness(request: Request) -> JSONResponse:
             ready = False
         if not ready:
             request.app.state.metrics.dependency_failure("readiness", "unavailable")
+        runtime = request.app.state.runtime
+        if ready and runtime is not None and not runtime.history_ready():
+            ready, reason = False, "history_store_unavailable"
+            request.app.state.metrics.dependency_failure("history_store", "unavailable")
     return JSONResponse(
         {
             "status": "ready" if ready else "not_ready",

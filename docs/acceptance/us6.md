@@ -1,5 +1,9 @@
 # US6 Local Scaling Acceptance
 
+> **Superseded in part by feature 003.** The call-era endpoints and the `caller.test.v1` browser test protocol named
+> below were removed. The current contract is the text and voice conversation endpoints in
+> [docs/conversation-endpoints.md](../conversation-endpoints.md). The text below is kept unchanged as the record of this acceptance run.
+
 ## T123 Hosted Verification Complete: 2026-10-28
 
 Observed [run 40700747209](https://github.com/marvinbuss/caller-ai/actions/runs/40700747209)
@@ -424,7 +428,7 @@ T096's scoped identities/private-network definitions are locally validated in th
 [security runbook](../runbooks/platform-security.md). T097 local metric collection and
 disabled alerts are described in [monitoring](../runbooks/monitoring.md); live evidence remains
 pending. The user subsequently authorized isolated local T098 controls before T097 completion.
-[The rollout runbook](../runbooks/drain-rollout.md) records 28 new tooling cases, 59 complete
+The rollout runbook (retired with feature 003) recorded 28 new tooling cases, 59 complete
 tooling passes and 18 planned-drain/API passes, including actual API/acknowledgment integration.
 This does not provide a live cluster adapter or prove independent-deletion enforcement.
 The [environment qualification record](live-environment.md) now describes the T099 local

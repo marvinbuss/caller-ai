@@ -121,7 +121,7 @@
             "type": "array",
             "uniqueItems": true,
             "maxItems": 3,
-            "items": { "type": "string", "enum": ["configuration_invalid", "dependency_unavailable", "mode_invalid"] }
+            "items": { "type": "string", "enum": ["configuration_invalid", "dependency_unavailable", "history_store_unavailable", "mode_invalid"] }
           }
         }
       }

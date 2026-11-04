@@ -4,6 +4,9 @@ import subprocess
 import sys
 
 import pytest
+from pydantic import ValidationError
+
+from caller_runtime.settings import Settings
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -13,14 +16,11 @@ import json
 import os
 from caller_runtime.settings import Settings
 from caller_runtime.observability import Telemetry
-from caller_runtime.adapters.agents_sdk import initialize_sdk, realtime_options
+from caller_runtime.adapters.agents_sdk import initialize_sdk
 telemetry = Telemetry("caller-runtime", "local")
 settings = Settings(agents_sdk_tracing_enabled={enabled!r})
 initialize_sdk(settings, telemetry)
 assert os.environ["OPENAI_AGENTS_DISABLE_TRACING"] == {("0" if enabled else "1")!r}
-assert realtime_options(settings) == {{
-    "tracing_disabled": True, "model_settings": {{"tracing": None}}
-}}
 import agents
 needle = "sensitive-content-must-not-export"
 with agents.trace(needle, metadata={{"prompt": needle}}):
@@ -47,3 +47,16 @@ print("SDK policy verified")
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "SDK policy verified" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"trace_include_content": True},
+        {"agents_sdk_tracing_enabled": True, "trace_destination": "https://unapproved.invalid"},
+        {"realtime_tracing_enabled": True},
+    ],
+)
+def test_unsafe_or_unqualified_tracing_opt_ins_are_rejected(values) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**values)

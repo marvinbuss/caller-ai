@@ -213,7 +213,9 @@ run "strong_single_write_service_owned_containers" {
       toset(azurerm_cosmosdb_sql_container.service["configuration"].partition_key_paths) == toset(["/organizationId"]) &&
       toset(azurerm_cosmosdb_sql_container.service["configuration-audit"].partition_key_paths) == toset(["/dayBucket"]) &&
       toset(azurerm_cosmosdb_sql_container.service["call-sessions"].partition_key_paths) == toset(["/sessionId"]) &&
-      toset(azurerm_cosmosdb_sql_container.service["call-audit"].partition_key_paths) == toset(["/dayBucket"])
+      toset(azurerm_cosmosdb_sql_container.service["call-audit"].partition_key_paths) == toset(["/dayBucket"]) &&
+      toset(azurerm_cosmosdb_sql_container.service["text-conversations"].partition_key_paths) == toset(["/ownerKey"]) &&
+      azurerm_cosmosdb_sql_container.service["text-conversations"].default_ttl == -1
     )
     error_message = "Cosmos authority and service ownership require Strong consistency, one write region, Entra and exact private-container partitions."
   }
@@ -277,11 +279,12 @@ run "service_data_and_secret_boundaries" {
   command = plan
   assert {
     condition = (
-      length(azurerm_cosmosdb_sql_role_assignment.service) == 4 &&
+      length(azurerm_cosmosdb_sql_role_assignment.service) == 5 &&
       local.container_owners["configuration"] == "management" &&
       local.container_owners["configuration-audit"] == "management" &&
       local.container_owners["call-sessions"] == "runtime" &&
       local.container_owners["call-audit"] == "runtime" &&
+      local.container_owners["text-conversations"] == "runtime" &&
       length(azurerm_user_assigned_identity.workload) == 3 &&
       alltrue([for grant in azurerm_role_assignment.management_secret : grant.role_definition_name == "Key Vault Secrets User"]) &&
       length(azurerm_role_assignment.management_secret) == length(var.security.management_secret_names)

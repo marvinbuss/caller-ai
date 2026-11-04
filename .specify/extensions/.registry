@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "git": {
+      "version": "1.0.1",
+      "source": "local",
+      "manifest_hash": "sha256:698cc7089602db44622de39730555db4999cda94ab47195bcfe18f41d08b430a",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {},
+      "registered_skills": [
+        "speckit-git-feature",
+        "speckit-git-validate",
+        "speckit-git-remote",
+        "speckit-git-initialize",
+        "speckit-git-commit"
+      ],
+      "installed_at": "2026-11-04T00:04:39.415233+00:00"
+    },
+    "github": {
+      "version": "1.0.2",
+      "source": "local",
+      "manifest_hash": "sha256:384027822560387c1b5573452e64d63e20de9edb79305fa4d57ace2d9d69848c",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {},
+      "registered_skills": [
+        "speckit-github-taskstoissues"
+      ],
+      "installed_at": "2026-11-04T00:04:46.762623+00:00"
+    },
+    "caller-github": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:da6183d54f190355810a8c1825155eeacac6803c27528c819d35585bcc94ebbf",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {},
+      "registered_skills": [
+        "speckit-caller-github-push-pr"
+      ],
+      "installed_at": "2026-11-04T00:05:38.568334+00:00"
+    }
+  }
+}

@@ -1,7 +1,7 @@
 resource "azurerm_resource_group" "state" {
   name     = var.resource_group_name
   location = var.location
-  tags     = merge(var.tags, { application = "caller-ai", managed_by = "terraform", environment = var.environment })
+  tags     = merge(var.tags, { application = "caller-ai", managed_by = "terraform" }, var.label == null ? {} : { label = var.label })
 
   lifecycle {
     prevent_destroy = true
@@ -117,7 +117,6 @@ output "state_backend" {
     container_name       = azurerm_storage_container.state.name
     use_azuread_auth     = true
     use_oidc             = true
-    key                  = "${var.environment}/platform.tfstate"
     plan_container_name  = azurerm_storage_container.plans.name
   }
 }

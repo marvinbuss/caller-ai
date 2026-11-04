@@ -64,6 +64,13 @@ def device_control(label: str, identifier: str) -> rx.Component:
     )
 
 
+# Shown in text mode: the backend keeps text test conversations so a follow-up can continue them.
+TEXT_RETENTION_NOTICE = (
+    "Text test conversations are stored for 30 days after the last message "
+    "and are visible only to their owner."
+)
+
+
 def console_controls() -> rx.Component:
     return cast(
         rx.Component,
@@ -195,6 +202,13 @@ def console_controls() -> rx.Component:
                     margin_top="8px",
                     resize="vertical",
                     **CONTROL_STYLE,
+                ),
+                rx.text(
+                    TEXT_RETENTION_NOTICE,
+                    id="test-text-notice",
+                    size="2",
+                    color="#58615c",
+                    margin_top="8px",
                 ),
                 rx.flex(
                     rx.el.button(

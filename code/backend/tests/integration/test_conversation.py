@@ -9,13 +9,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from tests.doubles import ContainerDouble, parse_sse
+from tests.unit.test_admission import admission_case as admission_case
+from tests.unit.test_admission import authority_store as authority_store
+from tests.unit.test_admission import live_case as live_case
+from tests.unit.test_admission import signed_test_permit as signed_test_permit
 from tests.unit.test_conversation import text_execution_case as text_execution_case
-from tests.unit.test_test_admission import admission_case as admission_case
-from tests.unit.test_test_admission import authority_store as authority_store
-from tests.unit.test_test_admission import live_case as live_case
-from tests.unit.test_test_admission import signed_test_permit as signed_test_permit
 
-SOCKET_URL = "wss://runtime.fixture.example/v1/internal/test-sessions"
+SOCKET_URL = "wss://runtime.fixture.example/v1/conversations/voice"
 
 
 def run_owned_browser_runtime(fixture_path):
@@ -33,10 +34,10 @@ def run_owned_browser_runtime(fixture_path):
     import httpx2
     import uvicorn
 
-    from caller_runtime.adapters.test_admission_repository import TestAdmissionRepository
-    from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
+    from caller_runtime.adapters.admission_repository import TestAdmissionRepository
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
     from caller_runtime.main import create_app
-    from tests.unit.test_session_repository import ContainerDouble
+    from tests.doubles import ContainerDouble
 
     path = Path(fixture_path)
     fixture = json.loads(path.read_text())
@@ -213,14 +214,16 @@ def run_owned_browser_runtime(fixture_path):
         counters["liveConnections"] += 1
         return Live()
 
-    async def existing_container():
-        return container
+    history = ContainerDouble(partition_field="ownerKey")
+
+    async def existing_container(name):
+        return {"call-sessions": container, "text-conversations": history}[name]
 
     async def credential():
         return Credential()
 
-    runtime = TestRuntimeComposition(
-        options=TestRuntimeOptions(
+    runtime = ConversationRuntime(
+        options=RuntimeOptions(
             review_reference="owned-browser-fixture",
             management_endpoint="https://management.fixture.example",
             management_audience="11111111-1111-4111-8111-111111111111",
@@ -258,7 +261,7 @@ def run_owned_browser_runtime(fixture_path):
         text_transport=Text(),
         live_socket_factory=live_socket,
     )
-    application = create_app(test_runtime=runtime)
+    application = create_app(runtime=runtime)
     original_lifespan = application.router.lifespan_context
 
     @asynccontextmanager
@@ -274,7 +277,10 @@ def run_owned_browser_runtime(fixture_path):
     @application.get("/_test/runtime-status")
     async def status():
         return counters | {
-            "occupied": len(container.records.get("browser-test-authority-v1", {}).get("slots", []))
+            "occupied": len(
+                container.records.get("browser-test-authority-v1", {}).get("slots", [])
+            ),
+            "conversations": len(history.records),
         }
 
     @application.post("/_test/unknown-prepare/{enabled}")
@@ -308,10 +314,10 @@ def _reserve_browser_replica(state, lock, gate, results, publication, encoded_pe
     from azure.core import MatchConditions
     from azure.cosmos.exceptions import CosmosHttpResponseError
 
-    from caller_runtime.adapters.test_admission_repository import TestAdmissionRepository
+    from caller_runtime.adapters.admission_repository import TestAdmissionRepository
     from caller_runtime.domain.configuration import RevisionCache
     from caller_runtime.domain.conversation import StartPermit
-    from caller_runtime.services.test_admission import AdmissionError, TestAdmissionService
+    from caller_runtime.services.admission import AdmissionError, TestAdmissionService
 
     class Container:
         first = True
@@ -403,16 +409,16 @@ def reviewed_runtime_options():
     "region", ["eastus2", "centralus", "canadacentral", "swedencentral", "unreviewed-region"]
 )
 def test_runtime_region_allowlist_requires_independent_review(reviewed_runtime_options, region):
-    from caller_runtime.composition import TestRuntimeOptions
+    from caller_runtime.composition import RuntimeOptions
 
     document = reviewed_runtime_options | {"live_region": region}
     if region == "unreviewed-region":
         with pytest.raises(ValueError):
-            TestRuntimeOptions(**document)
+            RuntimeOptions(**document)
         return
-    assert TestRuntimeOptions(**document).live_region == region
+    assert RuntimeOptions(**document).live_region == region
     with pytest.raises(ValueError):
-        TestRuntimeOptions(**(document | {"region_reviewed": False}))
+        RuntimeOptions(**(document | {"region_reviewed": False}))
 
 
 @pytest.mark.parametrize(
@@ -448,15 +454,15 @@ def test_runtime_region_allowlist_requires_independent_review(reviewed_runtime_o
 def test_runtime_composition_rejects_unreviewed_binding_before_any_factory_call(
     reviewed_runtime_options, signed_test_permit, changes
 ):
-    from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
 
     public, sign, clock, assertion = signed_test_permit
     containers, credentials = AsyncMock(), AsyncMock()
     with pytest.raises(ValueError):
         options = (
-            None if changes is None else TestRuntimeOptions(**(reviewed_runtime_options | changes))
+            None if changes is None else RuntimeOptions(**(reviewed_runtime_options | changes))
         )
-        TestRuntimeComposition(
+        ConversationRuntime(
             options=options,
             owner_id="runtime-fixture-owner",
             container_factory=containers,
@@ -473,10 +479,10 @@ def test_runtime_composition_rejects_unreviewed_binding_before_any_factory_call(
 def test_composition_requires_explicit_structured_output_review_for_fragment_clarity(
     reviewed_runtime_options,
 ):
-    from caller_runtime.composition import TestRuntimeOptions
+    from caller_runtime.composition import RuntimeOptions
 
     with pytest.raises(ValueError):
-        TestRuntimeOptions(
+        RuntimeOptions(
             **(
                 reviewed_runtime_options
                 | {"text_features": frozenset({"streaming", "function_tools", "storage_disabled"})}
@@ -487,12 +493,12 @@ def test_composition_requires_explicit_structured_output_review_for_fragment_cla
 def test_reviewed_composition_construction_is_credential_free(
     reviewed_runtime_options, signed_test_permit
 ):
-    from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
 
     public, sign, clock, assertion = signed_test_permit
     containers, credentials = AsyncMock(), AsyncMock()
-    runtime = TestRuntimeComposition(
-        options=TestRuntimeOptions(**reviewed_runtime_options),
+    runtime = ConversationRuntime(
+        options=RuntimeOptions(**reviewed_runtime_options),
         owner_id="runtime-fixture-owner",
         container_factory=containers,
         credential_factory=credentials,
@@ -511,15 +517,15 @@ def test_composition_refuses_uninitialized_authority_before_credential_acquisiti
 ):
     import asyncio
 
-    from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
     from caller_runtime.observability import Telemetry
-    from caller_runtime.services.test_admission import AdmissionError
+    from caller_runtime.services.admission import AdmissionError
 
     public, sign, clock, assertion = signed_test_permit
     repository, container = authority_store
     containers, credentials = AsyncMock(return_value=container), AsyncMock()
-    runtime = TestRuntimeComposition(
-        options=TestRuntimeOptions(**reviewed_runtime_options),
+    runtime = ConversationRuntime(
+        options=RuntimeOptions(**reviewed_runtime_options),
         owner_id="runtime-fixture-owner",
         container_factory=containers,
         credential_factory=credentials,
@@ -556,7 +562,7 @@ def test_composition_owns_authenticated_refresh_without_model_or_default_identit
 
     import httpx
 
-    from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
     from caller_runtime.observability import Telemetry
 
     public, sign, clock, assertion = signed_test_permit
@@ -585,8 +591,8 @@ def test_composition_owns_authenticated_refresh_without_model_or_default_identit
         AsyncMock(return_value=container),
         AsyncMock(return_value=Credentials()),
     )
-    runtime = TestRuntimeComposition(
-        options=TestRuntimeOptions(**reviewed_runtime_options),
+    runtime = ConversationRuntime(
+        options=RuntimeOptions(**reviewed_runtime_options),
         owner_id="runtime-fixture-owner",
         container_factory=containers,
         credential_factory=credentials,
@@ -609,7 +615,10 @@ def test_composition_owns_authenticated_refresh_without_model_or_default_identit
         async with runtime.running(telemetry):
             assert runtime.cache.pin().revision_id == runtime_revision_v2()["id"]
             assert not runtime.active_sessions
-            containers.assert_awaited_once()
+            assert [call.args for call in containers.await_args_list] == [
+                ("call-sessions",),
+                ("text-conversations",),
+            ]
             credentials.assert_awaited_once()
             assert len(requests) == 1
             if retained_terminal:
@@ -633,11 +642,79 @@ def test_composition_owns_authenticated_refresh_without_model_or_default_identit
         telemetry.close()
 
 
+def test_composition_caches_the_history_probe_and_reports_failed_or_stale_results(
+    reviewed_runtime_options, signed_test_permit, admission_case, runtime_revision_v2
+):
+    import asyncio
+    import time
+
+    import httpx
+
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
+    from caller_runtime.observability import Telemetry
+
+    public, sign, clock, assertion = signed_test_permit
+    previous, repository, container, previous_clock, permit, previous_cache = admission_case
+    history = ContainerDouble(partition_field="ownerKey")
+
+    class Credentials:
+        async def get_token(self, scope):
+            return SimpleNamespace(token="synthetic-probe-token", expires_on=time.time() + 900)
+
+        async def close(self):
+            pass
+
+    async def configuration(request):
+        return httpx.Response(
+            200, json=runtime_revision_v2(), headers={"etag": '"current-fixture"'}
+        )
+
+    async def containers(name):
+        return {"call-sessions": container, "text-conversations": history}[name]
+
+    runtime = ConversationRuntime(
+        options=RuntimeOptions(**reviewed_runtime_options),
+        owner_id="runtime-fixture-owner",
+        container_factory=containers,
+        credential_factory=AsyncMock(return_value=Credentials()),
+        workload_identity=SimpleNamespace(require_runtime=AsyncMock()),
+        verification_keys={"manager-fixture-key": public},
+        utc_now=clock.utc_now,
+        monotonic=clock.monotonic,
+        configuration_transport=httpx.MockTransport(configuration),
+    )
+    telemetry = Telemetry("caller-runtime", "local")
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        assert not runtime.history_ready()
+        async with runtime.running(telemetry):
+            await runtime.probe_history()
+            assert runtime.history_ready()
+            reads = len(history.calls)
+            assert runtime.history_ready() and len(history.calls) == reads
+            clock.advance(31)
+            assert not runtime.history_ready()
+            history.failure = 503
+            await runtime.probe_history()
+            assert not runtime.history_ready()
+            history.failure = None
+            await runtime.probe_history()
+            assert runtime.history_ready()
+        assert all(call[0] == "read" for call in history.calls)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        telemetry.close()
+
+
 @pytest.mark.parametrize(
     "outcome",
     ["ready", "stale", "late", "unknown", "unsupported_deployment", "construction", "publication"],
 )
-@pytest.mark.parametrize("mode", ["text", "speech"])
 def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanup(
     reviewed_runtime_options,
     signed_test_permit,
@@ -645,7 +722,6 @@ def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanu
     text_execution_case,
     runtime_revision_v2,
     live_case,
-    mode,
     outcome,
     monkeypatch,
 ):
@@ -654,14 +730,15 @@ def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanu
 
     import httpx
 
-    from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
     from caller_runtime.observability import Telemetry
-    from caller_runtime.services.test_admission import AdmissionError
+    from caller_runtime.services.admission import AdmissionError
 
     public, sign, clock, assertion = signed_test_permit
     old_service, repository, container, controlled_clock, permit, cache = admission_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
     live_service, live_repository, live_clock, socket, opened = live_case
+    mode = "speech"
     sockets, disposed = [], []
     publication = [1]
     controls["prepare"] = True
@@ -692,13 +769,13 @@ def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanu
         sockets.append(fresh)
         return fresh
 
-    options = TestRuntimeOptions(
+    options = RuntimeOptions(
         **(
             reviewed_runtime_options
             | {"manager_issuer": assertion.issuer, "manager_audience": assertion.audience}
         )
     )
-    runtime = TestRuntimeComposition(
+    runtime = ConversationRuntime(
         options=options,
         owner_id="runtime-fixture-owner",
         container_factory=AsyncMock(return_value=container),
@@ -789,13 +866,13 @@ def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanu
 def test_app_mounts_browser_runtime_only_when_reviewed_composition_is_explicit(
     reviewed_runtime_options, signed_test_permit
 ):
-    from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
     from caller_runtime.main import create_app
 
     public, sign, clock, assertion = signed_test_permit
     containers, credentials = AsyncMock(), AsyncMock()
-    runtime = TestRuntimeComposition(
-        options=TestRuntimeOptions(**reviewed_runtime_options),
+    runtime = ConversationRuntime(
+        options=RuntimeOptions(**reviewed_runtime_options),
         owner_id="runtime-fixture-owner",
         container_factory=containers,
         credential_factory=credentials,
@@ -807,23 +884,21 @@ def test_app_mounts_browser_runtime_only_when_reviewed_composition_is_explicit(
         monotonic=clock.monotonic,
     )
     plain = create_app()
-    explicit = create_app(test_runtime=runtime)
-    assert "/v1/internal/test-sessions" not in {
-        getattr(route, "path", "") for route in plain.routes
-    }
+    explicit = create_app(runtime=runtime)
+    assert "/v1/conversations/voice" not in {getattr(route, "path", "") for route in plain.routes}
     with TestClient(explicit).websocket_connect(
         SOCKET_URL,
-        subprotocols=["caller.test.v1"],
+        subprotocols=["caller.voice.v1"],
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
-        assert socket.accepted_subprotocol == "caller.test.v1"
+        assert socket.accepted_subprotocol == "caller.voice.v1"
         socket.close()
-    assert explicit.state.test_runtime is runtime
+    assert explicit.state.runtime is runtime
     containers.assert_not_called()
     credentials.assert_not_called()
 
 
-def test_app_lifespan_owns_reviewed_runtime_and_fixed_signed_permit_socket(
+def test_app_lifespan_owns_reviewed_runtime_and_serves_a_signed_text_turn(
     reviewed_runtime_options,
     signed_test_permit,
     admission_case,
@@ -835,13 +910,13 @@ def test_app_lifespan_owns_reviewed_runtime_and_fixed_signed_permit_socket(
 
     import httpx
 
-    from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
     from caller_runtime.main import create_app
 
     public, sign, clock, assertion = signed_test_permit
     old_service, repository, container, controlled_clock, permit, cache = admission_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
-    controls["prepare"] = True
+    history = ContainerDouble(partition_field="ownerKey")
     disposed = []
 
     class Credentials:
@@ -858,16 +933,19 @@ def test_app_lifespan_owns_reviewed_runtime_and_fixed_signed_permit_socket(
             200, json=runtime_revision_v2(), headers={"etag": '"current-fixture"'}
         )
 
-    options = TestRuntimeOptions(
+    async def containers(name):
+        return {"call-sessions": container, "text-conversations": history}[name]
+
+    options = RuntimeOptions(
         **(
             reviewed_runtime_options
             | {"manager_issuer": assertion.issuer, "manager_audience": assertion.audience}
         )
     )
-    runtime = TestRuntimeComposition(
+    runtime = ConversationRuntime(
         options=options,
         owner_id="runtime-fixture-owner",
-        container_factory=AsyncMock(return_value=container),
+        container_factory=containers,
         credential_factory=AsyncMock(return_value=Credentials()),
         workload_identity=SimpleNamespace(
             require_runtime=AsyncMock(return_value="management-workload-fixture")
@@ -885,33 +963,36 @@ def test_app_lifespan_owns_reviewed_runtime_and_fixed_signed_permit_socket(
         )
 
     asyncio.run(initialize())
-    with TestClient(create_app(test_runtime=runtime)) as client:
-        with client.websocket_connect(
-            SOCKET_URL,
-            subprotocols=["caller.test.v1"],
+    with TestClient(
+        create_app(runtime=runtime), base_url="https://runtime.fixture.example"
+    ) as client:
+        response = client.post(
+            "/v1/conversations/text",
             headers={"Authorization": "Bearer synthetic-management-workload"},
-        ) as socket:
-            socket.send_json(
-                {"type": "authenticate", "permit": sign(), "requestId": assertion.request_id}
-            )
-            ready = socket.receive_json()
-            assert ready["type"] == "ready" and ready["mode"] == "text"
-            assert len(requests) == 1 and ready["agentId"] == "welcome"
-            socket.send_json({"type": "stop", "sequence": 1, "sessionId": ready["sessionId"]})
-            ended = socket.receive_json()
-            assert ended["type"] == "ended" and ended["cleanupStatus"] == "complete"
+            json={
+                "permit": sign(),
+                "requestId": assertion.request_id,
+                "text": "Synthetic lifespan question",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = parse_sse(response.text)
+        assert [kind for kind, _ in events][0] == "conversation"
+        assert events[-1][0] == "text.completed"
+        assert len(requests) == 1
+        stored = list(history.records.values())
+        assert len(stored) == 1 and stored[0]["ownerKey"] == assertion.actor_key
+        assert stored[0]["ttl"] == 2_592_000
     assert disposed == [True] and not runtime.active_sessions
 
 
 @pytest.fixture
-def owned_text_socket(text_execution_case, admission_case, live_case):
-    from caller_runtime.api.test_sessions import create_router
+def owned_voice_socket(text_execution_case, admission_case, live_case):
+    from caller_runtime.api.voice import create_router
     from caller_runtime.observability import Telemetry
-    from caller_runtime.services.conversation import (
-        ConversationExecutor,
-        ConversationPolicy,
-        SpeechSegments,
-    )
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
     admission, repository, container, clock, permit, cache = admission_case
@@ -933,7 +1014,7 @@ def owned_text_socket(text_execution_case, admission_case, live_case):
     class Service:
         calls = 0
         controller = None
-        mode = "text"
+        mode = "speech"
         segment = None
         provider_socket = None
 
@@ -1084,7 +1165,7 @@ def owned_tls_listener(application, tmp_path):
         assert entered.wait(10) and server.started and not failures
         context = ssl.create_default_context(cafile=str(certificate_path))
         assert context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED
-        yield "wss://127.0.0.1:" + str(port) + "/v1/internal/test-sessions", context
+        yield "wss://127.0.0.1:" + str(port) + "/v1/conversations/voice", context
     finally:
         server.should_exit = True
         thread.join(12)
@@ -1096,10 +1177,23 @@ def owned_tls_listener(application, tmp_path):
 
 
 @pytest.fixture
-def owned_tls_runtime(owned_text_socket, tmp_path):
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
+def owned_tls_runtime(owned_voice_socket, tmp_path):
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     with owned_tls_listener(client.app, tmp_path) as (url, context):
         yield url, context, service, requests, assertion
+
+
+def refusal(socket):
+    """Read until the connection closes and return its `error` message and close code."""
+    error = None
+    with pytest.raises(WebSocketDisconnect) as failure:
+        while True:
+            event = socket.receive_json()
+            if event["type"] == "error":
+                error = event
+            else:
+                assert event["type"] == "audio.credit"
+    return error, failure.value.code
 
 
 def authenticate(socket, assertion):
@@ -1113,87 +1207,63 @@ def authenticate(socket, assertion):
     return socket.receive_json()
 
 
-def test_owned_socket_streams_bounded_text_and_acknowledges_duplicate_without_replay(
-    owned_text_socket,
-):
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
-    with client.websocket_connect(
-        SOCKET_URL,
-        subprotocols=["caller.test.v1"],
-        headers={"Authorization": "Bearer synthetic-management-workload"},
-    ) as socket:
-        ready = authenticate(socket, assertion)
-        assert ready["type"] == "ready" and ready["mode"] == "text"
-        assert ready["revisionId"] == service.controller.policy.slot.revision_id
-        command = {
-            "type": "text.submit",
-            "sequence": 1,
-            "sessionId": ready["sessionId"],
-            "text": "Synthetic owned socket question",
-        }
-        socket.send_json(command)
-        events = []
-        while not events or events[-1]["type"] != "text.completed":
-            events.append(socket.receive_json())
-        assert (
-            "".join(event["text"] for event in events if event["type"] == "text.delta")
-            == "Synthetic shared streamed reply"
-        )
-        socket.send_json(command)
-        ack = socket.receive_json()
-        assert ack["type"] == "command.ack" and ack["acceptedSequence"] == 1
-        assert len(requests) == service.calls == 1
-        socket.send_json({"type": "stop", "sequence": 2, "sessionId": ready["sessionId"]})
-        assert socket.receive_json()["type"] == "ended"
-        with pytest.raises(WebSocketDisconnect) as failure:
-            socket.receive_json()
-        assert failure.value.code == 1000
-
-
 @pytest.mark.parametrize(
-    "fault,close_code", [("unknown-control", 1008), ("oversized", 1009), ("binary-text-mode", 1008)]
+    "fault,close_code,reason",
+    [
+        ("unknown-control", 4400, "invalid_message"),
+        ("text-submit", 4400, "invalid_message"),
+        ("oversized", 4413, "control_limit"),
+    ],
 )
 def test_owned_socket_rejects_bad_frames_without_model_dispatch(
-    owned_text_socket, fault, close_code
+    owned_voice_socket, fault, close_code, reason
 ):
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     with client.websocket_connect(
         SOCKET_URL,
-        subprotocols=["caller.test.v1"],
+        subprotocols=["caller.voice.v1"],
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
-        if fault == "binary-text-mode":
-            socket.send_bytes(b"\x01" + b"\0" * 10)
+        if fault == "text-submit":
+            socket.send_json(
+                {
+                    "type": "text.submit",
+                    "sequence": 1,
+                    "sessionId": ready["sessionId"],
+                    "text": "Voice sessions carry speech only",
+                }
+            )
         elif fault == "oversized":
             socket.send_text("x" * 8193)
         else:
             socket.send_json(
                 {"type": "provider.override", "sequence": 1, "sessionId": ready["sessionId"]}
             )
-        with pytest.raises(WebSocketDisconnect) as failure:
-            socket.receive_json()
-        assert failure.value.code == close_code
+        error, code = refusal(socket)
+        assert code == close_code
+        assert error["code"] == {4400: "invalid_request", 4413: "limit_exceeded"}[code]
+        assert error["reason"] == reason
         assert not requests
 
 
-def test_plaintext_socket_is_rejected_before_any_admission(owned_text_socket):
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
+def test_plaintext_socket_is_rejected_before_any_admission(owned_voice_socket):
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(
-            "ws://runtime.fixture.example/v1/internal/test-sessions",
-            subprotocols=["caller.test.v1"],
+            "ws://runtime.fixture.example/v1/conversations/voice",
+            subprotocols=["caller.voice.v1"],
             headers={"Authorization": "Bearer synthetic-management-workload"},
         ):
             pytest.fail("plaintext_test_socket_admitted")
     assert service.calls == 0 and not requests
 
 
-def test_owned_socket_rejects_expired_session_even_for_heartbeat(owned_text_socket):
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
+def test_owned_socket_rejects_expired_session_even_for_heartbeat(owned_voice_socket):
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     with client.websocket_connect(
         SOCKET_URL,
-        subprotocols=["caller.test.v1"],
+        subprotocols=["caller.voice.v1"],
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
@@ -1206,15 +1276,14 @@ def test_owned_socket_rejects_expired_session_even_for_heartbeat(owned_text_sock
                 "nonce": "liveness-only",
             }
         )
-        with pytest.raises(WebSocketDisconnect) as failure:
-            socket.receive_json()
-        assert failure.value.code == 1008 and not requests
+        error, code = refusal(socket)
+        assert code == 4401 and error["reason"] == "session_expired" and not requests
 
 
 def test_owned_socket_runs_independent_authority_watch_and_ends_on_control_loss(
-    owned_text_socket, admission_case, monkeypatch
+    owned_voice_socket, admission_case, monkeypatch
 ):
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     admission, repository, container, controlled_clock, permit, cache = admission_case
     calls = []
 
@@ -1225,7 +1294,7 @@ def test_owned_socket_runs_independent_authority_watch_and_ends_on_control_loss(
     monkeypatch.setattr(admission, "watch", lost_authority)
     with client.websocket_connect(
         SOCKET_URL,
-        subprotocols=["caller.test.v1"],
+        subprotocols=["caller.voice.v1"],
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
@@ -1237,23 +1306,21 @@ def test_owned_socket_runs_independent_authority_watch_and_ends_on_control_loss(
                 "nonce": "transport-only",
             }
         )
-        with pytest.raises(WebSocketDisconnect) as failure:
-            socket.receive_json()
-        assert failure.value.code == 1008 and calls == [ready["sessionId"]]
-        assert not requests
+        error, code = refusal(socket)
+        assert code == 4403 and error["reason"] == "session_terminal", error
+        assert calls == [ready["sessionId"]] and not requests
 
 
 def test_owned_speech_socket_exchanges_credited_pcm_mute_and_stop_without_text_model(
-    owned_text_socket,
+    owned_voice_socket,
 ):
     import base64
     import struct
 
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
-    service.mode = "speech"
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     with client.websocket_connect(
         SOCKET_URL,
-        subprotocols=["caller.test.v1"],
+        subprotocols=["caller.voice.v1"],
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
@@ -1292,17 +1359,16 @@ def test_owned_speech_socket_exchanges_credited_pcm_mute_and_stop_without_text_m
 
 
 def test_owned_speech_socket_writes_actual_pcm_and_accepts_only_sent_played_sequence(
-    owned_text_socket,
+    owned_voice_socket,
 ):
     import base64
     import json
     import struct
 
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
-    service.mode = "speech"
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     with client.websocket_connect(
         SOCKET_URL,
-        subprotocols=["caller.test.v1"],
+        subprotocols=["caller.voice.v1"],
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
@@ -1353,19 +1419,23 @@ def test_owned_speech_socket_writes_actual_pcm_and_accepts_only_sent_played_sequ
 
 
 @pytest.mark.parametrize(
-    "fault,close_code",
-    [("odd", 1008), ("oversized", 1009), ("sequence", 1008), ("unsent-ack", 1008)],
+    "fault,close_code,reason",
+    [
+        ("odd", 4400, "invalid_audio"),
+        ("oversized", 4413, "frame_limit"),
+        ("sequence", 4400, "invalid_audio"),
+        ("unsent-ack", 4400, "invalid_audio"),
+    ],
 )
 def test_owned_speech_socket_rejects_malformed_pcm_and_forged_played_ack(
-    owned_text_socket, fault, close_code
+    owned_voice_socket, fault, close_code, reason
 ):
     import struct
 
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
-    service.mode = "speech"
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     with client.websocket_connect(
         SOCKET_URL,
-        subprotocols=["caller.test.v1"],
+        subprotocols=["caller.voice.v1"],
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
@@ -1385,27 +1455,23 @@ def test_owned_speech_socket_rejects_malformed_pcm_and_forged_played_ack(
             socket.send_bytes(
                 struct.pack(">BII", 1, ready["generation"], 2 if fault == "sequence" else 1) + pcm
             )
-        with pytest.raises(WebSocketDisconnect) as failure:
-            while True:
-                event = socket.receive_json()
-                assert event["type"] == "audio.credit"
-        assert failure.value.code == close_code and not requests
+        error, code = refusal(socket)
+        assert code == close_code and error["reason"] == reason and not requests
 
 
 @pytest.mark.parametrize("clear", [False, True])
 def test_owned_speech_correlates_verified_fragments_then_uses_shared_clarity_and_reasoning(
-    owned_text_socket, monkeypatch, clear
+    owned_voice_socket, monkeypatch, clear
 ):
     import asyncio
     import json
     import struct
 
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
-    service.mode = "speech"
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     service.controls["clarity"] = clear
     with client.websocket_connect(
         SOCKET_URL,
-        subprotocols=["caller.test.v1"],
+        subprotocols=["caller.voice.v1"],
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
@@ -1476,13 +1542,12 @@ def test_owned_speech_correlates_verified_fragments_then_uses_shared_clarity_and
 
 
 def test_owned_speech_interrupt_retires_socket_once_and_acknowledges_duplicate(
-    owned_text_socket, monkeypatch
+    owned_voice_socket, monkeypatch
 ):
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
-    service.mode = "speech"
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     with client.websocket_connect(
         SOCKET_URL,
-        subprotocols=["caller.test.v1"],
+        subprotocols=["caller.voice.v1"],
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
@@ -1524,11 +1589,11 @@ def test_owned_speech_interrupt_retires_socket_once_and_acknowledges_duplicate(
         assert created[0].closed == 1 and not requests
 
 
-def test_owned_socket_limits_verified_pre_auth_to_two_per_stable_actor(owned_text_socket):
+def test_owned_socket_limits_verified_pre_auth_to_two_per_stable_actor(owned_voice_socket):
     import asyncio
     from contextlib import ExitStack
 
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     service.controls.update(
         block_admission=True, two_admissions=asyncio.Event(), release_admissions=asyncio.Event()
     )
@@ -1537,7 +1602,7 @@ def test_owned_socket_limits_verified_pre_auth_to_two_per_stable_actor(owned_tex
             stack.enter_context(
                 client.websocket_connect(
                     SOCKET_URL,
-                    subprotocols=["caller.test.v1"],
+                    subprotocols=["caller.voice.v1"],
                     headers={"Authorization": "Bearer synthetic-management-workload"},
                 )
             )
@@ -1561,7 +1626,7 @@ def test_owned_socket_limits_verified_pre_auth_to_two_per_stable_actor(owned_tex
             third = stack.enter_context(
                 client.websocket_connect(
                     SOCKET_URL,
-                    subprotocols=["caller.test.v1"],
+                    subprotocols=["caller.voice.v1"],
                     headers={"Authorization": "Bearer synthetic-management-workload"},
                 )
             )
@@ -1572,70 +1637,74 @@ def test_owned_socket_limits_verified_pre_auth_to_two_per_stable_actor(owned_tex
                     "requestId": assertion.request_id,
                 }
             )
-            with pytest.raises(WebSocketDisconnect) as failure:
-                third.receive_json()
-            assert failure.value.code == 1013 and service.calls == 2
-            assert not requests
+            error, code = refusal(third)
+            assert code == 4503 and error["code"] == "capacity_unavailable"
+            assert service.calls == 2 and not requests
         finally:
             client.portal.call(service.controls["release_admissions"].set)
             admitted = 0
             for pending in sockets:
-                try:
-                    ready = pending.receive_json()
-                except WebSocketDisconnect as rejected:
-                    assert rejected.code == 1013
+                ready = pending.receive_json()
+                if ready["type"] == "error":
+                    assert ready["code"] == "unauthorized" and ready["reason"] == "permit_replayed"
+                    with pytest.raises(WebSocketDisconnect) as rejected:
+                        pending.receive_json()
+                    assert rejected.value.code == 4401
                     continue
                 assert ready["type"] == "ready"
                 admitted += 1
                 pending.send_json({"type": "stop", "sequence": 1, "sessionId": ready["sessionId"]})
-                assert pending.receive_json()["type"] == "ended"
+                while pending.receive_json()["type"] != "ended":
+                    pass
                 with pytest.raises(WebSocketDisconnect) as stopped:
                     pending.receive_json()
                 assert stopped.value.code == 1000
             assert admitted == 1
 
 
-def test_owned_socket_limits_unverified_connections_to_ten_before_allocation(owned_text_socket):
+def test_owned_socket_limits_unverified_connections_to_ten_before_allocation(owned_voice_socket):
     from contextlib import ExitStack
 
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     with ExitStack() as stack:
         for _ in range(10):
             stack.enter_context(
                 client.websocket_connect(
                     SOCKET_URL,
-                    subprotocols=["caller.test.v1"],
+                    subprotocols=["caller.voice.v1"],
                     headers={"Authorization": "Bearer synthetic-management-workload"},
                 )
             )
         with pytest.raises(WebSocketDisconnect) as failure:
             with client.websocket_connect(
                 SOCKET_URL,
-                subprotocols=["caller.test.v1"],
+                subprotocols=["caller.voice.v1"],
                 headers={"Authorization": "Bearer synthetic-management-workload"},
             ):
                 pytest.fail("eleventh_pre_auth_socket_admitted")
-        assert failure.value.code == 1013 and service.calls == 0 and not requests
+        assert failure.value.code == 4503 and service.calls == 0 and not requests
 
 
 @pytest.mark.parametrize("missing", [False, True])
 def test_workload_identity_must_return_verified_principal_before_upgrade(
-    owned_text_socket, missing
+    owned_voice_socket, missing
 ):
-    client, service, requests, clock, assertion, telemetry = owned_text_socket
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
     service.controls["identity_none"] = not missing
     with pytest.raises(WebSocketDisconnect) as failure:
         with client.websocket_connect(
             SOCKET_URL,
-            subprotocols=["caller.test.v1"],
+            subprotocols=["caller.voice.v1"],
             headers={} if missing else {"Authorization": "Bearer synthetic-management-workload"},
         ):
             pytest.fail("unverified_workload_socket_upgraded")
-    assert failure.value.code == 1008 and service.calls == 0 and not requests
+    assert failure.value.code == 4401 and service.calls == 0 and not requests
     assert "synthetic-private" not in repr(telemetry.events)
 
 
-def test_owned_tls_socket_requires_trusted_ca_and_streams_without_cloud(owned_tls_runtime):
+def test_owned_tls_socket_requires_trusted_ca_and_opens_a_speech_session_without_cloud(
+    owned_tls_runtime,
+):
     import asyncio
     import json
     import ssl
@@ -1655,7 +1724,7 @@ def test_owned_tls_socket_requires_trusted_ca_and_streams_without_cloud(owned_tl
             proxy=None,
             compression=None,
             open_timeout=3,
-            subprotocols=["caller.test.v1"],
+            subprotocols=["caller.voice.v1"],
             additional_headers={"Authorization": "Bearer synthetic-management-workload"},
             max_size=8192,
             max_queue=1,
@@ -1671,42 +1740,27 @@ def test_owned_tls_socket_requires_trusted_ca_and_streams_without_cloud(owned_tl
                 )
             )
             ready = json.loads(await asyncio.wait_for(socket.recv(), 3))
-            assert ready["type"] == "ready" and ready["mode"] == "text"
+            assert ready["type"] == "ready" and ready["mode"] == "speech"
+            assert json.loads(await asyncio.wait_for(socket.recv(), 3))["type"] == "audio.credit"
             await socket.send(
-                json.dumps(
-                    {
-                        "type": "text.submit",
-                        "sequence": 1,
-                        "sessionId": ready["sessionId"],
-                        "text": "Synthetic actual TLS question",
-                    }
-                )
+                json.dumps({"type": "stop", "sequence": 1, "sessionId": ready["sessionId"]})
             )
-            output = []
             while True:
-                event = json.loads(await asyncio.wait_for(socket.recv(), 3))
-                if event["type"] == "text.delta":
-                    output.append(event["text"])
-                if event["type"] == "text.completed":
+                ended = json.loads(await asyncio.wait_for(socket.recv(), 3))
+                if ended["type"] == "ended":
                     break
-            assert "".join(output) == "Synthetic shared streamed reply" and len(requests) == 1
-            await socket.send(
-                json.dumps({"type": "stop", "sequence": 2, "sessionId": ready["sessionId"]})
-            )
-            ended = json.loads(await asyncio.wait_for(socket.recv(), 3))
-            assert ended["type"] == "ended" and ended["cleanupStatus"] == "pending"
+            assert ended["cleanupStatus"] in {"pending", "complete"} and not requests
         assert service.controller.retained_bytes == 0
 
     asyncio.run(scenario())
 
 
-def test_owned_tls_twenty_publications_new_starts_preserve_pin_and_current_revocation(
+def test_twenty_publications_new_starts_preserve_pin_and_current_revocation(
     reviewed_runtime_options,
     signed_test_permit,
     admission_case,
     text_execution_case,
     runtime_revision_v2,
-    tmp_path,
 ):
     import asyncio
     import hashlib
@@ -1714,11 +1768,9 @@ def test_owned_tls_twenty_publications_new_starts_preserve_pin_and_current_revoc
     import time
 
     import httpx
-    from websockets.asyncio.client import connect
-    from websockets.exceptions import ConnectionClosed
 
-    from caller_runtime.composition import TestRuntimeComposition, TestRuntimeOptions
-    from caller_runtime.main import create_app
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
+    from caller_runtime.observability import Telemetry
 
     public, sign, clock, assertion = signed_test_permit
     old_service, repository, container, controlled_clock, permit, cache = admission_case
@@ -1756,13 +1808,13 @@ def test_owned_tls_twenty_publications_new_starts_preserve_pin_and_current_revoc
         )
 
     asyncio.run(initialize())
-    options = TestRuntimeOptions(
+    options = RuntimeOptions(
         **(
             reviewed_runtime_options
             | {"manager_issuer": assertion.issuer, "manager_audience": assertion.audience}
         )
     )
-    runtime = TestRuntimeComposition(
+    runtime = ConversationRuntime(
         options=options,
         owner_id="runtime-publication-owner",
         container_factory=AsyncMock(return_value=container),
@@ -1778,115 +1830,52 @@ def test_owned_tls_twenty_publications_new_starts_preserve_pin_and_current_revoc
         text_transport=adapter._transport,
     )
 
-    with owned_tls_listener(create_app(test_runtime=runtime), tmp_path) as (url, context):
+    telemetry = Telemetry("caller-runtime", "local")
 
-        async def open_session(number):
-            socket = await connect(
-                url,
-                ssl=context,
-                proxy=None,
-                compression=None,
-                max_size=8192,
-                max_queue=1,
-                write_limit=12000,
-                open_timeout=3,
-                subprotocols=["caller.test.v1"],
-                additional_headers={"Authorization": "Bearer synthetic-management-workload"},
+    async def scenario():
+        async with runtime.running(telemetry):
+            original = await runtime.start(permit(1, actor="manager-1"), emit=emit)
+            pinned = original.policy.slot
+            started = time.monotonic()
+            for number in range(2, 22):
+                publication[0] = number
+                current = await runtime.start(permit(number, actor=f"manager-{number}"), emit=emit)
+                assert current.policy.slot.revision_id == runtime_revision_v2(number)["id"]
+                assert current.policy.slot.revision_id != pinned.revision_id
+                assert pinned.revision_id == runtime_revision_v2(1)["id"]
+                assert await current.close()
+            assert time.monotonic() - started < 60
+            controls["wire_actions"] = [
+                ("enter_routing", {}),
+                ("route_community", {"community_id": "beta"}),
+            ]
+            first_generation = original.policy.slot.generation
+            await original.submit_text("text-1", "Synthetic original pinned request")
+            while await original.process_next(emit=emit):
+                pass
+            assert messages[-1]["type"] == "text.completed"
+            assert messages[-1]["generation"] > first_generation
+            revoked[0] = True
+            assert original.policy.active_agent_id == "b-entry", controls.get(
+                "wire_action_observations"
             )
-            changes = {
-                "actorId": "manager-" + str(number),
-                "requestId": "request-" + str(number),
-                "nonce": f"{number:064x}",
-                "managementSessionDigest": f"{number:064x}",
-            }
-            await socket.send(
-                json.dumps(
-                    {
-                        "type": "authenticate",
-                        "permit": sign(changes),
-                        "requestId": changes["requestId"],
-                    }
-                )
-            )
-            ready = json.loads(await asyncio.wait_for(socket.recv(), 3))
-            assert ready["type"] == "ready"
-            return socket, ready
+            assert controls["wire_actions"] == []
+            public_name = "public_" + hashlib.sha256(b"beta-tool:public-lookup").hexdigest()[:32]
+            controls["wire_actions"] = [(public_name, {"inputs": {}})]
+            count = len(messages)
+            await original.submit_text("text-2", "Synthetic revoked capability proposal")
+            while await original.process_next(emit=emit):
+                pass
+            assert messages[count:][-1]["type"] == "error"
+            assert all(message["type"] != "text.completed" for message in messages[count:])
+            assert len(capability_attempts) == 1
+            assert original.policy.slot.revision_id == runtime_revision_v2(1)["id"]
+            assert await original.close()
 
-        async def stop(socket, ready):
-            await socket.send(
-                json.dumps({"type": "stop", "sequence": 1, "sessionId": ready["sessionId"]})
-            )
-            ended = json.loads(await asyncio.wait_for(socket.recv(), 3))
-            assert ended["type"] == "ended" and ended["cleanupStatus"] == "complete"
-            await socket.close()
-
-        async def scenario():
-            original, pinned = await open_session(1)
-            try:
-                started = time.monotonic()
-                for number in range(2, 22):
-                    publication[0] = number
-                    current, ready = await open_session(number)
-                    assert ready["revisionId"] == runtime_revision_v2(number)["id"]
-                    assert ready["revisionNumber"] == number
-                    assert pinned["revisionId"] == runtime_revision_v2(1)["id"]
-                    await stop(current, ready)
-                assert time.monotonic() - started < 60
-                controls["wire_actions"] = [
-                    ("enter_routing", {}),
-                    ("route_community", {"community_id": "beta"}),
-                ]
-                await original.send(
-                    json.dumps(
-                        {
-                            "type": "text.submit",
-                            "sequence": 1,
-                            "sessionId": pinned["sessionId"],
-                            "text": "Synthetic original pinned request",
-                        }
-                    )
-                )
-                while True:
-                    event = json.loads(await asyncio.wait_for(original.recv(), 3))
-                    if event["type"] == "text.completed":
-                        assert event["generation"] > pinned["generation"]
-                        break
-                revoked[0] = True
-                assert runtime._sessions[pinned["sessionId"]].policy.active_agent_id == "b-entry", (
-                    controls.get("wire_action_observations")
-                )
-                assert controls["wire_actions"] == []
-                public_name = (
-                    "public_" + hashlib.sha256(b"beta-tool:public-lookup").hexdigest()[:32]
-                )
-                controls["wire_actions"] = [(public_name, {"inputs": {}})]
-                await original.send(
-                    json.dumps(
-                        {
-                            "type": "text.submit",
-                            "sequence": 2,
-                            "sessionId": pinned["sessionId"],
-                            "text": "Synthetic revoked capability proposal",
-                        }
-                    )
-                )
-                try:
-                    while True:
-                        event = json.loads(await asyncio.wait_for(original.recv(), 3))
-                        assert event["type"] != "text.completed"
-                        if event["type"] == "error":
-                            break
-                except ConnectionClosed:
-                    pass
-                assert len(capability_attempts) == 1
-                assert (
-                    runtime._sessions[pinned["sessionId"]].policy.slot.revision_id
-                    == runtime_revision_v2(1)["id"]
-                )
-            finally:
-                await original.close()
-
+    try:
         asyncio.run(scenario())
+    finally:
+        telemetry.close()
     assert credentials_closed == [True] and not runtime.active_sessions
 
 
@@ -1968,7 +1957,6 @@ def test_owned_tls_speech_pressure_and_retired_audio_never_relabel(
     from websockets.exceptions import ConnectionClosed
 
     url, context, service, requests, assertion = owned_tls_runtime
-    service.mode = "speech"
 
     async def inject(socket, pcm):
         raw = json.dumps(
@@ -1993,7 +1981,7 @@ def test_owned_tls_speech_pressure_and_retired_audio_never_relabel(
             max_queue=1,
             write_limit=12000,
             open_timeout=3,
-            subprotocols=["caller.test.v1"],
+            subprotocols=["caller.voice.v1"],
             additional_headers={"Authorization": "Bearer synthetic-management-workload"},
         ) as socket:
             await socket.send(
@@ -2023,7 +2011,7 @@ def test_owned_tls_speech_pressure_and_retired_audio_never_relabel(
                     while True:
                         message = await asyncio.wait_for(socket.recv(), 3)
                         assert not isinstance(message, bytes)
-                assert failure.value.rcvd.code == 1013
+                assert failure.value.rcvd.code == 4413
             else:
                 old = service.provider_socket
                 created = []
@@ -2080,13 +2068,13 @@ def test_default_runtime_has_no_ambient_browser_conversation_socket():
     with TestClient(create_app()) as client:
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(
-                "/v1/internal/test-sessions", subprotocols=["caller.test.v1"]
+                "/v1/conversations/voice", subprotocols=["caller.voice.v1"]
             ):
                 pytest.fail("default_runtime_allocated_test_socket")
 
 
 def test_owned_socket_rejects_unverified_permit_before_admission():
-    from caller_runtime.api.test_sessions import create_router
+    from caller_runtime.api.voice import create_router
     from caller_runtime.observability import Telemetry
 
     class Identity:
@@ -2121,7 +2109,7 @@ def test_owned_socket_rejects_unverified_permit_before_admission():
         with TestClient(application) as client:
             with client.websocket_connect(
                 SOCKET_URL,
-                subprotocols=["caller.test.v1"],
+                subprotocols=["caller.voice.v1"],
                 headers={"Authorization": "Bearer synthetic-management-workload"},
             ) as socket:
                 socket.send_json(
@@ -2131,9 +2119,15 @@ def test_owned_socket_rejects_unverified_permit_before_admission():
                         "requestId": "request-fixture",
                     }
                 )
+                error = socket.receive_json()
+                assert error == {
+                    "type": "error",
+                    "code": "unauthorized",
+                    "reason": "permit_invalid",
+                }
                 with pytest.raises(WebSocketDisconnect) as failure:
                     socket.receive_json()
-                assert failure.value.code == 1008
+                assert failure.value.code == 4401
                 assert "synthetic-private" not in failure.value.reason
         service.start.assert_not_awaited()
         assert identity.calls == permits.calls == 1

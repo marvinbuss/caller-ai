@@ -13,11 +13,11 @@ from uuid import UUID, uuid4
 import httpx
 from jsonschema import Draft202012Validator
 
-from caller_runtime.adapters.azure_realtime import CredentialPort
-from caller_runtime.adapters.configuration_client import unique_object
+from caller_runtime.adapters.strict_json import unique_object
 from caller_runtime.domain.configuration import RevisionSnapshot
 from caller_runtime.domain.conversation import AttemptIntent, TestSlot, WorkBudget
-from caller_runtime.services.test_admission import SettlementObserver, TestAdmissionService
+from caller_runtime.domain.ports import CredentialPort
+from caller_runtime.services.admission import SettlementObserver, TestAdmissionService
 
 
 def reject_constant(value: str) -> Any:

@@ -86,7 +86,7 @@ class TicketResponse(TestMetadata):
     permit: str = Field(min_length=1, max_length=6144, repr=False)
     mode: Mode
     request_id: Identifier = Field(alias="requestId")
-    socket_path: Literal["/v1/test-sessions"] = Field(alias="socketPath")
+    socket_path: Literal["/v1/console/sessions"] = Field(alias="socketPath")
     expires_at: AwareTime = Field(alias="expiresAt")
     admission_deadline_utc: AwareTime = Field(alias="admissionDeadlineUtc")
 

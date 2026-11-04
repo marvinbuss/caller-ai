@@ -14,6 +14,15 @@ import pytest
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Keep Playwright's session greenlet after ordinary asyncio.run-based checks."""
     items.sort(key=lambda item: item.get_closest_marker("browser") is not None)
+    for item in items:
+        parts = item.path.parts
+        # The quick tier is unit and contract tests that build no frontend and start no host.
+        if (
+            ("unit" in parts or "contract" in parts)
+            and item.get_closest_marker("browser") is None
+            and "editor_host_factory" not in item.fixturenames
+        ):
+            item.add_marker(pytest.mark.quick)
 
 
 @pytest.fixture(name="validator")

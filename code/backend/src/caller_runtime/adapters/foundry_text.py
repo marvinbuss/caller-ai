@@ -27,7 +27,7 @@ from openai.types.responses.response_prompt_param import ResponsePromptParam
 
 from caller_runtime.domain.conversation import AttemptIntent, TestSlot, WorkBudget, utc
 from caller_runtime.observability import Telemetry
-from caller_runtime.services.test_admission import (
+from caller_runtime.services.admission import (
     AdmissionError,
     SettlementObserver,
     TestAdmissionService,

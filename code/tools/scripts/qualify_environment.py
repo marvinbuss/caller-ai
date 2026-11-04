@@ -22,12 +22,10 @@ CHECKS = (
     "workload_identity",
     "private_network",
     "storage_ownership",
-    "phone_provider",
     "model_provider",
     "quota_budget",
     "privacy_approval",
     "monitoring_delivery",
-    "rollout_enforcement",
 )
 
 

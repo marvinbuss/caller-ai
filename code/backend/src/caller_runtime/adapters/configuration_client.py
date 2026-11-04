@@ -4,24 +4,15 @@ import asyncio
 import json
 import time
 from collections.abc import Callable
-from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
 
-from caller_runtime.adapters.azure_realtime import CredentialPort
+from caller_runtime.adapters.strict_json import unique_object
 from caller_runtime.domain.configuration import RevisionCache
+from caller_runtime.domain.ports import CredentialPort
 from caller_runtime.metrics import RuntimeMetrics
-
-
-def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    document: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in document:
-            raise ValueError("duplicate_configuration_field")
-        document[key] = value
-    return document
 
 
 class ConfigurationClient:

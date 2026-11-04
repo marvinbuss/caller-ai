@@ -84,12 +84,10 @@ VALUES = {
         {
             "/healthz",
             "/readyz",
-            "/v1/dev/transport",
             "/v2/configuration",
             "/v2/runtime/configuration",
-            "/v1/internal/test-sessions",
-            "/v1/test-tickets",
-            "/v1/test-sessions",
+            "/v1/console/tickets",
+            "/v1/console/sessions",
             "unmatched",
         }
     ),

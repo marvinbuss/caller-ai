@@ -5,7 +5,7 @@ import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Literal, Self
+from typing import Final, Literal, Self
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -14,33 +14,32 @@ import httpx2
 from fastapi import APIRouter
 from pydantic import Field, model_validator
 
-from caller_runtime.adapters.azure_realtime import CredentialPort
+from caller_runtime.adapters.admission_repository import TestAdmissionRepository
 from caller_runtime.adapters.capability_client import ConversationCapabilityClient
 from caller_runtime.adapters.configuration_client import ConfigurationClient
 from caller_runtime.adapters.foundry_text import FoundryTextAdapter
-from caller_runtime.adapters.gpt_live import GptLiveAdapter, LiveSocket, direct_socket
-from caller_runtime.adapters.session_repository import ContainerPort
-from caller_runtime.adapters.test_admission_repository import TestAdmissionRepository
-from caller_runtime.adapters.test_identity import TestPermitVerifier
-from caller_runtime.api.test_sessions import WorkloadIdentity
-from caller_runtime.api.test_sessions import create_router as create_test_router
+from caller_runtime.adapters.gpt_live import GptLiveAdapter, LiveSocket, sdk_socket
+from caller_runtime.adapters.identity import TestPermitVerifier
+from caller_runtime.adapters.text_history_repository import TextHistoryRepository
+from caller_runtime.api.connection import WorkloadIdentity
+from caller_runtime.api.text import create_router as create_text_router
+from caller_runtime.api.voice import create_router as create_voice_router
 from caller_runtime.domain.configuration import RevisionCache
 from caller_runtime.domain.conversation import Identifier, Metadata, StartPermit, TestSlot, utc
+from caller_runtime.domain.ports import ContainerPort, CredentialPort
 from caller_runtime.observability import Telemetry
-from caller_runtime.services.conversation import (
-    ConversationExecutor,
-    ConversationPolicy,
-    SpeechSegments,
-)
-from caller_runtime.services.test_admission import (
-    AdmissionError,
-    CleanupObservations,
-    ResourceCleanupVerifier,
-    TestAdmissionService,
-)
+from caller_runtime.services.admission import AdmissionError, TestAdmissionService
+from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
+from caller_runtime.services.conversation import ConversationExecutor
+from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
+from caller_runtime.services.text_conversation import TextConversationService
+
+AUTHORITY_CONTAINER: Final = "call-sessions"
+HISTORY_PROBE_SECONDS: Final = 10
+HISTORY_STALE_SECONDS: Final = 30
 
 
-class TestRuntimeOptions(Metadata):
+class RuntimeOptions(Metadata):
     __test__ = False
     review_reference: Identifier
     management_endpoint: str
@@ -65,6 +64,10 @@ class TestRuntimeOptions(Metadata):
     max_output_tokens: int = Field(ge=1, le=4096)
     voice: str = Field(min_length=1, max_length=64)
     max_clock_skew_seconds: float = Field(ge=0, le=1, allow_inf_nan=False)
+    text_history_container: str = Field(
+        default="text-conversations", pattern=r"^[a-z0-9][a-z0-9-]{0,62}$"
+    )
+    text_history_ttl_seconds: int = Field(default=2_592_000, ge=1, le=2_592_000)
 
     @model_validator(mode="after")
     def reviewed_bindings(self) -> Self:
@@ -108,15 +111,15 @@ class TestRuntimeOptions(Metadata):
         return self
 
 
-class TestRuntimeComposition:
+class ConversationRuntime:
     __test__ = False
 
     def __init__(
         self,
         *,
-        options: TestRuntimeOptions,
+        options: RuntimeOptions,
         owner_id: str,
-        container_factory: Callable[[], Awaitable[ContainerPort]],
+        container_factory: Callable[[str], Awaitable[ContainerPort]],
         credential_factory: Callable[[], Awaitable[CredentialPort]],
         workload_identity: WorkloadIdentity,
         verification_keys: Mapping[str, bytes],
@@ -125,10 +128,10 @@ class TestRuntimeComposition:
         configuration_transport: httpx.AsyncBaseTransport | None = None,
         capability_transport: httpx.AsyncBaseTransport | None = None,
         text_transport: httpx2.AsyncBaseTransport | None = None,
-        live_socket_factory: Callable[..., Awaitable[LiveSocket]] = direct_socket,
+        live_socket_factory: Callable[..., Awaitable[LiveSocket]] = sdk_socket,
     ) -> None:
         if (
-            not isinstance(options, TestRuntimeOptions)
+            not isinstance(options, RuntimeOptions)
             or not owner_id
             or len(owner_id) > 128
             or any(
@@ -172,6 +175,9 @@ class TestRuntimeComposition:
         self.observations: CleanupObservations | None = None
         self._sessions: dict[str, ConversationExecutor] = {}
         self._telemetry: Telemetry | None = None
+        self.history: TextHistoryRepository | None = None
+        self._history_ok_at: float | None = None
+        self._history_probe: asyncio.Task[None] | None = None
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
         self._starting: set[asyncio.Task[object]] = set()
         self._stop = asyncio.Event()
@@ -186,14 +192,60 @@ class TestRuntimeComposition:
                 raise AdmissionError("test_runtime_unavailable")
             return self._telemetry
 
-        return create_test_router(
-            service=self,
-            workload_identity=self._workload_identity,
-            permits=self._permits,
+        router = APIRouter()
+        router.include_router(
+            create_voice_router(
+                service=self,
+                workload_identity=self._workload_identity,
+                permits=self._permits,
+                telemetry=telemetry,
+                utc_now=self._utc_now,
+                max_clock_skew_seconds=self.options.max_clock_skew_seconds,
+            )
+        )
+        router.include_router(
+            create_text_router(
+                service=self._text_service(telemetry),
+                workload_identity=self._workload_identity,
+                permits=self._permits,
+            )
+        )
+        return router
+
+    def _text_service(self, telemetry: Callable[[], Telemetry]) -> TextConversationService:
+        def history() -> TextHistoryRepository:
+            if self.history is None:
+                raise AdmissionError("history_unavailable")
+            return self.history
+
+        return TextConversationService(
+            runtime=self,
+            history=history,
             telemetry=telemetry,
             utc_now=self._utc_now,
-            max_clock_skew_seconds=self.options.max_clock_skew_seconds,
         )
+
+    def history_ready(self) -> bool:
+        """Report the cached store probe; a stale or failed probe means not ready."""
+        if self._history_ok_at is None:
+            return False
+        return self._monotonic() - self._history_ok_at <= HISTORY_STALE_SECONDS
+
+    async def probe_history(self) -> None:
+        history = self.history
+        if history is None:
+            return
+        if await history.probe(deadline=asyncio.get_running_loop().time() + 1):
+            self._history_ok_at = self._monotonic()
+
+    async def _probe_history(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            await self.probe_history()
+            try:
+                async with asyncio.timeout(HISTORY_PROBE_SECONDS):
+                    await stop.wait()
+            except TimeoutError:
+                continue
 
     def _schedule_cleanup(self, controller: ConversationExecutor) -> None:
         controller.fence()
@@ -329,7 +381,8 @@ class TestRuntimeComposition:
                     telemetry=telemetry,
                 )
                 self._sessions[slot.session_id] = controller
-                await controller.prepare()
+                if slot.mode == "speech":
+                    await controller.prepare()
                 if slot.mode == "speech":
                     live = GptLiveAdapter(
                         endpoint=self.options.live_endpoint,
@@ -386,7 +439,7 @@ class TestRuntimeComposition:
                 self._starting.discard(current_task)
 
     @asynccontextmanager
-    async def running(self, telemetry: Telemetry) -> AsyncIterator["TestRuntimeComposition"]:
+    async def running(self, telemetry: Telemetry) -> AsyncIterator["ConversationRuntime"]:
         if self._used or self._running or telemetry is None:
             raise AdmissionError("test_runtime_unavailable")
         self._used = True
@@ -395,7 +448,7 @@ class TestRuntimeComposition:
         refresh: asyncio.Task[None] | None = None
         try:
             async with asyncio.timeout_at(deadline):
-                container = await self._container_factory()
+                container = await self._container_factory(AUTHORITY_CONTAINER)
                 repository = TestAdmissionRepository(container=container)
                 initial_authority = await repository.read(deadline=deadline)
                 self.repository = repository
@@ -432,6 +485,15 @@ class TestRuntimeComposition:
                         telemetry.event(
                             "test.cleanup", "failure", mode=retained.mode, reason="cleanup_pending"
                         )
+                history_container = await self._container_factory(
+                    self.options.text_history_container
+                )
+                self.history = TextHistoryRepository(
+                    container=history_container,
+                    ttl_seconds=self.options.text_history_ttl_seconds,
+                    utc_now=self._utc_now,
+                )
+                self._history_probe = asyncio.create_task(self._probe_history(stop))
                 self._running = True
                 refresh = asyncio.create_task(self._configuration.run(stop))
         except Exception:
@@ -453,6 +515,9 @@ class TestRuntimeComposition:
             if refresh is not None:
                 refresh.cancel()
                 await asyncio.gather(refresh, return_exceptions=True)
+            if self._history_probe is not None:
+                self._history_probe.cancel()
+                await asyncio.gather(self._history_probe, return_exceptions=True)
             for controller in self._sessions.values():
                 controller.fence()
             pending = tuple(task for task in self._starting if task is not asyncio.current_task())

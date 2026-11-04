@@ -7,13 +7,13 @@ or claim production acceptance. Start with [release gates](../acceptance/release
 
 | Workflow | Guide |
 |----------|-------|
-| Call admission/media/interruption/closure and safe runtime audit | [Call lifecycle](call-lifecycle.md) |
+| Text and voice endpoints, errors, limits and slots | [Conversation endpoints](../conversation-endpoints.md) |
+| Stored text conversations, retention, purge and recovery | [Text history](text-history.md) |
 | Manager graph/roles/conflicts and publication recovery | [Configuration](configuration.md) |
 | Ordinary revision refresh, pinning and immediate revocations | [Runtime configuration updates](configuration-updates.md) |
 | Same-community visibility and filtered fresh-session transfers | [Communities](communities.md) |
 | Reviewed public read-only tools/MCP and current authority | [Capabilities](capabilities.md) |
-| Admission, quotas, owner loss, callbacks and rollback | [Scaling](scaling.md) |
-| Exact UID-bound pre-drain/retirement and uncertainty | [Drain rollout](drain-rollout.md) |
+| Limits, admission, voice-session behavior, instance loss and rollback | [Scaling](scaling.md) |
 | Both-service metrics, fixed labels and disabled alert qualification | [Monitoring](monitoring.md) |
 | Protected remote state and Terraform verification | [Terraform state](terraform-state.md) |
 | Bootstrap/shared-environment OIDC plan, private review and protected apply | [Terraform delivery](terraform-delivery.md) |

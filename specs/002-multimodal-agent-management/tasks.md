@@ -2,6 +2,10 @@
 description: "Executable backlog for unified multimodal agents and management"
 ---
 
+> **Superseded in part by feature 003.** The call-era endpoints and the `caller.test.v1` browser test protocol named
+> below were removed. The current contract is the text and voice conversation endpoints in
+> [docs/conversation-endpoints.md](../../docs/conversation-endpoints.md). The text below is kept unchanged as the record of this feature 002 backlog.
+
 # Tasks: Unified Multimodal Agents and Management
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md),

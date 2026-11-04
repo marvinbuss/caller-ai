@@ -2,6 +2,10 @@
 description: "Dependency-ordered implementation tasks for Call Center Agent Automation"
 ---
 
+> **Superseded in part by feature 003.** The call-era endpoints and the `caller.test.v1` browser test protocol named
+> below were removed. The current contract is the text and voice conversation endpoints in
+> [docs/conversation-endpoints.md](../../docs/conversation-endpoints.md). The text below is kept unchanged as the record of this feature 001 backlog.
+
 # Tasks: Call Center Agent Automation
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md),
@@ -1129,7 +1133,7 @@ and all six T124-T129 unchecked markers are preserved; local increments are not 
 - T129 cannot execute before T120-T128 and separate live access/approvals. No acceptance, cost/RU,
   quota, privacy, alert-delivery or release evidence is fabricated from local checks.
 
-See [drain rollout](../../docs/runbooks/drain-rollout.md) and
+See the drain rollout runbook (retired with feature 003) and
 [monitoring](../../docs/runbooks/monitoring.md) for implemented contracts and limitations.
 
 This local checkpoint passes all 552 backend tests, all 220 tooling tests and all eight
