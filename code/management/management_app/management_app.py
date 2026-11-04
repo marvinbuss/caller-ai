@@ -152,9 +152,6 @@ def create_app(
     with context:
         application = rx.App(
             api_transformer=api,
-            theme=rx.theme(
-                appearance="light", accent_color="teal", gray_color="gray", radius="small"
-            ),
             style={"letter_spacing": "0"},
         )
         application.register_lifespan_task(lifecycle, api=api, settings=configuration)

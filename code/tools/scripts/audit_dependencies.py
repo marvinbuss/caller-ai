@@ -347,7 +347,6 @@ def audit_python(
             "code/tools",
             "pip-audit",
             "--require-hashes",
-            "--no-deps",
             "--disable-pip",
             "--strict",
             "--requirement",
