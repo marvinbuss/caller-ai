@@ -362,12 +362,10 @@ def prepare_tls():
     )
 
 
-def compile_frontend(compile_ui: bool = True):
+def compile_frontend():
     from reflex.reflex import export
 
     prepare_tls()
-    if not compile_ui:
-        return
     export.callback(
         zip=False,
         frontend_only=True,

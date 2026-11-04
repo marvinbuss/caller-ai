@@ -96,12 +96,22 @@ Measured on the same Windows developer machine on 2026-11-04 with nothing else r
 | Project | Before | After | Note |
 | --- | --- | --- | --- |
 | backend | 855 passed, 4 failed, 64.8 s | 505 passed, about 65 to 75 s (quick tier 439 passed, 36.4 s); the same 4 environmental failures | Fewer tests did not make the run faster: the SDK lifecycle, owned-TLS and port cases dominate it, and this run was slower than the baseline run on the same machine. The duplicate SDK startup case was removed (T071), which is why the count went from 510 to 505. With `pytest-xdist` the same tests took about 40 s, but the lock for it could not be produced here (see `docs/library-decisions.md`) |
-| management | 715 passed, 4 failed, 537.7 s | 732 passed, 506.4 s (8 min 26 s; unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames) in less time: the editor browser cases now share one compiled frontend build (T072) instead of compiling per case, which took the run from 594.2 s to about 506 s. The remaining time is the 81 real browser cases, each driving Chromium, so the advisory target is still not met. One earlier run showed a single failure in `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop[chromium-controls-768]`; it passed alone, in a 24-case group, in a relay-plus-browser run and in the next full run, so it is recorded as a timing flake |
+| management | 715 passed, 4 failed, 537.7 s | 732 passed, 503.4 s (8 min 23 s; unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames) in less time. The editor browser module already shares one host per module, and each host builds its own frontend; a session-wide shared build gave no further measurable saving (506 s against 503 s, see T072). The time is the 81 real browser cases, each driving Chromium, so the advisory target is not met. One run showed a single failure in `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop[chromium-controls-768]`; it passed alone, in a 24-case group and in the next full run, so it is recorded as a timing flake |
 | tools | 368 passed, 90.9 s | 325 passed, 71 to 88 s | Call-era tooling cases were removed. Three real child-process runs (the failure gate at 37 s and two service-alert contract cases at 11 to 13 s) account for about two thirds of the time (T074) |
 
-CI step durations (native test step, documentation render, image audit) were not re-measured: no CI
-run exists for this branch yet. A first run on the pull request will give the comparable values; the
-advisory targets for test time stay unmet and the reasons are above.
+CI step durations of the first fully green pull-request run (run 41803375451, commit `66caffc`,
+before the shared browser build and CI caching), against the baseline run 41672927903:
+
+| Step | Baseline | Ubuntu | Windows |
+| --- | --- | --- | --- |
+| Native tests (`ci.py test`) | about 195-222 s | 221 s | 266 s |
+| Documentation render | 142-305 s | 142 s | 343 s |
+| Image audit | about 167 s | 133 s | not run |
+
+That run predates the CI caching, so it shows no reduction yet: the
+native test step is at the top of the baseline range and the Windows documentation render is slower
+than the baseline range. The image audit is faster. A run on the later commits will show their
+effect; the advisory targets for test time stay unmet and the reasons are above.
 
 ## Decision 1: Two public conversation endpoints, one connection contract
 
@@ -201,9 +211,12 @@ Test speed-up decisions (T071 to T076):
   removed and `tests/integration/test_sdk_lifecycle.py` covers both of its cases (it gained the
   environment-variable and restart assertions). The conversation unit and integration pairs test
   different layers and stay.
-- **T072, shared browser build**: the editor frontend is compiled once per test session on fixed
-  ports and shared by one host per browser module. The relay contract test keeps its own host,
-  because it leaves an occupied slot and both suites assert runtime-wide counters.
+- **T072, shared browser build**: tried and reverted. A session-wide compiled frontend on fixed
+  ports ran the full management suite in 506 s on Windows, against 503 s for the per-host build
+  that was restored, so it gave no measurable saving. On the Ubuntu CI run (run 41817409529) it
+  also made all 24 speech console cases fail: the first stalled after the interrupt step and the
+  rest found the manager slot busy. The cause could not be reproduced without a Linux
+  environment. A later attempt needs a Linux reproduction first and a measured saving to justify it.
 - **T073, merged browser cases**: all 81 browser cases were reviewed and none merged. They cover
   distinct behaviors, and the width parametrization is the required responsive evidence.
 - **T074, tools fixtures**: profiling showed the time is three real child-process runs, not
@@ -213,8 +226,15 @@ Test speed-up decisions (T071 to T076):
 - **T076, CI**: job names stay as they are (they are the required check names) and dependency
   caching was added. The saving is not measured until a CI run exists for this branch, and
   caching the Mermaid renderer or Chromium needs a pinned `actions/cache` reference.
+- **Intermittent browser failures**: one Windows CI run (run 41807919799) failed
+  `test_responsive_keyboard_editing_and_protected_roles[chromium-1440]` with a page error
+  `Cannot read properties of null (reading 'name')`, and one local full run failed a speech console
+  case that passed on every rerun. Six repeated local runs of the 1440 case passed, and that case
+  passed in every other CI run, so no cause was found and no code was changed. If the page error
+  returns, capture the page's console output and the Reflex event that was in flight.
 
 Still open, each needing its own change:
 
 - `call-audit` container and `retirement.tf` stay until a reviewed destructive plan exists.
+- A shared editor frontend build (T072) is not worth retrying unless it first shows a measured saving.
 

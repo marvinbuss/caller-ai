@@ -20,7 +20,7 @@ was used (FR-027).
 | FR-015 | Retained admission, limit, privacy and cleanup cases in `tests/unit/test_conversation.py`, `tests/unit/test_admission.py`, `tests/integration/test_conversation.py`, `test_content_privacy.py` |
 | FR-016, FR-017, FR-018 | `code/tools/tests/test_static_checks.py` (stage-name check, example pairs for any stage), `test_terraform_delivery.py`, Terraform native tests via `verify_terraform.py check` |
 | FR-019 | `test_terraform_delivery.py` (OIDC-only, protected environment, exact saved plan) |
-| FR-020, FR-021 | `quick` tier in all three projects; the shared editor frontend build; the duplicate SDK startup test removed (see Removed tests); `docs/testing.md` |
+| FR-020, FR-021 | `quick` tier in all three projects; the duplicate SDK startup test removed (see Removed tests); `docs/testing.md` |
 | FR-022 | Baseline and after-values in `specs/003-codebase-simplification/research.md` |
 | FR-023, FR-024, FR-025 | `code/tools/tests/test_spec_hooks.py` |
 | FR-026 | `docs/conversation-endpoints.md`, `docs/runbooks/text-history.md`, `docs/security.md`, `docs/architecture.md`, `docs/spec-workflow-hooks.md` |
@@ -32,7 +32,7 @@ was used (FR-027).
 | Gate | Result |
 |------|--------|
 | Backend suite | 505 passed; the four `test_foundation_recovery.py` cases fail as in the baseline (the uv cache cannot build the project offline) |
-| Management suite | 732 passed, 0 failed, 8 min 26 s (an earlier run had one browser timing flake that passed on every rerun) |
+| Management suite | 732 passed, 0 failed, 8 min 23 s (one earlier run had a single browser timing flake that passed on every rerun) |
 | Tools suite | 325 passed |
 | `ci.py check` | lint, format, both type gates, whitespace, reachability and docstrings (strict), Terraform checks, secret scan and publication guard all pass |
 | `verify_terraform.py check` | 38 native tests across 3 roots |
