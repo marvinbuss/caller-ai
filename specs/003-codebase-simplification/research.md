@@ -99,19 +99,21 @@ Measured on the same Windows developer machine on 2026-11-04 with nothing else r
 | management | 715 passed, 4 failed, 537.7 s | 732 passed, 503.4 s (8 min 23 s; unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames) in less time. The editor browser module already shares one host per module, and each host builds its own frontend; a session-wide shared build gave no further measurable saving (506 s against 503 s, see T072). The time is the 81 real browser cases, each driving Chromium, so the advisory target is not met. One run showed a single failure in `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop[chromium-controls-768]`; it passed alone, in a 24-case group and in the next full run, so it is recorded as a timing flake |
 | tools | 368 passed, 90.9 s | 325 passed, 71 to 88 s | Call-era tooling cases were removed. Three real child-process runs (the failure gate at 37 s and two service-alert contract cases at 11 to 13 s) account for about two thirds of the time (T074) |
 
-CI step durations of the first fully green pull-request run (run 41803375451, commit `66caffc`,
-before the shared browser build and CI caching), against the baseline run 41672927903:
+CI step durations of two green pull-request runs against the baseline run 41672927903: run
+41803375451 (commit `66caffc`, before CI caching) and run 41827283123 (commit `f20c377`, with
+dependency caching, third attempt):
 
-| Step | Baseline | Ubuntu | Windows |
+| Step | Baseline | `66caffc` Ubuntu / Windows | `f20c377` Ubuntu / Windows |
 | --- | --- | --- | --- |
-| Native tests (`ci.py test`) | about 195-222 s | 221 s | 266 s |
-| Documentation render | 142-305 s | 142 s | 343 s |
-| Image audit | about 167 s | 133 s | not run |
+| Native tests (`ci.py test`) | about 195-222 s | 221 s / 266 s | 218 s / 303 s |
+| Documentation render | 142-305 s | 142 s / 343 s | 151 s / 410 s |
+| Image audit | about 167 s | 133 s / not run | 144 s / not run |
 
-That run predates the CI caching, so it shows no reduction yet: the
-native test step is at the top of the baseline range and the Windows documentation render is slower
-than the baseline range. The image audit is faster. A run on the later commits will show their
-effect; the advisory targets for test time stay unmet and the reasons are above.
+CI shows no reduction. The native test step is at the top of the baseline range on Ubuntu and above
+it on Windows, and the Windows documentation render is above the baseline range in both runs. The
+image audit is faster than the baseline. The dependency caching did not shorten the measured steps
+(they are test and render time, not installs), so the advisory targets for test time stay unmet and
+the reasons are above.
 
 ## Decision 1: Two public conversation endpoints, one connection contract
 
@@ -232,9 +234,23 @@ Test speed-up decisions (T071 to T076):
   case that passed on every rerun. Six repeated local runs of the 1440 case passed, and that case
   passed in every other CI run, so no cause was found and no code was changed. If the page error
   returns, capture the page's console output and the Reflex event that was in flight.
+- **Intermittent CI failures on `f20c377`** (run 41827283123): the same commit failed twice on
+  Windows and passed on the third attempt, with Ubuntu green throughout. The first attempt failed
+  the 24 `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop` cases: the first
+  ended in `cleanup pending` instead of `ended`, and the manager slot stayed held, so the other 23
+  found it `busy`. The second attempt failed
+  `tests/integration/test_conversation.py::test_owned_socket_rejects_expired_session_even_for_heartbeat`
+  with close code 4502 instead of 4401. Neither reproduced locally (the speech cases passed pinned
+  to two cores; the backend test passed 70 times pinned to one core, 30 of them with busy-loop processes on it), and the code involved is
+  unchanged from `main`. Two leads, not confirmed: the closure receipt is recorded in
+  `CleanupObservations` before `settle_attempt` stores it on the slot, so a failed settle makes
+  `observe()` report a mismatch and hold the slot; and `api/voice.py` re-raises the first finished
+  task from an unordered set, so two tasks failing in one tick can pick either error. A fix to
+  either needs its own change with a reproduction.
 
 Still open, each needing its own change:
 
 - `call-audit` container and `retirement.tf` stay until a reviewed destructive plan exists.
+- The intermittent Windows CI failures above are open: they need a reproduction before a change.
 - A shared editor frontend build (T072) is not worth retrying unless it first shows a measured saving.
 
