@@ -359,6 +359,7 @@ def running_configuration_editor(
                     "management": origin,
                     "runtime": f"https://127.0.0.1:{runtime_port}",
                     "certificate": str(directory / "certificate.pem"),
+                    "log": str(directory / "process.log"),
                     "processes": processes,
                     "sessions": json.loads((directory / "sessions.json").read_text()),
                 }

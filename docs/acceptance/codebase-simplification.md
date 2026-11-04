@@ -32,7 +32,7 @@ was used (FR-027).
 | Gate | Result |
 |------|--------|
 | Backend suite | 508 passed; the four `test_foundation_recovery.py` cases fail as in the baseline (the uv cache cannot build the project offline) |
-| Management suite | 732 passed, 0 failed, 8 min 38 s (one earlier run had a single browser timing flake that passed on every rerun) |
+| Management suite | 733 passed, 0 failed, 8 min (the relay contract test failed once in earlier full runs and passes alone and on rerun) |
 | Tools suite | 325 passed |
 | `ci.py check` | lint, format, both type gates, whitespace, reachability and docstrings (strict), Terraform checks, secret scan and publication guard all pass |
 | `verify_terraform.py check` | 38 native tests across 3 roots |

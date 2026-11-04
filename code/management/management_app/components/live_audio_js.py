@@ -704,12 +704,13 @@ class CallerTestEngine {
             this.queue.shift(); this.socket.send(entry.value);
         }
     }
-    command(type, values = {}) {
+    command(type, values = {}, urgent = false) {
         if (this.terminal || !this.snapshot.sessionId || this.clientSequence === 4294967295) return;
         const sequence = ++this.clientSequence;
         const encoded = JSON.stringify({type, sessionId: this.snapshot.sessionId,
             sequence, ...values});
         if (new TextEncoder().encode(encoded).length > 8192) throw Error("control_limit");
+        if (urgent) { this.queue = []; this.socket.send(encoded); return sequence; }
         this.enqueue(encoded); return sequence;
     }
     async devices() {
@@ -775,9 +776,9 @@ class CallerTestEngine {
     }
     stop(code = "stopped") {
         if (this.terminal) return;
-        if (this.socket?.readyState === WebSocket.OPEN && this.snapshot.sessionId &&
-            this.socket.bufferedAmount < 8192) {
-            this.queue = []; this.command("stop");
+        if (this.socket?.readyState === WebSocket.OPEN && this.snapshot.sessionId) {
+            // Queued audio must not swallow the stop: it is tiny and leaves right after it.
+            this.command("stop", {}, true);
         }
         this.terminal = true; this.epoch++;
         this.abort?.abort();

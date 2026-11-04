@@ -1,5 +1,6 @@
 """Real-browser editor contracts; identities are issued only by an owned test host."""
 
+import json
 import ssl
 from pathlib import Path
 
@@ -74,6 +75,39 @@ def show_global_settings(page: Page) -> None:
     expect(settings).to_be_visible()
     if not settings.evaluate("element => element.open"):
         settings.locator(":scope > summary").click()
+
+
+def press_mute_when_no_audio_is_queued(page: Page) -> None:
+    # The console ends a session that is muted while audio is still queued on its socket (it
+    # cannot recall queued frames), so press the button in the same task that sees an empty queue.
+    page.wait_for_function(
+        """() => {
+            const socket = window.syntheticMedia.socket;
+            if (!socket || socket.bufferedAmount !== 0) return false;
+            document.getElementById('test-mute').click();
+            return true;
+        }""",
+        timeout=EXPECT_TIMEOUT_MS,
+    )
+
+
+def runtime_events(host: dict, limit: int = 14) -> list[str]:
+    # The runtime's own account of a session's end, which the browser assertion cannot show.
+    keep = {"test.admission", "test.relay", "test.session", "test.cleanup", "test.alert"}
+    rows = []
+    for line in Path(host["log"]).read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and value.get("event") in keep:
+            rows.append(
+                " ".join(
+                    str(value.get(key, ""))
+                    for key in ("timestamp", "service", "event", "outcome", "reason")
+                ).strip()
+            )
+    return rows[-limit:]
 
 
 def open_manager(
@@ -275,8 +309,6 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         if socket.url.endswith("/v1/console/sessions"):
 
             def receive(raw):
-                import json
-
                 if isinstance(raw, str):
                     value = json.loads(raw)
                     wire.append(
@@ -564,12 +596,12 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
             window.syntheticMedia.oldGrant = {...window.syntheticMedia.lastGrant};
             window.syntheticMedia.oldClear = {...window.syntheticMedia.lastClear};
         }""")
-        page.get_by_role("button", name="Mute input", exact=True).click()
+        press_mute_when_no_audio_is_queued(page)
         expect(page.locator("#test-capture")).to_have_text("Muted")
         expect(page.get_by_role("button", name="Mute input", exact=True)).to_have_attribute(
             "aria-pressed", "true"
         )
-        page.get_by_role("button", name="Mute input", exact=True).click()
+        press_mute_when_no_audio_is_queued(page)
         expect(page.locator("#test-capture")).to_have_text("Active")
         page.wait_for_function("""window.syntheticMedia.lastGrant.captureEpoch >
             window.syntheticMedia.oldGrant.captureEpoch""")
@@ -607,6 +639,10 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
                     for key in ("status", "error", "capture", "playback")
                 }
             )
+        except Exception:
+            pass
+        try:
+            print({"runtime_events": runtime_events(configuration_host)})
         except Exception:
             pass
         raise

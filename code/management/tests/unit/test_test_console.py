@@ -1072,6 +1072,45 @@ console.log("published-end-pass");
     assert result.stdout.strip() == "published-end-pass" and not result.stderr
 
 
+def test_browser_stop_reaches_the_server_even_when_audio_is_queued():
+    import shutil
+    import subprocess
+
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    scenario = """
+const document = {getElementById: () => null};
+const timers = new Map(); let timerId = 0;
+function setTimeout(callback) { timers.set(++timerId, callback); return timerId; }
+function clearTimeout(identifier) { timers.delete(identifier); }
+class WebSocket { static OPEN = 1; }
+const sent = [];
+const engine = new CallerTestEngine({begin: () => {}, control: () => {}});
+engine.terminal = false; engine.epoch = 1; engine.mode = "speech"; engine.authenticated = true;
+engine.snapshot = {status: "ready", mode: "speech", sessionId: "session-fixture"};
+engine.socket = {readyState: 1, bufferedAmount: 20000,
+    send: value => sent.push(JSON.parse(value)), close: () => {}};
+engine.stop();
+if (sent.length !== 1 || sent[0].type !== "stop" || sent[0].sessionId !== "session-fixture")
+    throw Error("stop_swallowed_by_backlog");
+if (engine.snapshot.status !== "stopping" || engine.snapshot.cleanupStatus !== "pending")
+    throw Error("stop_not_awaiting_confirmation");
+console.log("stop-under-backlog-pass");
+"""
+    result = subprocess.run(
+        [node],
+        input=BUDGET_CODE + ENGINE_CODE + scenario,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.stdout.strip() == "stop-under-backlog-pass", result.stderr
+    assert not result.stderr
+
+
 @pytest.mark.parametrize("callback", ["close", "error", "message"])
 def test_browser_stale_socket_callbacks_cannot_stop_explicit_replacement(callback):
     import shutil

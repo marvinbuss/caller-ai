@@ -96,7 +96,7 @@ Measured on the same Windows developer machine on 2026-11-04 with nothing else r
 | Project | Before | After | Note |
 | --- | --- | --- | --- |
 | backend | 855 passed, 4 failed, 64.8 s | 508 passed, about 65 to 75 s (quick tier 439 passed, 36.4 s); the same 4 environmental failures | Fewer tests did not make the run faster: the SDK lifecycle, owned-TLS and port cases dominate it, and this run was slower than the baseline run on the same machine. The duplicate SDK startup case was removed (T071) and three race tests were added (T096), so the count went from 510 to 508. With `pytest-xdist` the same tests took about 40 s, but the lock for it could not be produced here (see `docs/library-decisions.md`) |
-| management | 715 passed, 4 failed, 537.7 s | 732 passed, 518.9 s (8 min 39 s; unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames) in less time. The editor browser module already shares one host per module, and each host builds its own frontend; a session-wide shared build gave no further measurable saving (506 s against 503 s, see T072). The time is the 81 real browser cases, each driving Chromium, so the advisory target is not met. One run showed a single failure in `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop[chromium-controls-768]`; it passed alone, in a 24-case group and in the next full run, so it is recorded as a timing flake |
+| management | 715 passed, 4 failed, 537.7 s | 733 passed, 480.4 s (8 min; unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames) in less time. The editor browser module already shares one host per module, and each host builds its own frontend; a session-wide shared build gave no further measurable saving (506 s against 503 s, see T072). The time is the 81 real browser cases, each driving Chromium, so the advisory target is not met. One run showed a single failure in `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop[chromium-controls-768]`; it passed alone, in a 24-case group and in the next full run, so it is recorded as a timing flake |
 | tools | 368 passed, 90.9 s | 325 passed, 71 to 88 s | Call-era tooling cases were removed. Three real child-process runs (the failure gate at 37 s and two service-alert contract cases at 11 to 13 s) account for about two thirds of the time (T074) |
 
 CI step durations of two green pull-request runs against the baseline run 41672927903: run
@@ -263,11 +263,23 @@ Test speed-up decisions (T071 to T076):
   assertion in the text case is unchanged, so a stuck session can still trip it. Repeated local
   runs of the text and speech cases (17 runs of 5 tests) failed twice on the first speech case: once
   with `stopping` still shown after 5 s, once with capture `Off` where `Muted` was expected because
-  the session ended about half a second after it started. The client clock watch in
-  `live_audio_js.py` (`watch()`) stops a session as `lifetime_expired` when `Date.now()` and
-  `performance.now()` drift apart by more than 1 s between its 900 ms ticks, which would explain
-  the second case, but this is not confirmed. The speech case now prints the console status and
-  error when an assertion fails, so the next occurrence names the reason.
+  the session ended about half a second after it started. The early end is the console's
+  fail-closed mute guard: `mute()` in `live_audio_js.py` stops the session as `unavailable` when
+  any audio is still queued on the socket, because queued frames cannot be recalled. It is not
+  the clock watch that was suspected first. The guard is deliberate and was left as it is; the
+  speech case now presses Mute only in a task that sees an empty send queue (T101).
+- **Fourth Windows failure and the stop fix** (run 41862400575): with the isolation from T099 only
+  one case failed (737 passed, 1 failed), `[chromium-hidden-768]`: the console stayed `stopping`
+  for 10 s and then showed `cleanup pending`. `stop()` skipped the stop command when more than
+  8 KB of audio was queued on the socket, so the server was never asked and never confirmed.
+  `stop()` now sends the command at once (`test_browser_stop_reaches_the_server_even_when_audio_is_queued`
+  fails before the change). That this was the cause of the CI failure is not confirmed. A failed
+  speech case now also prints the runtime's last lifecycle events from the host log (T100), so the
+  next occurrence shows the server side.
+- **Relay contract test flake**: `test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots`
+  failed in two of five full management runs on an otherwise idle workstation and passed alone
+  (twice, 2 min 25 s) and in the next full run (733 passed in 8 min). It was already recorded as
+  load-sensitive; no cause was found.
 
 - **SC-008 decision (T097)**: the owner chose to record that the required-check time reduction is
   not met rather than cut browser cases. Local suites dropped from 693 s to about 645 s in total
