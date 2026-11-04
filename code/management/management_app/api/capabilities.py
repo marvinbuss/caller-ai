@@ -1,9 +1,15 @@
-"""Explicit capability API composition; never mounted by foundation startup."""
+"""Capability API: `POST /v1/runtime/capabilities/execute` and `PUT /v1/security/revocations`.
+
+Execution is called by the backend workload identity and goes through the capability gateway; a
+manager with the right role revokes tools, connections or assignments, which takes effect for the
+next call because the gateway re-reads the authority. Bodies are size-limited and parsed with
+duplicate-key rejection, and every error is a fixed `application/problem+json` code. The router is
+mounted only by the reviewed composition.
+"""
 
 import asyncio
 import json
 from datetime import UTC, datetime
-from http import HTTPStatus
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
@@ -12,6 +18,7 @@ from pydantic import ValidationError
 from starlette.responses import JSONResponse
 
 from management_app.api.configuration import ETAG, unique_object
+from management_app.api.problems import problem_response
 from management_app.models.permissions import (
     CapabilityAttempt,
     PermissionConflict,
@@ -65,21 +72,7 @@ class SecurityAuditPort(Protocol):
 
 
 def problem(status: int, correlation: str) -> JSONResponse:
-    headers = {"Cache-Control": "no-store", "X-Correlation-ID": correlation}
-    if status == 401:
-        headers["WWW-Authenticate"] = "Bearer"
-    return JSONResponse(
-        {
-            "type": "about:blank",
-            "title": HTTPStatus(status).phrase,
-            "status": status,
-            "code": ERROR_CODES[status],
-            "correlation_id": correlation,
-        },
-        status_code=status,
-        media_type="application/problem+json",
-        headers=headers,
-    )
+    return problem_response(status, correlation, ERROR_CODES[status])
 
 
 async def payload(request: Request) -> dict[str, Any]:

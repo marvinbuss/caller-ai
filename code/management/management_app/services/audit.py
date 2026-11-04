@@ -1,4 +1,11 @@
-"""Allowlisted audit metadata and retryable recovery from committed revision metadata."""
+"""Audit records and their recovery from committed state.
+
+An `AuditRecord` allows only fixed fields, actions, outcomes and reason codes (no free text, no
+configuration or conversation content) and requires a timezone-aware timestamp. A security
+revocation record is rebuilt from the committed permission authority (policy version 2 or later),
+so a record lost after the commit can be appended again; the same id with the same content is a no-
+op.
+"""
 
 from __future__ import annotations
 

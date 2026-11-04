@@ -5,10 +5,10 @@ import json
 
 import pytest
 
+from tests.unit.test_admission import admission_case as admission_case
+from tests.unit.test_admission import authority_store as authority_store
+from tests.unit.test_admission import live_case as live_case
 from tests.unit.test_conversation import text_execution_case as text_execution_case
-from tests.unit.test_test_admission import admission_case as admission_case
-from tests.unit.test_test_admission import authority_store as authority_store
-from tests.unit.test_test_admission import live_case as live_case
 
 pytestmark = pytest.mark.anyio
 
@@ -18,11 +18,25 @@ def anyio_backend():
     return "asyncio"
 
 
-async def test_browser_text_content_never_enters_authority_or_safe_telemetry(
+async def test_text_content_exists_only_in_the_history_container(
     text_execution_case, admission_case, caplog, monkeypatch
 ):
+    """Stored text conversations are the one place conversation text may rest.
+
+    This deliberately narrows the feature 002 guarantee that text content is disposed with the
+    session: the history container holds user and assistant text for 30 days after the last turn
+    (FR-031), and the text may exist nowhere else: not in logs, metrics, traces, telemetry, error
+    bodies, alert payloads, the admission authority record or any other store. Prompts, tokens
+    and provider bodies are never stored. Audio, transcripts and provider bodies of voice
+    sessions stay volatile (see the speech test below).
+    """
+    from types import SimpleNamespace
+
+    from caller_runtime.adapters.text_history_repository import TextHistoryRepository
     from caller_runtime.metrics import RuntimeMetrics
     from caller_runtime.observability import Telemetry
+    from caller_runtime.services.text_conversation import TextConversationService
+    from tests.doubles import ContainerDouble
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
     service, repository, container, clock, permit, cache = admission_case
@@ -36,22 +50,34 @@ async def test_browser_text_content_never_enters_authority_or_safe_telemetry(
     monkeypatch.setattr(container, "replace_item", record_metadata)
 
     def production_call_metric(*args, **kwargs):
-        raise AssertionError("browser_test_used_production_call_accounting")
+        raise AssertionError("text_turn_used_production_call_accounting")
 
-    for name in ("active_calls", "admission", "reservations", "handover", "speech_delay"):
-        monkeypatch.setattr(RuntimeMetrics, name, production_call_metric)
+    monkeypatch.setattr(RuntimeMetrics, "admission", production_call_metric)
     telemetry = Telemetry("caller-runtime", "local")
     controls["telemetry"] = telemetry
+    history = ContainerDouble(partition_field="ownerKey")
+
+    async def start(granted, *, emit):
+        return await setup()
+
+    turns = TextConversationService(
+        runtime=SimpleNamespace(start=start),
+        history=lambda: TextHistoryRepository(
+            container=history, ttl_seconds=2_592_000, utc_now=clock.utc_now
+        ),
+        telemetry=telemetry,
+        utc_now=clock.utc_now,
+    )
     try:
-        controller = await setup()
-        with telemetry.span("test.work", {"test.mode": "text", "test.phase": "active"}):
-            await controller.submit_text("text-privacy", "synthetic-private-browser-input")
-            await controller.process_next(emit=emit)
-        assert len(requests) == 1 and requests[0]["store"] is False
-        assert controller.retained_bytes > 0
-        await controller.close()
-        assert controller.retained_bytes == 0 and adapter.disposed and writes
-        captured = (
+        with telemetry.span("test.work", {"test.kind": "text", "test.phase": "active"}):
+            result = await turns.run(
+                permit(1), text="synthetic-private-browser-input", conversation_id=None, emit=emit
+            )
+        assert result.completed and len(requests) == 1 and requests[0]["store"] is False
+        stored = json.dumps(history.records)
+        assert "synthetic-private-browser-input" in stored
+        assert "Synthetic shared streamed reply" in stored
+        elsewhere = (
             json.dumps(telemetry.events)
             + caplog.text
             + "".join(writes)
@@ -63,11 +89,25 @@ async def test_browser_text_content_never_enters_authority_or_safe_telemetry(
             "Synthetic prompt for b-entry",
             "synthetic-text-token",
         ):
-            assert marker not in captured
+            assert marker not in elsewhere
+        for marker in ("Synthetic prompt for b-entry", "synthetic-text-token"):
+            assert marker not in stored
         names = {event["event"] for event in telemetry.events}
         assert {"test.session", "test.work", "test.usage", "test.latency", "test.cleanup"} <= names
-        assert all(name.startswith("test.") for name in names)
-        assert all(event["mode"] == "text" for event in telemetry.events)
+        assert "history.store" in names
+        assert all(event["kind"] == "text" for event in telemetry.events if "kind" in event)
+
+        history.failure = 503
+        with pytest.raises(PermissionError, match="^history_unavailable$") as failure:
+            await turns.run(
+                permit(2, actor="manager-other"),
+                text="synthetic-private-second-input",
+                conversation_id=result.conversation_id,
+                emit=emit,
+            )
+        assert "synthetic-private" not in repr(failure.value)
+        assert "sensitive-store-details" not in repr(failure.value)
+        assert "synthetic-private-second-input" not in json.dumps(telemetry.events) + caplog.text
     finally:
         telemetry.close()
         await adapter.close()
@@ -79,11 +119,8 @@ async def test_browser_speech_audio_transcripts_and_provider_bodies_remain_volat
     import base64
 
     from caller_runtime.observability import Telemetry
-    from caller_runtime.services.conversation import (
-        ConversationExecutor,
-        ConversationPolicy,
-        SpeechSegments,
-    )
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
     service, repository, clock, socket, opened = live_case
@@ -156,36 +193,3 @@ async def test_browser_speech_audio_transcripts_and_provider_bodies_remain_volat
     finally:
         telemetry.close()
         await adapter.close()
-
-
-async def test_canceled_terminal_cleanup_still_purges_retained_audio_and_context():
-    from caller_runtime.domain.cleanup import terminal_cleanup
-    from caller_runtime.domain.session import VolatileCallContext
-
-    raw = bytearray(b"synthetic-private-audio")
-    context = VolatileCallContext(
-        audio_buffers=[raw],
-        conversation=[{"content": "synthetic-private"}],
-        request_summary="synthetic-private",
-    )
-    entered = asyncio.Event()
-
-    async def hangup():
-        entered.set()
-        await asyncio.Event().wait()
-        return False
-
-    async def end(acknowledged):
-        pass
-
-    task = asyncio.create_task(
-        terminal_cleanup(
-            context=context, hangup=hangup, end=end, deadline=asyncio.get_running_loop().time() + 1
-        )
-    )
-    await entered.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert raw == bytearray(len(raw)) and not context.conversation and not context.audio_buffers
-    assert not context.request_summary

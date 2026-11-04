@@ -1,4 +1,10 @@
-"""Validate local Markdown links and actually render every Mermaid diagram."""
+"""Validates every Markdown document and renders every Mermaid diagram.
+
+Checks that each document has one title, that every local link and heading fragment resolves, and
+that each Mermaid block actually renders in a prepared Chromium through the pinned Mermaid CLI.
+Prints one JSON line per diagram and a final summary; any broken link, fragment or diagram exits
+non-zero. It reads `docs/`, `specs/`, `code/contracts/` and the root README.
+"""
 
 import json
 import re

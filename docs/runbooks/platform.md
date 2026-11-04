@@ -24,7 +24,7 @@ flowchart LR
     Module --> ACR[Private Premium ACR]
     Module --> Cosmos[Strong single-write Cosmos]
     Cosmos --> Management[Configuration and configuration-audit]
-    Cosmos --> Calls[Call-sessions and call-audit]
+    Cosmos --> Calls[Call-sessions, call-audit and text-conversations]
     Module --> Vault[RBAC and purge-protected Key Vault]
     Module --> Monitor[Private-ingestion Log Analytics]
     AKS -. Defined private endpoints and scoped roles .-> Cosmos
@@ -114,6 +114,7 @@ explicit shared autoscale RU ceiling; no RU/cost/performance result is claimed.
 | configuration-audit | Management | `/dayBucket` | Explicit configuration audit seconds |
 | call-sessions | Runtime | `/sessionId` | Explicit session metadata seconds |
 | call-audit | Runtime | `/dayBucket` | Explicit call audit seconds |
+| text-conversations | Runtime | `/ownerKey` | `-1`; every item carries its own `ttl` of 30 days after the last turn, and expiry is the only deletion path |
 
 Partition-key version 2/Hash and container deletion guards are explicit. Ownership here is a
 declared data contract with T096's exact owned-container role assignments. Effective denial

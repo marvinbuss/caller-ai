@@ -1,4 +1,12 @@
-"""Runtime-owned metadata telemetry; no content-bearing fields or network exporters."""
+"""Runtime telemetry: spans and events limited to fixed, content-free metadata.
+
+Operation names, event names, outcomes and attribute values come from closed sets, so an unknown
+name or an arbitrary attribute is rejected before a span starts. Correlation ids are bounded opaque
+values; credential-like prefixes are replaced. Spans and events are kept in memory (512 each) with
+no network exporter, trace context propagates only `traceparent`, and an optional alert sink
+receives a detached copy of `test.alert` events. Conversation text, audio, prompts and tool data
+never enter it.
+"""
 
 import asyncio
 import json
@@ -41,6 +49,7 @@ TEST_MEASUREMENTS = {
     "test.latency": frozenset(
         {"backend_first_text_seconds", "work_seconds", "cleanup_seconds", "admission_seconds"}
     ),
+    "history.store": frozenset({"store_seconds"}),
 }
 TEST_MODES = frozenset({"text", "speech"})
 TEST_PHASES = frozenset({"starting", "ready", "active", "ending", "terminal", "cleanup_pending"})
@@ -73,7 +82,6 @@ OPERATIONS = (
             "probe.receive",
             "sdk.trace",
             "sdk.span",
-            "sdk.session",
             "configuration.refresh",
             "configuration.publish",
         }
@@ -81,7 +89,9 @@ OPERATIONS = (
     | TEST_OPERATIONS
 )
 EVENTS = (
-    frozenset({"startup", "shutdown", "request", "probe", "failure", "configuration"})
+    frozenset(
+        {"startup", "shutdown", "request", "probe", "failure", "configuration", "history.store"}
+    )
     | TEST_OPERATIONS
 )
 VALUES = {
@@ -90,17 +100,14 @@ VALUES = {
         {
             "/healthz",
             "/readyz",
-            "/v1/dev/transport",
-            "/v2/configuration",
+            "/v1/conversations/text",
+            "/v1/conversations/voice",
             "/v2/runtime/configuration",
-            "/v1/internal/test-sessions",
-            "/v1/test-tickets",
-            "/v1/test-sessions",
             "unmatched",
         }
     ),
     "outcome": frozenset({"success", "failure"}),
-    "test.mode": TEST_MODES,
+    "test.kind": frozenset({"text", "voice"}),
     "test.phase": TEST_PHASES,
     "test.reason": TEST_REASONS,
 }
@@ -108,6 +115,7 @@ VALUES = {
 
 def sanitize_correlation_id(value: str | None) -> str:
     if value and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
+        # Callers sometimes paste keys or tokens into headers; never echo those into telemetry.
         if not value.startswith(("sk-", "AKIA", "eyJ")):
             return value
     return uuid4().hex
@@ -281,7 +289,7 @@ class Telemetry:
             "span_id": format(context.span_id, "016x") if context.is_valid else "",
         }
         if mode is not None:
-            event["mode"] = mode
+            event["kind"] = "voice" if mode == "speech" else "text"
         if reason is not None:
             event["reason_code"] = reason
         if measurement is not None:

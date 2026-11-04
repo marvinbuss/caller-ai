@@ -1,4 +1,11 @@
-"""Foundation shell plus an explicit authenticated editor composition; live calls stay off."""
+"""Foundation shell plus an explicit authenticated editor composition; live calls stay off.
+
+`create_app` always serves the status shell and its health API and reports live calls and
+configuration as unavailable. When an `EditorServices` bundle is passed it also registers the
+configuration editor and test console pages behind the Reflex socket guard. Reflex registers
+states in a context that is forked while the app is built, so the editor pages and states are
+imported before that fork; moving those imports later breaks the frontend export.
+"""
 
 from contextlib import AbstractContextManager, nullcontext
 from typing import TYPE_CHECKING, cast
@@ -20,7 +27,7 @@ if TYPE_CHECKING:
         ManagementRequest,
         ManagementResourcesFactory,
     )
-    from management_app.state.configuration_editor import EditorServices
+    from management_app.state.editor_draft import EditorServices
 
 
 class ShellState(rx.State):
@@ -128,6 +135,12 @@ def create_app(
     api = editor.api if editor is not None else create_health_api(configuration, dependencies)
     if editor is not None:
         api.state.editor_services = editor
+        # States must register in the base context, so import them before the fork below.
+        from management_app.pages.communities import configuration_page
+        from management_app.pages.test_console import test_console_page
+        from management_app.state.configuration_editor import ConfigurationEditorState
+        from management_app.state.test_console import TestConsoleState
+
     registration = RegistrationContext.ensure_context()
     context: AbstractContextManager[object]
     try:
@@ -139,19 +152,11 @@ def create_app(
     with context:
         application = rx.App(
             api_transformer=api,
-            theme=rx.theme(
-                appearance="light", accent_color="teal", gray_color="gray", radius="small"
-            ),
             style={"letter_spacing": "0"},
         )
         application.register_lifespan_task(lifecycle, api=api, settings=configuration)
         application.add_page(index, title="Caller AI")
         if editor is not None:
-            from management_app.pages.communities import configuration_page
-            from management_app.pages.test_console import test_console_page
-            from management_app.state.configuration_editor import ConfigurationEditorState
-            from management_app.state.test_console import TestConsoleState
-
             application.add_page(
                 configuration_page,
                 route="/configuration",
@@ -191,8 +196,8 @@ async def create_managed_app(
 
 
 def editor_asgi(application: rx.App, *, additional_paths: frozenset[str] = frozenset()) -> ASGIApp:
-    from management_app.security import ProtectedReflexBoundary, install_reflex_security
-    from management_app.state.configuration_editor import EditorServices
+    from management_app.reflex_security import ProtectedReflexBoundary, install_reflex_security
+    from management_app.state.editor_draft import EditorServices
 
     api = application.api_transformer
     if not isinstance(api, FastAPI) or not isinstance(

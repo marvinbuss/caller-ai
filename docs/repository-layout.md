@@ -1,6 +1,7 @@
 # Repository Layout
 
-Caller AI has two independent Python applications: a FastAPI call-runtime service and a
+Caller AI has two independent Python applications: a FastAPI conversation-runtime service (text
+and voice endpoints) and a
 Reflex management application. Each owns its dependency lock and environment. The initial
 delivery is a credential-free local foundation. Default startup still has no live call
 handling or editor; separately authorized synthetic local editing is described in the
@@ -10,7 +11,7 @@ handling or editor; separately authorized synthetic local editing is described i
 
 | Path | Responsibility |
 |------|----------------|
-| `code/backend/` | Call-runtime application, tests, dependency lock and Docker image |
+| `code/backend/` | Conversation-runtime application, tests, dependency lock and Docker image |
 | `code/management/` | Management application, tests, frontend lock and Docker image |
 | `code/tools/` | Independent development tools and portable verification scripts |
 | `code/contracts/` | Accepted versioned interface schemas, not shared persistence code |
@@ -19,10 +20,15 @@ handling or editor; separately authorized synthetic local editing is described i
 | `.github/workflows/` | Required GitHub workflow discovery metadata only |
 | `specs/001-call-center-agents/` | Requirements, design and reviewer-owned checklists |
 | `specs/002-multimodal-agent-management/` | Multimodal feature contracts, design and implementation evidence |
+| `specs/003-codebase-simplification/` | Simplification plan, tasks and decisions (see [library decisions](library-decisions.md)) |
 
 Workflow helpers and pre-commit configuration belong under `code/`. Neither application may
-read another application's private database. Live management owns its configuration; call
-runtime consumes authenticated configuration contracts. No cloud client is needed for health.
+read another application's private database. Live management owns its configuration; the
+conversation runtime consumes authenticated configuration contracts. No cloud client is needed for health.
+
+## Spec Kit Hooks
+
+`.specify/` holds the Spec Kit state; `.specify/extensions.yml` registers the optional, prompted GitHub hooks described in [spec workflow hooks](spec-workflow-hooks.md).
 
 ## Developer Platforms
 
@@ -82,4 +88,4 @@ configuration scope and pending external evidence are recorded in [US2 acceptanc
 
 The independent local runtime continuation is recorded in [US3 acceptance](acceptance/us3.md)
 and the [community runbook](runbooks/communities.md). These services are explicitly composed
-for synthetic qualification and do not mount live call routes or waive provider/release gates.
+for synthetic qualification and do not mount live provider routes or waive provider/release gates.

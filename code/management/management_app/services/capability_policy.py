@@ -1,4 +1,11 @@
-"""Pure pinned/current/reviewed intersection; no network or cached permission authority."""
+"""Decides whether one capability call is allowed, from pinned, current and reviewed data.
+
+A call is allowed only if the pinned revision granted it, the current published revision still has
+it, the permission authority has not revoked it and an independent review approved the tool or
+action. The result is the exact validated input and destination to use. It is pure: no network, no
+cached permissions. Destinations must be HTTPS public addresses, and rejected input never appears in
+errors.
+"""
 
 import ipaddress
 import json

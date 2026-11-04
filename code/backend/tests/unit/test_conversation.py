@@ -6,14 +6,14 @@ from datetime import timedelta
 
 import pytest
 
-from tests.unit.test_test_admission import admission_case as admission_case
-from tests.unit.test_test_admission import authority_store as authority_store
-from tests.unit.test_test_admission import live_case as live_case
+from tests.unit.test_admission import admission_case as admission_case
+from tests.unit.test_admission import authority_store as authority_store
+from tests.unit.test_admission import live_case as live_case
 
 
 def test_shared_policy_routes_initial_entry_but_rejects_missing_agent_edge(admission_case):
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
-    from caller_runtime.services.conversation import ConversationPolicy
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, container, clock, permit, cache = admission_case
 
@@ -47,7 +47,7 @@ def test_shared_policy_routes_initial_entry_but_rejects_missing_agent_edge(admis
 
 def test_shared_policy_keeps_source_through_routing_and_denies_stale_epochs(admission_case):
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
-    from caller_runtime.services.conversation import ConversationPolicy
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, container, clock, permit, cache = admission_case
 
@@ -99,7 +99,7 @@ def test_shared_policy_keeps_source_through_routing_and_denies_stale_epochs(admi
 
 def test_speech_policy_requires_confirmed_segment_retirement_before_owner_changes(admission_case):
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
-    from caller_runtime.services.conversation import ConversationPolicy
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, container, clock, permit, cache = admission_case
 
@@ -125,7 +125,7 @@ def test_speech_policy_requires_confirmed_segment_retirement_before_owner_change
 
 def test_speech_policy_requires_real_bound_segment_settlement_not_a_noop_hook(live_case):
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
-    from caller_runtime.services.conversation import ConversationPolicy
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, clock, socket, opened = live_case
 
@@ -171,7 +171,9 @@ def test_speech_policy_requires_real_bound_segment_settlement_not_a_noop_hook(li
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("outcome", ["success", "revoked", "unknown", "stopped", "late"])
+@pytest.mark.parametrize(
+    "outcome", ["success", "revoked", "unknown", "stopped", "late", "redirect"]
+)
 def test_capability_dispatch_is_bound_intent_gated_and_never_replayed(admission_case, outcome):
     from types import SimpleNamespace
 
@@ -179,8 +181,8 @@ def test_capability_dispatch_is_bound_intent_gated_and_never_replayed(admission_
 
     from caller_runtime.adapters.capability_client import ConversationCapabilityClient
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
-    from caller_runtime.services.conversation import ConversationPolicy
-    from caller_runtime.services.test_admission import CleanupObservations
+    from caller_runtime.services.cleanup import CleanupObservations
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, container, clock, permit, cache = admission_case
     requests, scopes = [], []
@@ -207,6 +209,12 @@ def test_capability_dispatch_is_bound_intent_gated_and_never_replayed(admission_
         assert request.url == "https://management.fixture.example/v1/runtime/capabilities/execute"
         if outcome == "unknown":
             raise httpx.ReadError("synthetic-unknown")
+        if outcome == "redirect":
+            return httpx.Response(
+                302,
+                text="synthetic-private-error-payload",
+                headers={"Location": "https://foreign.example.invalid/"},
+            )
         if outcome == "revoked":
             return httpx.Response(403, json={"code": "capability_not_allowed"})
         if outcome == "late":
@@ -256,8 +264,9 @@ def test_capability_dispatch_is_bound_intent_gated_and_never_replayed(admission_
             result = await policy.capability(client, "beta-tool", "public-lookup", {}, work)
             assert result == {"name": "Synthetic public result"}
         else:
-            with pytest.raises((PermissionError, RuntimeError)):
+            with pytest.raises((PermissionError, RuntimeError)) as failure:
                 await policy.capability(client, "beta-tool", "public-lookup", {}, work)
+            assert "synthetic-private-error-payload" not in str(failure.value)
         observed = (
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority.slots[0]
@@ -266,7 +275,7 @@ def test_capability_dispatch_is_bound_intent_gated_and_never_replayed(admission_
         assert progress.attempted == (0 if outcome == "stopped" else 1)
         if outcome in {"success", "revoked", "late"}:
             assert progress.settled == progress.attempted
-        elif outcome == "unknown":
+        elif outcome in {"unknown", "redirect"}:
             assert progress.settled == 0
             with pytest.raises((PermissionError, RuntimeError)):
                 await policy.capability(client, "beta-tool", "public-lookup", {}, work)
@@ -275,7 +284,7 @@ def test_capability_dispatch_is_bound_intent_gated_and_never_replayed(admission_
         assert observed.resources["live"].attempted == 0
         terminal = await service.mark_terminal(policy.slot.session_id, policy.slot.owner_epoch)
         proof = await observations.observe(terminal, asyncio.get_running_loop().time() + 1)
-        assert (proof is not None) == (outcome != "unknown")
+        assert (proof is not None) == (outcome not in {"unknown", "redirect"})
 
     policy = work = None
     asyncio.run(scenario())
@@ -295,7 +304,7 @@ def test_capability_invalid_input_never_requests_credentials_or_records_intent(
 ):
     from caller_runtime.adapters.capability_client import ConversationCapabilityClient
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
-    from caller_runtime.services.conversation import ConversationPolicy
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, container, clock, permit, cache = admission_case
 
@@ -438,7 +447,8 @@ def text_execution_case(admission_case):
 
     from caller_runtime.adapters.foundry_text import FoundryTextAdapter
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
-    from caller_runtime.services.conversation import ConversationExecutor, ConversationPolicy
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, container, clock, permit, cache = admission_case
     entered, release = asyncio.Event(), asyncio.Event()
@@ -722,7 +732,8 @@ def test_text_executor_applies_directed_tool_handover_with_filtered_context(text
 def test_speech_delegation_uses_shared_executor_and_exact_id_without_guessing(
     live_case, text_execution_case, clear
 ):
-    from caller_runtime.services.conversation import ConversationExecutor, ConversationPolicy
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -811,7 +822,7 @@ def test_speech_handover_retires_actual_socket_before_any_continuation(
     live_case, monkeypatch, confirmed
 ):
     from caller_runtime.domain.conversation import WorkBudget
-    from caller_runtime.services.conversation import ConversationPolicy, SpeechSegments
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     service, repository, clock, socket, opened = live_case
     created, messages = [], []
@@ -884,11 +895,8 @@ def test_speech_handover_retires_actual_socket_before_any_continuation(
 def test_speech_interrupt_retires_generation_without_adopting_old_work(
     live_case, text_execution_case, monkeypatch
 ):
-    from caller_runtime.services.conversation import (
-        ConversationExecutor,
-        ConversationPolicy,
-        SpeechSegments,
-    )
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -954,7 +962,7 @@ def test_speech_interrupt_retires_generation_without_adopting_old_work(
 
 def test_speech_transport_disposal_failure_never_authorizes_continuation(live_case, monkeypatch):
     from caller_runtime.domain.conversation import WorkBudget
-    from caller_runtime.services.conversation import ConversationPolicy, SpeechSegments
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     service, repository, clock, socket, opened = live_case
 
@@ -1001,11 +1009,8 @@ def test_speech_transport_disposal_failure_never_authorizes_continuation(live_ca
 def test_speech_sdk_handover_uses_new_segment_general_context_not_old_delegation(
     live_case, text_execution_case, monkeypatch
 ):
-    from caller_runtime.services.conversation import (
-        ConversationExecutor,
-        ConversationPolicy,
-        SpeechSegments,
-    )
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -1093,7 +1098,7 @@ def test_speech_reader_tracks_authorized_generation_only_and_never_fault_reconne
     import base64
 
     from caller_runtime.domain.conversation import WorkBudget
-    from caller_runtime.services.conversation import ConversationPolicy, SpeechSegments
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     service, repository, clock, socket, opened = live_case
 
@@ -1168,7 +1173,7 @@ def test_speech_reader_tracks_authorized_generation_only_and_never_fault_reconne
 def test_text_stop_clears_volatile_context_but_only_definitive_work_releases(
     text_execution_case, admission_case, monkeypatch, completed
 ):
-    from caller_runtime.services.test_admission import CleanupObservations, ResourceCleanupVerifier
+    from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
     service, repository, container, clock, permit, cache = admission_case
@@ -1211,11 +1216,8 @@ def test_text_stop_clears_volatile_context_but_only_definitive_work_releases(
 def test_speech_transcript_budget_is_volatile_and_only_verified_user_speech_refreshes_idle(
     live_case, text_execution_case
 ):
-    from caller_runtime.services.conversation import (
-        ConversationExecutor,
-        ConversationPolicy,
-        SpeechSegments,
-    )
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -1314,8 +1316,9 @@ def test_zero_attempt_expired_start_releases_without_allocating_cleanup_model_or
     text_execution_case, admission_case, monkeypatch, mode
 ):
     from caller_runtime.observability import Telemetry
-    from caller_runtime.services.conversation import ConversationExecutor, ConversationPolicy
-    from caller_runtime.services.test_admission import CleanupObservations, ResourceCleanupVerifier
+    from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
     service, repository, container, clock, permit, cache = admission_case
@@ -1349,7 +1352,7 @@ def test_zero_attempt_expired_start_releases_without_allocating_cleanup_model_or
             ).authority.slots
             assert telemetry.events[-1]["event"] == "test.cleanup"
             assert (
-                telemetry.events[-1]["mode"] == mode
+                telemetry.events[-1]["kind"] == ("voice" if mode == "speech" else "text")
                 and telemetry.events[-1]["outcome"] == "success"
             )
             serialized = json.dumps(telemetry.events)
@@ -1407,12 +1410,9 @@ def test_cleanup_timeout_never_fabricates_disposal_and_always_purges(
 def test_authority_loss_still_disposes_owned_resources_but_never_releases(
     text_execution_case, live_case, admission_case, monkeypatch, speech
 ):
-    from caller_runtime.adapters.test_admission_repository import AuthorityUnavailable
-    from caller_runtime.services.conversation import (
-        ConversationExecutor,
-        ConversationPolicy,
-        SpeechSegments,
-    )
+    from caller_runtime.adapters.admission_repository import AuthorityUnavailable
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
     service, repository, clock, socket, opened = live_case
@@ -1454,13 +1454,13 @@ def test_wire_rejects_unreviewed_or_oversized_server_control_before_enqueue(
 ):
     from types import SimpleNamespace
 
-    from caller_runtime.api.test_sessions import TestWire
+    from caller_runtime.api.voice import VoiceWire
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
 
     async def scenario():
         controller = await setup()
-        wire = TestWire(SimpleNamespace())
+        wire = VoiceWire(SimpleNamespace())
         wire.session = controller
         event = (
             {
@@ -1481,13 +1481,13 @@ def test_wire_rejects_unreviewed_or_oversized_server_control_before_enqueue(
 def test_wire_control_queue_never_exceeds_sixty_four_pending_messages(text_execution_case):
     from types import SimpleNamespace
 
-    from caller_runtime.api.test_sessions import TestWire
+    from caller_runtime.api.voice import VoiceWire
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
 
     async def scenario():
         controller = await setup()
-        wire = TestWire(SimpleNamespace())
+        wire = VoiceWire(SimpleNamespace())
         wire.session = controller
         for index in range(64):
             await wire.emit({"type": "pong", "nonce": "n" + str(index)})
@@ -1510,8 +1510,8 @@ def test_wire_rechecks_authority_before_queued_output_not_just_at_enqueue(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from caller_runtime.api.test_sessions import TestWire
-    from caller_runtime.services.test_admission import AdmissionError
+    from caller_runtime.api.voice import VoiceWire
+    from caller_runtime.services.admission import AdmissionError
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
     service, repository, container, clock, permit, cache = admission_case
@@ -1519,7 +1519,7 @@ def test_wire_rechecks_authority_before_queued_output_not_just_at_enqueue(
     async def scenario():
         controller = await setup()
         socket = SimpleNamespace(send_text=AsyncMock())
-        wire = TestWire(socket)
+        wire = VoiceWire(socket)
         wire.session = controller
         await wire.emit({"type": "pong", "nonce": "queued-before-expiry"})
         clock.advance(121)
@@ -1534,7 +1534,7 @@ def test_wire_rechecks_authority_before_queued_output_not_just_at_enqueue(
 def test_audio_flow_bounds_capture_rate_sequences_and_generation_without_idle_flags():
     import struct
 
-    from caller_runtime.api.test_sessions import AudioFlow
+    from caller_runtime.api.voice import AudioFlow
 
     ticks = [0.0]
     flow = AudioFlow(generation=7, monotonic=lambda: ticks[0])
@@ -1557,7 +1557,7 @@ def test_audio_flow_bounds_capture_rate_sequences_and_generation_without_idle_fl
 def test_audio_flow_played_ack_cannot_free_unsent_audio_or_exceed_500ms():
     import struct
 
-    from caller_runtime.api.test_sessions import AudioFlow
+    from caller_runtime.api.voice import AudioFlow
 
     flow = AudioFlow(generation=3, monotonic=lambda: 0.0)
     frames = flow.output(b"\0" * 24000, generation=3)
@@ -1587,7 +1587,7 @@ def test_audio_flow_played_ack_cannot_free_unsent_audio_or_exceed_500ms():
 def test_audio_flow_rejects_malformed_before_pcm_acceptance(fault):
     import struct
 
-    from caller_runtime.api.test_sessions import AudioFlow
+    from caller_runtime.api.voice import AudioFlow
 
     frame = struct.pack(">BII", 2 if fault == "protocol" else 1, 1, 1)
     frame += b"\0" * (1922 if fault == "oversized" else 959 if fault == "odd" else 960)
@@ -1603,13 +1603,10 @@ def test_wire_audio_shares_writer_budget_and_discards_actual_retired_generation(
     import struct
     from types import SimpleNamespace
 
-    from caller_runtime.api.test_sessions import TestWire
+    from caller_runtime.api.voice import VoiceWire
     from caller_runtime.domain.conversation import WorkBudget
-    from caller_runtime.services.conversation import (
-        ConversationExecutor,
-        ConversationPolicy,
-        SpeechSegments,
-    )
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -1617,7 +1614,7 @@ def test_wire_audio_shares_writer_budget_and_discards_actual_retired_generation(
     async def scenario():
         original, segment = await opened()
         slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
-        wire = TestWire(SimpleNamespace())
+        wire = VoiceWire(SimpleNamespace())
 
         async def connect(url, **options):
             assert socket.closed == 1
@@ -1694,7 +1691,8 @@ def test_speech_fragments_require_clarification_on_ambiguous_context(fault):
 def test_correlated_fragments_need_shared_backend_clarity_before_any_actions(
     live_case, text_execution_case, clear
 ):
-    from caller_runtime.services.conversation import ConversationExecutor, ConversationPolicy
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -1800,8 +1798,9 @@ def test_wire_rejects_old_played_generation_even_when_audio_sequence_is_reused(
 ):
     from types import SimpleNamespace
 
-    from caller_runtime.api.test_sessions import TestWire
-    from caller_runtime.services.conversation import ConversationExecutor, ConversationPolicy
+    from caller_runtime.api.voice import VoiceWire
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -1815,7 +1814,7 @@ def test_wire_rejects_old_played_generation_even_when_audio_sequence_is_reused(
         controller = ConversationExecutor(
             policy=policy, text_adapter=adapter, utc_now=clock.utc_now
         )
-        wire = TestWire(SimpleNamespace())
+        wire = VoiceWire(SimpleNamespace())
         wire.session = controller
         wire._advance(2)
         with pytest.raises(PermissionError, match="stale_generation"):
@@ -1856,8 +1855,9 @@ def test_wire_duplicate_accepted_interrupt_is_acknowledged_after_generation_adva
 ):
     from types import SimpleNamespace
 
-    from caller_runtime.api.test_sessions import TestWire
-    from caller_runtime.services.conversation import ConversationExecutor, ConversationPolicy
+    from caller_runtime.api.voice import VoiceWire
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -1872,7 +1872,7 @@ def test_wire_duplicate_accepted_interrupt_is_acknowledged_after_generation_adva
             text_adapter=adapter,
             utc_now=clock.utc_now,
         )
-        wire = TestWire(SimpleNamespace())
+        wire = VoiceWire(SimpleNamespace())
         wire.session = controller
         raw = json.dumps(
             {
@@ -1928,7 +1928,7 @@ def test_wire_duplicate_accepted_interrupt_is_acknowledged_after_generation_adva
     ids=["credit-bound", "credit-type", "ack-sequence", "nonce", "speaker", "timeline"],
 )
 def test_server_control_field_values_are_closed_not_only_key_names(event):
-    from caller_runtime.api.test_sessions import server_control
+    from caller_runtime.api.voice import server_control
 
     with pytest.raises(PermissionError):
         server_control(event)
@@ -1937,7 +1937,8 @@ def test_server_control_field_values_are_closed_not_only_key_names(event):
 def test_shared_model_readiness_uses_pinned_welcome_before_initial_ready_without_tools(
     text_execution_case, admission_case
 ):
-    from caller_runtime.services.conversation import ConversationExecutor, ConversationPolicy
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
     service, repository, container, clock, permit, cache = admission_case
@@ -1986,15 +1987,11 @@ def test_aggregate_context_overflow_fails_before_model_without_trimming_security
         controller = await setup()
         controller._history = [{"role": "user", "content": "synthetic-private-context-" * 12000}]
         assert controller.retained_bytes > 256 * 1024
-        await controller.submit_text("text-overflow", "Synthetic new request")
-        await controller.process_next(emit=emit)
-        assert not requests
-        assert messages[-1]["type"] == "error" and messages[-1]["code"] == "work_unavailable"
+        with pytest.raises(PermissionError, match="^conversation_context_limit$"):
+            await controller.submit_text("text-overflow", "Synthetic new request")
+        assert not requests and not messages
+        await controller.close()
         assert controller.retained_bytes == 0 and adapter.disposed
-        terminal = (
-            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
-        ).authority.slots[0]
-        assert terminal.terminal_fence and terminal.attempted_through == 0
 
     asyncio.run(scenario())
 

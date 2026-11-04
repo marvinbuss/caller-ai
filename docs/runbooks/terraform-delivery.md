@@ -8,13 +8,13 @@ explicit infrastructure-code scope addition, not a cloud deployment, resource/ro
 automatic reopening of feature-001 deferred work. No real Terraform plan or apply has run.
 The application's model/device/alert acceptance remains separate from infrastructure creation.
 
-Two roots are shared by every environment:
+Two roots are shared by every stage (`dev`, `test`, `prod` and any later one):
 
 - [Bootstrap](../../code/infra/terraform/bootstrap/main.tf) creates the protected state account,
   private `tfstate` and separate plan containers, private connectivity and container-scoped writers.
 - [Environment](../../code/infra/terraform/environments/main.tf) composes the existing platform
-  module with explicit `environment` and reviewed inputs. There is no copied dev/prod Terraform
-  implementation; resource addresses and pinned provider selections are retained.
+  module with reviewed inputs and an optional free-form `label` used only in tags. There is no
+  copied dev/prod Terraform implementation and no code that branches on a stage name; resource addresses and pinned provider selections are retained.
 
 The platform defines private AKS/ACR/Cosmos/Vault/Monitor resources and optional managed
 Action Groups. It does not publish images, deploy applications, initialize missing application
@@ -27,22 +27,28 @@ until actual collection/query/recipient/recovery evidence is qualified.
 
 Use the [platform variable example](../../code/infra/terraform/config/dev.platform.tfvars.json.example) and adjacent examples as a schema guide. They contain
 synthetic IDs/names and intentionally unapproved Kubernetes/VM values, not deployable defaults.
-For `dev`, supply these four reviewed files, without the `.example` suffix:
+Synthetic examples exist for `dev`, `test` and `prod`, differing only in data. For a stage `<name>`,
+supply these four reviewed files, without the `.example` suffix (shown for `dev`):
 
 | File Under `code/infra/terraform/config/` | Purpose |
 |---|---|
 | `dev.bootstrap.azurerm.tfbackend.json` | Existing administrative seed account/container and `dev/bootstrap.tfstate`. |
 | `dev.bootstrap.tfvars.json` | New state resource names, region, environment, retention, private-network references and approved provisioning identity/writer object IDs. |
 | `dev.platform.azurerm.tfbackend.json` | Provisioned state account/container and `dev/platform.tfstate`. |
-| `dev.platform.tfvars.json` | Same shared platform schema: explicit identities, resources, service sizes, private networking, security, monitoring/optional recipients and `environment="dev"`. |
+| `dev.platform.tfvars.json` | Same shared platform schema: explicit identities, resources, service sizes, private networking, security, monitoring/optional recipients and an optional `label`. |
 
-For another environment, create only the corresponding files with that environment name and
+To add a stage, create only the four files named `<name>.<stack>...` with their own state keys,
+resource names, identities and settings, then create the protected GitHub environments
+`<name>-terraform-<stack>-<operation>`; no code, workflow or list needs an edit. A stage may use any
+name, including ones nobody listed.
 distinct state keys/resource names/identities/approved settings. Do not copy root `.tf` files or
 use Terraform workspaces as environment aliases. The helper uses only the default workspace.
 JSON backend files are parsed structurally and passed as validated `-backend-config=key=value`
 arguments. Allowed fields are account/group/container/key, OIDC/Entra/CLI switches and optional
 identity IDs. `use_azuread_auth=true`, `use_oidc=true`, `use_cli=false` are mandatory. The exact
-key convention is `<environment>/<bootstrap|platform>.tfstate`.
+state key is plain data in each backend file (only its shape is checked), and the bootstrap stack
+holds no platform state key. `verify_terraform.py check` validates every example pair it finds and
+fails when any `.tf` file branches on a stage name.
 
 These are reviewed nonsecret inputs; secrets, keys, SAS, passwords and connection strings must
 not appear in them. CI rejects known credential fields and inherited argument/authentication

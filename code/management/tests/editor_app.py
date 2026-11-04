@@ -22,11 +22,13 @@ from reflex.config import get_config
 from starlette.responses import RedirectResponse
 
 from management_app.adapters.audit_repository import LocalAuditRepository
+from management_app.adapters.backend_connection import TurnPermits
 from management_app.adapters.configuration_repository import (
     LocalConfigurationRepository,
     verified_revision,
 )
 from management_app.adapters.test_session_client import TestSessionClient, direct_socket
+from management_app.adapters.text_relay import ActiveRevision
 from management_app.api.configuration import create_router
 from management_app.api.runtime_configuration import create_router as runtime_router
 from management_app.api.test_sessions import create_router as test_router
@@ -34,11 +36,11 @@ from management_app.health import create_health_api
 from management_app.management_app import create_app, editor_asgi
 from management_app.models.capabilities import ApprovedCapabilities
 from management_app.observability import Telemetry
+from management_app.reflex_security import ReflexEventGuard
 from management_app.security import (
     EntraPolicy,
     IdentityService,
     Principal,
-    ReflexEventGuard,
     SessionStore,
     TestPermitSigner,
     TokenVerifier,
@@ -48,7 +50,7 @@ from management_app.services.audit import AuditService
 from management_app.services.configuration_publication import runtime_projection
 from management_app.services.configuration_validation import ConfigurationValidator
 from management_app.settings import Settings
-from management_app.state.configuration_editor import EditorServices
+from management_app.state.editor_draft import EditorServices
 from management_app.state.test_console import ConsoleServices
 from tests.conftest import capability_graph_document
 
@@ -145,14 +147,40 @@ class FixtureCredential:
 
 
 async def fixture_socket(url, **options):
-    if url != "wss://runtime.fixture.example/v1/internal/test-sessions" or not fixture.get(
+    if url != "wss://runtime.fixture.example/v1/conversations/voice" or not fixture.get(
         "runtime_port"
     ):
         raise ValueError("owned_runtime_binding_required")
     options["ssl"] = ssl.create_default_context(cafile=str(fixture_path.parent / "certificate.pem"))
     return await direct_socket(
-        f"wss://127.0.0.1:{fixture['runtime_port']}/v1/internal/test-sessions", **options
+        f"wss://127.0.0.1:{fixture['runtime_port']}/v1/conversations/voice", **options
     )
+
+
+class FixtureRuntimeTransport(httpx.AsyncBaseTransport):
+    """Sends the console's text requests to the owned runtime process over verified TLS."""
+
+    def __init__(self):
+        self._inner = None
+
+    async def handle_async_request(self, request):
+        if request.url.host != "runtime.fixture.example" or not fixture.get("runtime_port"):
+            raise ValueError("owned_runtime_binding_required")
+        if self._inner is None:
+            # Built on first use: the certificate is created after this module is imported.
+            context = ssl.create_default_context(
+                cafile=str(fixture_path.parent / "certificate.pem")
+            )
+            self._inner = httpx.AsyncHTTPTransport(verify=context, trust_env=False)
+        request.url = request.url.copy_with(host="127.0.0.1", port=fixture["runtime_port"])
+        return await self._inner.handle_async_request(request)
+
+
+async def fixture_revision():
+    current = await repository.read_active()
+    document = current[0]
+    welcome = next(agent["agentId"] for agent in document["agents"] if agent["role"] == "welcome")
+    return ActiveRevision(document["id"], document["revisionNumber"], welcome)
 
 
 test_relay = (
@@ -166,6 +194,9 @@ test_relay = (
         max_clock_skew_seconds=0.1,
         socket_factory=fixture_socket,
         telemetry=test_telemetry,
+        permits=TurnPermits(test_signer, lambda: datetime.now(UTC)),
+        active_revision=fixture_revision,
+        http_transport=FixtureRuntimeTransport(),
     )
     if fixture.get("runtime_port")
     else None
@@ -348,7 +379,7 @@ def compile_frontend():
 
 
 def serve():
-    return editor_asgi(app, additional_paths=frozenset({"/v1/test-tickets"}))
+    return editor_asgi(app, additional_paths=frozenset({"/v1/console/tickets"}))
 
 
 def run_server():

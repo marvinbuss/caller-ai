@@ -672,7 +672,7 @@ image publication or an unreviewed deployment.
 [tasks]: ../../specs/002-multimodal-agent-management/tasks.md
 [live]: ../../code/backend/tests/contract/test_gpt_live.py
 [execution]: ../../code/backend/tests/unit/test_conversation.py
-[admission]: ../../code/backend/tests/unit/test_test_admission.py
+[admission]: ../../code/backend/tests/unit/test_admission.py
 [runtime-integration]: ../../code/backend/tests/integration/test_conversation.py
 [validation]: ../../code/management/tests/unit/test_configuration_validation.py
 [publication]: ../../code/management/tests/integration/test_configuration_publication.py

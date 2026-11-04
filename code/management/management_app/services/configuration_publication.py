@@ -1,4 +1,10 @@
-"""Pure validated revision/pointer/current-revocation publication policy for one organization."""
+"""Pure policy that turns a validated graph into a revision, a pointer and the runtime projection.
+
+`publication` runs the validator, numbers the new revision after the previous one and returns the
+documents to commit together; any validation issue raises `ConfigurationRejected` with metadata-only
+issues. `runtime_projection` drops layout and credential references and adds a policy hash, so the
+backend receives only what it needs and can check it. No I/O happens here.
+"""
 
 import copy
 import hashlib

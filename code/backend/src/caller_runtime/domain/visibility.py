@@ -1,4 +1,11 @@
-"""Pinned trusted discovery and target authorization; model text has no authority."""
+"""Which agents and communities a session may discover or move to, from one pinned snapshot.
+
+`CommunityVisibility` validates the graph shape once (unique ids, exactly one enabled welcome,
+routing and goodbye agent, entry agents that belong to their community, no self or duplicate
+relationships) and then answers targeting questions from that copy only. Model text is never an
+authority: a target name the model produces is checked here, and anything not listed is refused. A
+malformed snapshot raises at construction rather than producing a partly usable policy.
+"""
 
 import json
 from collections.abc import Mapping

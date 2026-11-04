@@ -33,6 +33,12 @@ repos:
         language: system
         types: [text]
         exclude: ^code/management/reflex\.lock/package\.json$
+      - id: modules
+        name: Production module reachability and purpose docstrings (strict)
+        entry: uv run --locked --project code/tools python code/tools/scripts/check_modules.py --strict
+        language: system
+        pass_filenames: false
+        files: ^code/(backend/src|management/management_app|tools/scripts)/.*\.py$
       - id: terraform
         name: Locked credential-free Terraform checks
         entry: uv run --locked --project code/tools python code/tools/scripts/verify_terraform.py check

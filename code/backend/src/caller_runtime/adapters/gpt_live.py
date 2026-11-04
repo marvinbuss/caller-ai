@@ -1,4 +1,11 @@
-"""Foundry Live client-delegation wire contract; no Realtime/Responses fallback."""
+"""GPT-Live client-delegation adapter on the OpenAI SDK, with strict validation of every event.
+
+`sdk_socket` opens the session through `AsyncOpenAI(...).live.connect()` with bounded frames, no
+proxy and no redirect to another origin. `GptLiveProtocol` validates each raw frame (size, duplicate
+keys, shape, exact started configuration) because the SDK does not; `GptLiveAdapter` and
+`GptLiveSession` add admission, deadlines and a closure receipt. Failures are fixed codes, never
+provider text. No Realtime, Responses or other fallback exists.
+"""
 
 import asyncio
 import base64
@@ -16,8 +23,11 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from azure.core.credentials import AccessToken
-from websockets.asyncio.client import connect
+from openai import AsyncOpenAI
+from openai.resources.live.live import AsyncLiveConnection
+from openai.types.websocket_connection_options import WebSocketConnectionOptions
 
+from caller_runtime.adapters.strict_json import unique_object
 from caller_runtime.domain.conversation import (
     AttemptIntent,
     ClosureReceipt,
@@ -26,7 +36,7 @@ from caller_runtime.domain.conversation import (
     utc,
 )
 from caller_runtime.observability import Telemetry
-from caller_runtime.services.test_admission import (
+from caller_runtime.services.admission import (
     AdmissionError,
     SettlementObserver,
     TestAdmissionService,
@@ -37,15 +47,6 @@ IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 CLOSE_REASONS = frozenset(
     {"close_requested", "expired", "content", "remote_hangup", "connection_lost"}
 )
-
-
-def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate_live_property")
-        result[key] = value
-    return result
 
 
 def keys(document: dict[str, Any], required: set[str], optional: set[str] | None = None) -> None:
@@ -268,13 +269,35 @@ class LiveSocket(Protocol):
     async def close(self) -> None: ...
 
 
-class _NoRedirectConnect(connect):
-    def process_redirect(self, exc: Exception) -> Exception | str:
-        return exc
+class _SdkSocket:
+    def __init__(self, client: AsyncOpenAI, connection: AsyncLiveConnection) -> None:
+        self._client, self._connection = client, connection
+
+    async def send(self, message: str) -> None:
+        await self._connection.send_raw(message)
+
+    async def recv(self) -> str | bytes:
+        # Raw bytes keep the strict duplicate-key and size validation in GptLiveProtocol.
+        return await self._connection.recv_bytes()
+
+    async def close(self) -> None:
+        try:
+            await self._connection.close()
+        finally:
+            await self._client.close()
 
 
-async def direct_socket(url: str, **options: Any) -> LiveSocket:
-    return cast(LiveSocket, await _NoRedirectConnect(url, **options))
+async def sdk_socket(base_url: str, *, token: str, **options: Any) -> LiveSocket:
+    # No retries or reconnects: a dropped Live session must end, never silently resume.
+    client = AsyncOpenAI(api_key=token, base_url=base_url, max_retries=0)
+    try:
+        connection = await client.live.connect(
+            websocket_connection_options=cast(WebSocketConnectionOptions, options)
+        ).enter()
+    except BaseException:
+        await client.close()
+        raise
+    return _SdkSocket(client, connection)
 
 
 class GptLiveAdapter:
@@ -287,7 +310,7 @@ class GptLiveAdapter:
         admission: TestAdmissionService,
         utc_now: Callable[[], datetime],
         voice: str,
-        socket_factory: Callable[..., Awaitable[LiveSocket]] = direct_socket,
+        socket_factory: Callable[..., Awaitable[LiveSocket]] = sdk_socket,
         settlement_observer: SettlementObserver | None = None,
         telemetry: Telemetry | None = None,
     ) -> None:
@@ -314,7 +337,7 @@ class GptLiveAdapter:
                 raise ValueError("invalid_binding")
         except (ValueError, TypeError):
             raise ValueError("invalid_live_binding") from None
-        self._url = "wss://" + (parts.netloc or "") + "/openai/v1/live/sessions"
+        self._url = "https://" + (parts.netloc or "") + "/openai/v1"
         self._credential, self.admission, self.utc_now = credential, admission, utc_now
         self._voice, self._factory = voice, socket_factory
         self._settlement_observer = settlement_observer
@@ -357,6 +380,7 @@ class GptLiveAdapter:
         try:
             async with asyncio.timeout(remaining):
                 token = await self._credential.get_token("https://ai.azure.com/.default")
+                # The token must outlive the session boundary; the SDK cannot refresh it.
                 if (
                     not token.token
                     or not math.isfinite(token.expires_on)
@@ -376,7 +400,7 @@ class GptLiveAdapter:
                     nonlocal socket
                     socket = await self._factory(
                         self._url,
-                        additional_headers={"Authorization": "Bearer " + token.token},
+                        token=token.token,
                         ssl=ssl.create_default_context(),
                         proxy=None,
                         compression=None,
@@ -415,6 +439,7 @@ class GptLiveAdapter:
             raise PermissionError("live_unavailable") from None
         finally:
             if socket is not None and slot.session_id not in self._sessions:
+                # A socket opened by a start that failed must not outlive it.
                 try:
                     async with asyncio.timeout(1):
                         await socket.close()
@@ -506,7 +531,12 @@ class GptLiveSession:
                     voiceSeconds=self.protocol.voice_seconds,
                     authenticated=True,
                 )
-                await self._confirm_closure()
+                try:
+                    await self._confirm_closure()
+                except Exception:
+                    # The provider's close event is already proven; close() settles it again, so
+                    # one transient authority failure must not leave the slot held as unverified.
+                    pass
             return event
 
     async def _confirm_closure(self) -> None:
@@ -619,9 +649,17 @@ class GptLiveSession:
                 async with asyncio.timeout_at(deadline):
                     if not self.protocol.closed:
                         await self._send({"type": "session.close"})
+                    # Only the provider's close event proves usage ended; a dropped socket does not.
                     while self._receipt is None:
                         await self._receive()
-                    await self._confirm_closure()
+                    for attempt in range(3):
+                        try:
+                            await self._confirm_closure()
+                            break
+                        except Exception:
+                            if attempt == 2:
+                                raise
+                            await asyncio.sleep(0.05 * (attempt + 1))
             except Exception:
                 raise PermissionError("live_closure_unverified") from None
             finally:

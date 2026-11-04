@@ -385,7 +385,7 @@ def test_oidc_callback_requires_matching_cookie_state_and_nonce_then_is_single_u
 def test_reflex_guard_strips_credentials_and_denies_cross_actor_state_reuse(
     security, signing_key
 ) -> None:
-    from management_app.security import ReflexEventGuard
+    from management_app.reflex_security import ReflexEventGuard
 
     identity, keys = security
     first = identity.sessions.issue(
@@ -517,7 +517,7 @@ def test_actual_reflex_namespace_redacts_headers_before_enqueue_and_rechecks_rev
     from reflex.app import EventNamespace, EventProcessor
 
     from management_app.management_app import create_app
-    from management_app.security import (
+    from management_app.reflex_security import (
         EventAuthorizationMiddleware,
         ReflexEventGuard,
         SecureEventNamespace,
@@ -597,7 +597,7 @@ def test_actual_reflex_namespace_redacts_headers_before_enqueue_and_rechecks_rev
 
 
 def test_protected_reflex_boundary_denies_uploads_without_dispatching(security) -> None:
-    from management_app.security import ProtectedReflexBoundary
+    from management_app.reflex_security import ProtectedReflexBoundary
 
     identity, keys = security
     app = FastAPI()

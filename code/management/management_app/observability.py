@@ -1,4 +1,11 @@
-"""Management-owned metadata telemetry; no content fields or network exporters."""
+"""Management-owned metadata telemetry; no content fields or network exporters.
+
+`Telemetry` keeps the latest 512 spans and 512 events in memory and tracks the test-console
+lifecycle. Operations, modes, phases and reasons come from the fixed sets below, so a caller
+cannot invent attribute names or values or smuggle content into them. Correlation ids are
+accepted only in a narrow safe shape (`sanitize_correlation_id`) and are otherwise replaced. An
+optional alert sink receives a fixed-shape alert on repeated dependency failures or high latency.
+"""
 
 import asyncio
 import json
@@ -84,12 +91,10 @@ VALUES = {
         {
             "/healthz",
             "/readyz",
-            "/v1/dev/transport",
             "/v2/configuration",
             "/v2/runtime/configuration",
-            "/v1/internal/test-sessions",
-            "/v1/test-tickets",
-            "/v1/test-sessions",
+            "/v1/console/tickets",
+            "/v1/console/sessions",
             "unmatched",
         }
     ),
@@ -102,6 +107,8 @@ VALUES = {
 
 def sanitize_correlation_id(value: str | None) -> str:
     if value and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
+        # Secret-shaped prefixes (API key, access key, JWT) are refused so a secret pasted
+        # into a header can never be echoed into telemetry.
         if not value.startswith(("sk-", "AKIA", "eyJ")):
             return value
     return uuid4().hex

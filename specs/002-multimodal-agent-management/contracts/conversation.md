@@ -1,5 +1,10 @@
 # Contract: Published Browser Tests and GPT-Live Client Delegation
 
+> **Superseded by feature 003.** The backend now serves `POST /v1/conversations/text` and
+> `WS /v1/conversations/voice` (subprotocol `caller.voice.v1`) under one shared connection
+> contract; see [docs/conversation-endpoints.md](../../../docs/conversation-endpoints.md). The text
+> below is kept unchanged as the record of feature 002.
+
 **Version**: browser protocol `caller.test.v1`; new HTTP control routes `/v1`.
 **Status**: Design, not an implemented/live-qualified interface. Configuration schema/HTTP v2
 is independent of this first browser-test protocol. Both modalities use the same pinned

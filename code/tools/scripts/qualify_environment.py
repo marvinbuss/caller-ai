@@ -1,4 +1,12 @@
-"""Fail-closed environment observation harness; offline CLI cannot grant live approval."""
+"""Fail-closed environment observation harness; offline CLI cannot grant live approval.
+
+A qualification run checks the nine items in `CHECKS` (Terraform and image deployment, workload
+identity, private network, storage ownership, model provider, quota and budget, privacy
+approval, monitoring delivery) through injected probes, all within one overall deadline.
+Anything unreviewed, malformed, late or unobserved is a failure, and the report holds
+only fixed codes and references, never endpoints, tokens or content. The command line only
+validates a manifest offline; it cannot call a provider or approve an environment.
+"""
 
 from __future__ import annotations
 
@@ -22,12 +30,10 @@ CHECKS = (
     "workload_identity",
     "private_network",
     "storage_ownership",
-    "phone_provider",
     "model_provider",
     "quota_budget",
     "privacy_approval",
     "monitoring_delivery",
-    "rollout_enforcement",
 )
 
 

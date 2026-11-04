@@ -1,4 +1,9 @@
-"""Strict current authority and metadata-only admission contracts."""
+"""Models of the current permission authority and of capability admission attempts.
+
+The authority is one document (at most 128 KiB) listing disabled tools, disabled connections and
+revoked assignments with a policy version; every change is conditioned on its ETag, and a stale one
+raises `PermissionConflict`. Admission attempts hold fixed metadata only, never inputs or results.
+"""
 
 from datetime import UTC, datetime
 from typing import Literal, Self

@@ -1,4 +1,9 @@
-"""Frozen startup configuration; local mode never discovers live credentials."""
+"""Frozen startup settings read from `CALLER_*` environment variables.
+
+Local mode never discovers live credentials and live mode is refused at startup until reviewed
+adapters exist. Settings that would export content (`trace_include_content`) or enable unreviewed
+provider tracing fail validation instead of being ignored, and errors never echo their input.
+"""
 
 from typing import Literal, Self
 from uuid import uuid4

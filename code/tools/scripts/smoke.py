@@ -1,4 +1,10 @@
-"""Own both local application processes and verify readiness within a fixed budget."""
+"""Starts the real backend and management processes locally and verifies they become ready.
+
+It owns the processes it starts on free loopback ports, waits for `/readyz` within a fixed budget,
+checks the instance header so a foreign listener is never accepted, and stops only its own process
+trees. `running_configuration_editor` is the test host for the browser and relay suites; each host
+builds its own frontend because the compiled frontend bakes in that host's origin port.
+"""
 
 from __future__ import annotations
 
@@ -353,6 +359,7 @@ def running_configuration_editor(
                     "management": origin,
                     "runtime": f"https://127.0.0.1:{runtime_port}",
                     "certificate": str(directory / "certificate.pem"),
+                    "log": str(directory / "process.log"),
                     "processes": processes,
                     "sessions": json.loads((directory / "sessions.json").read_text()),
                 }

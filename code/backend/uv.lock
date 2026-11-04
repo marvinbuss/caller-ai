@@ -94,12 +94,14 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
-    { name = "openai-agents", extra = ["realtime"] },
+    { name = "openai" },
+    { name = "openai-agents" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -119,12 +121,14 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "jsonschema", specifier = ">=4.23,<5" },
-    { name = "openai-agents", extras = ["realtime"], specifier = ">=0.6,<1" },
+    { name = "openai", specifier = ">=3.31,<4" },
+    { name = "openai-agents", specifier = ">=0.6,<1" },
     { name = "opentelemetry-api", specifier = ">=1.30,<2" },
     { name = "opentelemetry-sdk", specifier = ">=1.30,<2" },
     { name = "pydantic-settings", specifier = ">=2.8,<3" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
+    { name = "websockets", specifier = ">=15,<17" },
 ]
 
 [package.metadata.requires-dev]
@@ -630,10 +634,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/05/93/01efc034d7011b89381f96a9fb8957c09a16e3c190f3a5de128e1d0a42e9/openai_agents-0.24.0-py3-none-any.whl", hash = "sha256:18d4ac34e84ed937333ec8ce46395ed3521ffcbb0a521780a4c2eaa451467f49", size = 1242571, upload-time = "2026-10-22T02:43:14Z" },
 ]
 
-[package.optional-dependencies]
-realtime = [
-    { name = "websockets" },
-]
 
 [[package]]
 name = "opentelemetry-api"

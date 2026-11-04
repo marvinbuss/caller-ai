@@ -1,4 +1,10 @@
-"""Single-organization declarative graphs and immutable-publication envelopes."""
+"""Pydantic models of the configuration graph and its immutable revisions.
+
+An agent has one of four roles (welcome, routing, goodbye, ordinary), belongs to at most one
+community and carries bounded text (prompts up to 16 KiB). Models forbid unknown fields, so a
+submitted graph cannot smuggle extra data into a revision. A published revision is immutable and
+numbered; the active pointer is a separate document.
+"""
 
 from datetime import UTC, datetime
 from typing import Literal

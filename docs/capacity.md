@@ -2,28 +2,27 @@
 
 ## Current State
 
-Actual model/phone cost per call, Cosmos RU demand, deployed node/session ceilings and safe
-fleet admission limits are **pending live measurement**. No invented cost, region, legal
-retention or quota default is accepted. Local virtual 100-to-200 reservations and synthetic
-latencies are control evidence, not production capacity or a billing estimate.
+Actual model cost per turn and per Live voice second, Cosmos RU demand, deployed instance and
+session ceilings and safe admission limits are **pending live measurement**. No invented cost,
+region, legal retention or quota default is accepted. Local control runs with synthetic latencies
+are not production capacity or a billing estimate.
 
 | Required measurement | State | Release obligation |
 |----------------------|-------|--------------------|
-| Model cost per call and transient handover overlap | Pending | Actual approved deployment usage/cost and simultaneous source/receiver headroom |
-| Phone connection/media/control cost and limits | Pending | Qualified scenario/provider eligibility and measured connection/codec behavior |
-| Cosmos RU per read/write/batch, throttling and retention | Pending | Owned-container Strong authority operations and failure behavior under measured load |
-| AKS node/pod/network and long-lived socket limits | Pending | Live 100/30-minute baseline, 200 within five minutes and 30-minute sustain |
-| Speech/greeting/handover latency and admission | Pending | Approved live SC-002/SC-003 samples, not HTTP means or virtual timing |
-| Planned-removal preservation | Pending | Actual persistent deletion guard, UID-bound retirement, zero planned disconnects |
-| Monitoring/firewall/egress storage budgets | Pending | Approved caps, actual ingestion/egress, retention and on-call delivery |
+| Text model cost per turn | Pending | Actual approved Foundry deployment usage and cost |
+| Live voice cost per second and context-window usage | Pending | Approved GPT-Live usage records (`voice_seconds` snapshots are control evidence only) |
+| Cosmos RU per authority and history read/write, throttling and retention | Pending | Owned-container Strong authority operations and failure behavior under measured load |
+| Text history storage growth | Pending | Measured item size and the 30-day expiry effect on the `text-conversations` container |
+| Instance and long-lived socket limits | Pending | Measured voice sessions per instance against the authority's five occupied slots |
+| Voice and text turn latency and admission | Pending | Approved live samples, not HTTP means or virtual timing |
+| Monitoring, firewall and egress storage budgets | Pending | Approved caps, actual ingestion/egress, retention and on-call delivery |
 
-The local coordinator requires explicit slots/aggregate/model/pending limits and retains
-conservative reservations on ambiguous writes. Reducing quota blocks new demand rather than
-dropping existing calls. Runtime resources are instance-local; global consensus, controller HA
-and restart reconciliation are not established. See [scaling](runbooks/scaling.md).
+Admission allows one active test per manager and at most five occupied slots in the shared
+authority item; an ambiguous write keeps a slot occupied until cleanup is verified. See
+[conversation endpoints](conversation-endpoints.md) and [text history](runbooks/text-history.md).
 
-Measure only after separately authorized T099 qualification and live T100/T118 execution.
-Record approved environment/image/review references and safe aggregate results without caller
-payloads, credentials or invented prices. Missing measurements block release but do not prevent
+Measure only after separately authorized qualification and live execution. Record approved
+environment, image and review references and safe aggregate results without conversation
+content, credentials or invented prices. Missing measurements block release but do not prevent
 local deterministic development. [Live environment status](acceptance/live-environment.md) and
 [release gates](acceptance/release-gates.md) remain the authoritative pending classifications.

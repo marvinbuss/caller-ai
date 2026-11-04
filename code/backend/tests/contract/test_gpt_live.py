@@ -158,3 +158,89 @@ def test_invalid_oversized_or_odd_pcm_events_reject_without_raw_details(protocol
     protocol.accept(json.dumps(started(protocol)))
     with pytest.raises(ValueError, match="^invalid_live_event$"):
         protocol.accept(raw)
+
+
+def serve_live(handler=None, *, process_request=None):
+    import contextlib
+
+    from websockets.asyncio.server import serve
+
+    @contextlib.asynccontextmanager
+    async def running():
+        async def default(connection):
+            await connection.send(json.dumps({"type": "session.started"}))
+            async for _message in connection:
+                pass
+
+        async with serve(
+            handler or default, "127.0.0.1", 0, process_request=process_request
+        ) as server:
+            yield server.sockets[0].getsockname()[1]
+
+    return running()
+
+
+def test_sdk_socket_connects_on_live_path_with_bearer_and_enforces_frame_limit():
+    import asyncio
+
+    from websockets.exceptions import ConnectionClosedError
+
+    from caller_runtime.adapters.gpt_live import EVENT_LIMIT, sdk_socket
+
+    seen = {}
+
+    def inspect(connection, request):
+        seen["path"] = request.path
+        seen["authorization"] = request.headers.get("Authorization")
+
+    async def handler(connection):
+        await connection.send(json.dumps({"type": "session.started"}))
+        await connection.send("x" * (EVENT_LIMIT + 1))
+        await connection.wait_closed()
+
+    async def scenario():
+        async with serve_live(handler, process_request=inspect) as port:
+            socket = await sdk_socket(
+                f"http://127.0.0.1:{port}/openai/v1",
+                token="synthetic-token",
+                max_size=EVENT_LIMIT,
+                compression=None,
+                proxy=None,
+            )
+            assert json.loads(await socket.recv()) == {"type": "session.started"}
+            with pytest.raises(ConnectionClosedError):
+                await socket.recv()
+            await socket.close()
+
+    asyncio.run(scenario())
+    assert seen == {
+        "path": "/openai/v1/live/sessions",
+        "authorization": "Bearer synthetic-token",
+    }
+
+
+def test_sdk_socket_refuses_cross_origin_redirects_so_the_token_stays_on_the_origin():
+    import asyncio
+
+    from websockets.datastructures import Headers
+    from websockets.exceptions import SecurityError
+    from websockets.http11 import Response
+
+    from caller_runtime.adapters.gpt_live import sdk_socket
+
+    async def scenario():
+        async with serve_live() as target:
+
+            def redirect(connection, request):
+                location = f"ws://localhost:{target}/openai/v1/live/sessions"
+                return Response(302, "Found", Headers([("Location", location)]), b"")
+
+            async with serve_live(process_request=redirect) as origin:
+                with pytest.raises(SecurityError):
+                    await sdk_socket(
+                        f"http://127.0.0.1:{origin}/openai/v1",
+                        token="synthetic-token",
+                        proxy=None,
+                    )
+
+    asyncio.run(scenario())

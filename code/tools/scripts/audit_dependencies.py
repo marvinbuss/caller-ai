@@ -1,4 +1,11 @@
-"""Fail-closed locked Python, frontend and image advisory gates; no secret reports."""
+"""Advisory gates for locked Python, frontend and image dependencies.
+
+Runs `pip-audit` against each project's hashed lock, audits the resolved frontend packages and, with
+`--images`, scans the built images. Findings fail the run unless they are an approved mirror gap
+recorded in `code/dependency-mirror-gaps.yaml` (never high or unknown severity, and it must be
+re-verified within 7 days and before its expiry). Output is a JSON
+summary of counts and package names; it never prints secrets or raw tool output.
+"""
 
 import argparse
 import json
@@ -340,7 +347,6 @@ def audit_python(
             "code/tools",
             "pip-audit",
             "--require-hashes",
-            "--no-deps",
             "--disable-pip",
             "--strict",
             "--requirement",

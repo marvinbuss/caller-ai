@@ -23,7 +23,7 @@ def delivery_case(monkeypatch, tmp_path):
         "use_cli": False,
     }
     variables = {
-        "environment": "dev",
+        "label": "dev",
         "subscription_id": "00000000-0000-4000-8000-000000000001",
         "tenant_id": "00000000-0000-4000-8000-000000000002",
         "client_id": "00000000-0000-4000-8000-000000000003",
@@ -58,10 +58,21 @@ def test_delivery_rejects_backend_credentials_and_wrong_state_binding(delivery_c
     with pytest.raises(ValueError, match="terraform_delivery_inputs_invalid"):
         module.load_inputs("dev", "platform", "tfplans", directory=directory)
     del backend["access_" + "key"]
-    backend["key"] = "prod/platform.tfstate"
-    path.write_text(json.dumps(backend))
-    with pytest.raises(ValueError, match="terraform_delivery_inputs_invalid"):
-        module.load_inputs("dev", "platform", "tfplans", directory=directory)
+    for malformed in ("../prod/platform.tfstate", "platform.txt", "a b/platform.tfstate", 7):
+        backend["key"] = malformed
+        path.write_text(json.dumps(backend))
+        with pytest.raises(ValueError, match="terraform_delivery_inputs_invalid"):
+            module.load_inputs("dev", "platform", "tfplans", directory=directory)
+
+
+@pytest.mark.parametrize("stage", ["dev", "test", "prod", "qa-7", "a-stage-nobody-listed"])
+def test_any_stage_name_works_and_the_state_key_comes_from_the_backend_file(delivery_case, stage):
+    module, directory, backend, variables = delivery_case
+    backend["key"] = f"anything-{stage}/platform.tfstate"
+    (directory / f"{stage}.platform.azurerm.tfbackend.json").write_text(json.dumps(backend))
+    (directory / f"{stage}.platform.tfvars.json").write_text(json.dumps(variables))
+    inputs = module.load_inputs(stage, "platform", "tfplans", directory=directory)
+    assert inputs.environment == stage and inputs.backend["key"] == backend["key"]
 
 
 def test_backend_subscription_can_differ_from_workload_without_identity_fallback(delivery_case):
@@ -317,11 +328,23 @@ def test_delivery_verifies_actual_main_branch_protection(delivery_case, monkeypa
         module.httpx, "Client", lambda **keywords: original(transport=httpx.MockTransport(respond))
     )
     if protected:
-        module.verify_environment_protection(inputs, "apply", {"GITHUB_TOKEN": "synthetic-token"})
+        module.verify_environment_protection(
+            inputs,
+            "apply",
+            {
+                "GITHUB_TOKEN": "synthetic-token",
+                "TF_DEPLOYMENT_ENVIRONMENT": "dev-terraform-platform-apply",
+            },
+        )
     else:
         with pytest.raises(ValueError, match="terraform_environment_unprotected"):
             module.verify_environment_protection(
-                inputs, "apply", {"GITHUB_TOKEN": "synthetic-token"}
+                inputs,
+                "apply",
+                {
+                    "GITHUB_TOKEN": "synthetic-token",
+                    "TF_DEPLOYMENT_ENVIRONMENT": "dev-terraform-platform-apply",
+                },
             )
 
 

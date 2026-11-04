@@ -22,7 +22,7 @@ def test_runtime_lifecycle_binds_explicit_bounded_nonblocking_alert_sink():
         attempted.append(event)
         pending.put_nowait(event)
 
-    application = create_app(test_alert_sink=enqueue)
+    application = create_app(alert_sink=enqueue)
     with TestClient(application) as client:
         assert client.get("/readyz").status_code == 200
         telemetry = application.state.telemetry
@@ -59,7 +59,7 @@ def test_runtime_lifecycle_binds_explicit_bounded_nonblocking_alert_sink():
             "correlation_id",
             "trace_id",
             "span_id",
-            "mode",
+            "kind",
             "reason_code",
         }
         event["reason_code"] = "detached-fixture"
@@ -164,7 +164,7 @@ def test_test_alert_thresholds_are_bounded_correlated_and_content_free():
                 "correlation_id",
                 "trace_id",
                 "span_id",
-                "mode",
+                "kind",
                 "reason_code",
             }
             for event in delivered
@@ -300,7 +300,7 @@ def test_multimodal_metadata_uses_fixed_vocabulary_and_correlated_safe_events():
     telemetry = Telemetry("caller-runtime", "local")
     with telemetry.span(
         "test.session",
-        {"http.route": "/v1/internal/test-sessions", "test.mode": "speech", "test.phase": "active"},
+        {"http.route": "/v1/conversations/voice", "test.kind": "voice", "test.phase": "active"},
     ):
         telemetry.event(
             "test.session",
@@ -310,7 +310,7 @@ def test_multimodal_metadata_uses_fixed_vocabulary_and_correlated_safe_events():
             reason="ready",
         )
     event = telemetry.events[-1]
-    assert event["mode"] == "speech" and event["reason_code"] == "ready"
+    assert event["kind"] == "voice" and event["reason_code"] == "ready"
     assert event["correlation_id"] == "test-runtime-001"
     assert event["trace_id"] and event["span_id"]
     assert set(event) == {
@@ -323,7 +323,7 @@ def test_multimodal_metadata_uses_fixed_vocabulary_and_correlated_safe_events():
         "correlation_id",
         "trace_id",
         "span_id",
-        "mode",
+        "kind",
         "reason_code",
     }
     with telemetry.span("configuration.refresh", {"http.route": "/v2/runtime/configuration"}):
@@ -407,3 +407,18 @@ def test_exception_content_is_not_recorded_and_capture_is_bounded() -> None:
     assert len(telemetry.events) <= 512
     telemetry.close()
     telemetry.close()
+
+
+def test_history_store_event_carries_only_outcome_and_latency():
+    telemetry = Telemetry("caller-runtime", "local")
+    try:
+        telemetry.event("history.store", "success", measurement="store_seconds", value=0.01)
+        event = telemetry.events[-1]
+        assert event["event"] == "history.store" and event["measurement"] == "store_seconds"
+        assert "kind" not in event and "reason_code" not in event
+        with pytest.raises(ValueError, match="unsafe_test_metadata"):
+            telemetry.event("history.store", "success", mode="text", reason="ready")
+        with pytest.raises(ValueError, match="unsafe_test_measurement"):
+            telemetry.event("history.store", "success", measurement="work_seconds", value=1)
+    finally:
+        telemetry.close()

@@ -1,0 +1,9 @@
+{
+  "resource_group_name": "rg-caller-state-prod-example",
+  "storage_account_name": "callerprodstateexample",
+  "container_name": "tfstate",
+  "key": "prod/platform.tfstate",
+  "use_azuread_auth": true,
+  "use_oidc": true,
+  "use_cli": false
+}

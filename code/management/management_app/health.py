@@ -1,4 +1,10 @@
-"""Management-owned health API mounted through Reflex's public transformer."""
+"""Management health API: `/healthz` liveness and `/readyz` readiness, mounted through Reflex.
+
+Liveness never calls a dependency. Readiness reports 503 with one fixed reason
+(`configuration_invalid` before startup finished, `dependency_unavailable` for a failed or slow
+check) and the lifespan hook validates the mode and owns shutdown. Responses carry no dependency
+detail, and the middleware records only approved route categories.
+"""
 
 import asyncio
 import time

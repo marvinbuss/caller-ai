@@ -1,4 +1,10 @@
-"""Verify a real health assertion can fail and recover in a disposable fixture."""
+"""Verify a real health assertion can fail and recover in a disposable fixture.
+
+A passing test gate proves little unless it can also fail. The script writes a one-test fixture
+in a temporary directory and runs it three times: with the correct service name (must pass),
+with a deliberately wrong one (must fail) and with the correct one again (must pass). It reports
+the three exit codes and runs in a clean environment without runtime, Azure or OpenAI settings.
+"""
 
 import json
 import subprocess

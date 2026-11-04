@@ -1,4 +1,11 @@
-"""Portable foundation CI commands; fail on every unsuccessful child command."""
+"""The commands CI and developers run: prepare, check, frontend, test, quick and diagnostics.
+
+Each command runs its child processes in order and stops at the first failure with a non-zero exit.
+`prepare` builds the three locked environments, `check` runs lint, types, module reachability,
+Terraform, secret and publication checks and the tools tests, `test` runs every suite and `quick`
+runs only the fast tier. Local mirror settings come from the ignored `code/.local/` files; CI uses
+public indexes.
+"""
 
 import argparse
 import os
@@ -321,10 +328,28 @@ def check() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("prepare", "check", "frontend", "test", "diagnostics"))
+    parser.add_argument(
+        "command", choices=("prepare", "check", "frontend", "test", "quick", "diagnostics")
+    )
     arguments = parser.parse_args()
     if arguments.command == "prepare":
         prepare()
+    elif arguments.command == "quick":
+        # Fast tier only: unit and contract tests; the full tier (`test`) stays the required gate.
+        for project in ("backend", "management"):
+            run(
+                "uv",
+                "run",
+                "--directory",
+                f"code/{project}",
+                "--locked",
+                "python",
+                "-m",
+                "pytest",
+                "-q",
+                "-m",
+                "quick",
+            )
     elif arguments.command == "diagnostics":
         collect_editor_diagnostic()
     elif arguments.command == "frontend":

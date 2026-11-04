@@ -1,4 +1,10 @@
-"""Explicit bounded Entra metadata transport; never follow token-specified key URLs."""
+"""Entra ID sign-in transport: signing-key fetch and the MSAL authorization-code flow.
+
+Keys come only from the tenant's fixed discovery URL (no redirects, 64 KiB cap, at most 32 keys,
+cached for 5 minutes), never from a URL named inside a token. MSAL is synchronous, so its calls run
+in at most four bounded background jobs; more raise `identity_capacity_unavailable`. This adapter
+is only used when an operator passes it to the reviewed composition; no default path imports it.
+"""
 
 import asyncio
 import copy

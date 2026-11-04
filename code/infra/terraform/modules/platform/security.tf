@@ -62,6 +62,7 @@ locals {
     configuration-audit = "management"
     call-sessions       = "runtime"
     call-audit          = "runtime"
+    text-conversations  = "runtime"
   }
 }
 

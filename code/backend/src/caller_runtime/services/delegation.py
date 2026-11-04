@@ -1,4 +1,11 @@
-"""Volatile bounded accepted-work metadata; no worker, provider or replay on construction."""
+"""Accepted-work records and the bounded speech-fragment correlator.
+
+A `WorkItem` carries one accepted request with its immutable budget and a step counter capped at 8.
+`SpeechFragments` joins timed, server-verified input fragments (at most 4 KiB, in order, within 2 s
+of the delegation offset) into one request and marks anything out of order or oversized ambiguous
+so the model is asked to clarify rather than guess. Everything is in memory, bounded and cleared
+with the session; nothing starts work or replays it on construction.
+"""
 
 import hashlib
 import math

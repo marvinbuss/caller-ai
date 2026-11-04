@@ -112,7 +112,7 @@ def test_relay_connect_and_first_ready_share_original_signed_deadline():
     asyncio.run(scenario())
     assert len(connections) == 1
     url, options = connections[0]
-    assert url == "wss://runtime.fixture.example/v1/internal/test-sessions"
+    assert url == "wss://runtime.fixture.example/v1/conversations/voice"
     assert options["proxy"] is None and options["compression"] is None
     assert (
         options["max_size"] == 8192
@@ -146,11 +146,12 @@ def ready_envelope(permit):
 
 
 def build_active_relay_case():
+    """A voice relay against a backend double: ready, one credit, then a confirmed stop."""
     from management_app.adapters.test_session_client import TestSessionClient
     from management_app.models.test_session import StartPermit
 
     permit = StartPermit.model_validate_json(json.dumps(permit_document()))
-    permit = permit.model_copy(update={"mode": "text"})
+    permit = permit.model_copy(update={"mode": "speech"})
     clock, ticks = [permit.issued_at], [2.0]
     credentials = SimpleNamespace(
         get_token=AsyncMock(
@@ -160,16 +161,15 @@ def build_active_relay_case():
         )
     )
     sent, displayed = [], []
-    turn, stopped, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    stopped, completed = asyncio.Event(), asyncio.Event()
     runtime_index, browser_index = [0], [0]
-    envelope = ready_envelope(permit)
+    envelope = ready_envelope(permit) | {
+        "audioFormat": {"codec": "pcm16le", "sampleRate": 24000, "channels": 1}
+    }
 
     async def send(data):
         sent.append(data)
-        value = json.loads(data)
-        if value["type"] == "text.submit":
-            turn.set()
-        elif value["type"] == "stop":
+        if json.loads(data)["type"] == "stop":
             stopped.set()
 
     async def recv():
@@ -177,27 +177,15 @@ def build_active_relay_case():
         runtime_index[0] += 1
         if index == 0:
             return json.dumps(envelope)
-        await turn.wait()
         if index == 1:
             return json.dumps(
                 {
-                    "type": "text.delta",
-                    "messageId": "text-fixture",
-                    "text": "Synthetic exact reply",
+                    "type": "audio.credit",
                     "sessionId": envelope["sessionId"],
                     "sequence": 2,
                     "generation": 1,
-                }
-            )
-        if index == 2:
-            return json.dumps(
-                {
-                    "type": "text.completed",
-                    "messageId": "text-fixture",
-                    "text": "",
-                    "sessionId": envelope["sessionId"],
-                    "sequence": 3,
-                    "generation": 1,
+                    "availableSamples": 480,
+                    "acceptedAudioSequence": 0,
                 }
             )
         await stopped.wait()
@@ -208,7 +196,7 @@ def build_active_relay_case():
                 "cleanupStatus": "complete",
                 "correlationId": "correlation-fixture",
                 "sessionId": envelope["sessionId"],
-                "sequence": 4,
+                "sequence": 3,
                 "generation": 1,
             }
         )
@@ -219,8 +207,8 @@ def build_active_relay_case():
         if index == 0:
             clock[0], ticks[0] = permit.admission_started_at + timedelta(seconds=60), 60.0
             value = {
-                "type": "text.submit",
-                "text": "Synthetic exact user text",
+                "type": "ping",
+                "nonce": "fixture-nonce",
                 "sessionId": envelope["sessionId"],
                 "sequence": 1,
             }
@@ -231,7 +219,7 @@ def build_active_relay_case():
 
     async def display(data):
         displayed.append(json.loads(data))
-        if displayed[-1]["type"] == "text.completed":
+        if displayed[-1]["type"] in {"audio.credit", "error"}:
             completed.set()
 
     runtime = SimpleNamespace(send=send, recv=recv, close=AsyncMock())
@@ -260,7 +248,7 @@ def active_relay_case():
     return build_active_relay_case()
 
 
-def test_relay_active_text_after_startup_expiry_is_exact_bounded_transport_not_execution(
+def test_relay_active_voice_after_startup_expiry_is_exact_bounded_transport_not_execution(
     active_relay_case,
 ):
     client, browser, runtime, permit, credentials, sent, displayed, clock, ticks, envelope = (
@@ -283,14 +271,13 @@ def test_relay_active_text_after_startup_expiry_is_exact_bounded_transport_not_e
         await client.close()
 
     asyncio.run(scenario())
-    assert [value["type"] for value in displayed] == [
-        "ready",
-        "text.delta",
-        "text.completed",
-        "ended",
-    ]
-    assert json.loads(sent[1])["text"] == "Synthetic exact user text"
-    assert json.loads(sent[0])["permit"] == "synthetic-signed-permit"
+    assert [value["type"] for value in displayed] == ["ready", "audio.credit", "ended"]
+    assert json.loads(sent[1])["nonce"] == "fixture-nonce"
+    assert json.loads(sent[0]) == {
+        "type": "authenticate",
+        "permit": "synthetic-signed-permit",
+        "requestId": permit.request_id,
+    }
     assert browser.send_bytes.await_count == 0 and credentials.get_token.await_count == 1
 
 
@@ -317,14 +304,14 @@ def test_relay_rejects_untrusted_runtime_or_lost_permission_before_forwarding(
         raw = await recv()
         value = json.loads(raw)
         if fault == "mode" and value["type"] == "ready":
-            value["mode"] = "speech"
-        elif value["type"] == "text.delta":
+            value["mode"] = "text"
+        elif value["type"] == "audio.credit":
             if fault == "session":
                 value["sessionId"] = "foreign-session"
             elif fault == "unknown-field":
                 value["provider_body"] = "synthetic-private-body"
             elif fault == "oversized":
-                value["text"] = "x" * 8193
+                value["provider_body"] = "x" * 8193
         return json.dumps(value)
 
     async def revoke_after_ready(raw):
@@ -353,7 +340,7 @@ def test_relay_rejects_untrusted_runtime_or_lost_permission_before_forwarding(
 
     asyncio.run(scenario())
     assert browser.close.await_args.kwargs["code"] == code
-    assert not any(value["type"] in {"text.delta", "text.completed"} for value in displayed)
+    assert not any(value["type"] == "audio.credit" for value in displayed)
     assert "synthetic-private-body" not in json.dumps(displayed)
 
 
@@ -427,15 +414,13 @@ def test_relay_binary_credit_and_played_accounting_is_generation_bound_and_conte
     frames.clear()
 
 
-@pytest.mark.parametrize("fault", ["mode", "odd", "header", "oversized", "generation", "sequence"])
+@pytest.mark.parametrize("fault", ["odd", "header", "oversized", "generation", "sequence"])
 def test_relay_binary_rejects_malformed_or_unauthorized_frames(fault):
     import struct
 
     from management_app.adapters.test_session_client import RelayFrames
 
-    frames = RelayFrames(
-        mode="text" if fault == "mode" else "speech", session_id="runtime-fixture", generation=1
-    )
+    frames = RelayFrames(mode="speech", session_id="runtime-fixture", generation=1)
     frame = struct.pack(
         ">BII",
         2 if fault == "header" else 1,
@@ -651,7 +636,7 @@ def test_relay_server_metadata_values_cannot_be_used_to_leak_provider_payload(
     async def altered():
         raw = await recv()
         value = json.loads(raw)
-        if value["type"] == "text.delta":
+        if value["type"] == "audio.credit":
             base = {"sessionId": envelope["sessionId"], "sequence": 2, "generation": 1}
             if fault == "error-code":
                 value = base | {
@@ -730,11 +715,12 @@ def test_relay_accepts_documented_bounded_work_error_message_id(active_relay_cas
     async def receive():
         value = await original()
         parsed = json.loads(value)
-        if parsed["type"] == "text.delta":
+        if parsed["type"] == "audio.credit":
             parsed = {key: parsed[key] for key in ("sessionId", "sequence", "generation")}
             parsed.update(
                 type="error",
-                code="work_busy",
+                code="capacity_unavailable",
+                reason="work_busy",
                 cleanupStatus="active",
                 correlationId="fixture-correlation",
                 messageId="fixture-work",
@@ -769,7 +755,7 @@ def test_browser_writer_pressure_and_unanswered_permission_are_bounded_and_termi
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import BUDGET_CODE, ENGINE_CODE
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
@@ -837,7 +823,7 @@ def test_browser_audio_unavailability_is_not_mislabeled_permission(failure, labe
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import BUDGET_CODE, ENGINE_CODE
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
@@ -885,7 +871,7 @@ def test_browser_reply_and_structural_history_limits_match_declared_context():
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import BUDGET_CODE, ENGINE_CODE
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
@@ -988,6 +974,20 @@ def test_console_page_has_accessible_native_controls_and_no_content_state_bindin
     assert "local_storage" not in tree and "set_text" not in tree
 
 
+def test_text_mode_shows_the_static_retention_notice():
+    from management_app.pages.test_console import TEXT_RETENTION_NOTICE, test_console_page
+
+    tree = json.dumps(test_console_page().render(), default=str)
+
+    assert TEXT_RETENTION_NOTICE == (
+        "Text test conversations are stored for 30 days after the last message "
+        "and are visible only to their owner."
+    )
+    assert TEXT_RETENTION_NOTICE in tree and "test-text-notice" in tree
+    # The notice is plain text next to the message form: it binds no state and runs no script.
+    assert "set_text" not in tree and "local_storage" not in tree
+
+
 def test_live_audio_is_a_narrow_reflex_owned_metadata_component():
     import reflex as rx
 
@@ -1008,7 +1008,7 @@ def test_browser_bridge_pins_ready_and_waits_for_confirmed_end_before_restart():
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import BUDGET_CODE, ENGINE_CODE
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
@@ -1034,8 +1034,9 @@ if (sent.length !== 1 || sent[0].type !== "text.submit" ||
     sent[0].sessionId !== "session-fixture" || "revisionId" in sent[0])
     throw Error("client_authority_override");
 engine.message(JSON.stringify({type: "error", sequence: 2, generation: 1,
-    sessionId: "session-fixture", code: "work_busy", cleanupStatus: "active",
-    correlationId: "fixture-correlation", messageId: "fixture-work"}), 1);
+    sessionId: "session-fixture", code: "capacity_unavailable", reason: "work_busy",
+    cleanupStatus: "active", correlationId: "fixture-correlation",
+    messageId: "fixture-work"}), 1);
 if (engine.pending.size || engine.terminal) throw Error("busy_marked_complete_or_stuck");
 engine.stop();
 if (!engine.terminal || engine.snapshot.cleanupStatus !== "pending") throw Error("stop_not_fenced");
@@ -1071,12 +1072,51 @@ console.log("published-end-pass");
     assert result.stdout.strip() == "published-end-pass" and not result.stderr
 
 
+def test_browser_stop_reaches_the_server_even_when_audio_is_queued():
+    import shutil
+    import subprocess
+
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    scenario = """
+const document = {getElementById: () => null};
+const timers = new Map(); let timerId = 0;
+function setTimeout(callback) { timers.set(++timerId, callback); return timerId; }
+function clearTimeout(identifier) { timers.delete(identifier); }
+class WebSocket { static OPEN = 1; }
+const sent = [];
+const engine = new CallerTestEngine({begin: () => {}, control: () => {}});
+engine.terminal = false; engine.epoch = 1; engine.mode = "speech"; engine.authenticated = true;
+engine.snapshot = {status: "ready", mode: "speech", sessionId: "session-fixture"};
+engine.socket = {readyState: 1, bufferedAmount: 20000,
+    send: value => sent.push(JSON.parse(value)), close: () => {}};
+engine.stop();
+if (sent.length !== 1 || sent[0].type !== "stop" || sent[0].sessionId !== "session-fixture")
+    throw Error("stop_swallowed_by_backlog");
+if (engine.snapshot.status !== "stopping" || engine.snapshot.cleanupStatus !== "pending")
+    throw Error("stop_not_awaiting_confirmation");
+console.log("stop-under-backlog-pass");
+"""
+    result = subprocess.run(
+        [node],
+        input=BUDGET_CODE + ENGINE_CODE + scenario,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.stdout.strip() == "stop-under-backlog-pass", result.stderr
+    assert not result.stderr
+
+
 @pytest.mark.parametrize("callback", ["close", "error", "message"])
 def test_browser_stale_socket_callbacks_cannot_stop_explicit_replacement(callback):
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import BUDGET_CODE, ENGINE_CODE
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
@@ -1091,7 +1131,7 @@ class WebSocket {
 }
 async function fetch(path, options) {
     return new Response(JSON.stringify(path === '/auth/session' ? {csrf: 'a'.repeat(64)} : {
-        ...JSON.parse(options.body), socketPath: '/v1/test-sessions', permit: 'fixture',
+        ...JSON.parse(options.body), socketPath: '/v1/console/sessions', permit: 'fixture',
         admissionDeadlineUtc: new Date(Date.now() + 10000).toISOString()}));
 }
 (async () => {
@@ -1135,7 +1175,7 @@ def test_browser_bridge_cancels_late_permission_and_text_never_acquires_media():
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import BUDGET_CODE, ENGINE_CODE
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
@@ -1196,7 +1236,7 @@ def test_browser_native_pcm_worklet_bounds_capture_playback_and_flushes():
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import WORKLET_CODE
+    from management_app.components.live_audio_js import WORKLET_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
@@ -1274,7 +1314,7 @@ def test_browser_capture_flush_rejects_stale_frames_and_waits_for_current_ack(bo
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import BUDGET_CODE
+    from management_app.components.live_audio_js import BUDGET_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
@@ -1312,7 +1352,7 @@ def test_browser_audio_budget_bounds_credit_and_generation_without_devices():
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import BUDGET_CODE
+    from management_app.components.live_audio_js import BUDGET_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
@@ -1362,7 +1402,7 @@ def test_browser_active_playback_loss_fences_media_and_detaches_old_context(stat
     import shutil
     import subprocess
 
-    from management_app.components.live_audio import BUDGET_CODE, ENGINE_CODE
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"

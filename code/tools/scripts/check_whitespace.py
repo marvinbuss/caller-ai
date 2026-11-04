@@ -1,4 +1,8 @@
-"""Check text whitespace without changing source files or printing their content."""
+"""Reports trailing whitespace and missing final newlines in the files named on the command line.
+
+It only reads: it never rewrites a file and prints file names without their content.
+Exits 1 if any file fails.
+"""
 
 import argparse
 import sys

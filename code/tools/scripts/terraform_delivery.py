@@ -1,4 +1,11 @@
-"""Protected OIDC Terraform delivery; exact private saved plans, never public artifacts."""
+"""Protected Terraform delivery: plan, review and apply for any stage, using OIDC only.
+
+The stage name and state key come from the backend and variable files, and the protected
+deployment environment comes from the workflow input, so no stage list exists here. A plan is saved
+privately and bound to the exact source, workflow run and inputs for one day; apply refuses a
+tampered, expired or cross-run plan and any plan that deletes a resource. Output is fixed metadata
+only and plan bytes are never published.
+"""
 
 import argparse
 import hashlib
@@ -77,13 +84,23 @@ class DeliveryInputs:
         return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def valid_state_key(key: Any) -> bool:
+    """The state key is plain data from the backend file; only its shape is checked."""
+    return (
+        isinstance(key, str)
+        and re.fullmatch(r"[A-Za-z0-9._-]{1,64}(/[A-Za-z0-9._-]{1,64}){0,3}\.tfstate", key)
+        is not None
+        and ".." not in key
+    )
+
+
 def load_inputs(
     environment: str, stack: str, plan_container: str, *, directory: Path = BASE / "config"
 ) -> DeliveryInputs:
     """Load reviewed nonsecret per-environment JSON; construction performs no cloud I/O."""
     try:
         if (
-            re.fullmatch(r"[a-z][a-z0-9-]{1,15}", environment) is None
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,30}", environment) is None
             or stack not in ROOTS
             or re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", plan_container) is None
             or "--" in plan_container
@@ -107,8 +124,7 @@ def load_inputs(
             or backend["use_azuread_auth"] is not True
             or backend["use_oidc"] is not True
             or backend["use_cli"] is not False
-            or backend["key"] != f"{environment}/{stack}.tfstate"
-            or variables.get("environment") != environment
+            or not valid_state_key(backend["key"])
             or re.fullmatch(r"[a-z0-9]{3,24}", backend["storage_account_name"]) is None
             or re.fullmatch(r"[A-Za-z0-9._()-]{1,90}", backend["resource_group_name"]) is None
             or re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", backend["container_name"]) is None
@@ -293,8 +309,11 @@ def verify_environment_protection(
     inputs: DeliveryInputs, operation: str, values: dict[str, str]
 ) -> None:
     """Require existing protected deployment environments; never create or weaken them."""
-    name = f"{inputs.environment}-terraform-{inputs.stack}-{operation}"
+    # The protected environment name comes from the workflow input, not from a name format.
+    name = values.get("TF_DEPLOYMENT_ENVIRONMENT", "")
     try:
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,90}", name) is None:
+            raise ValueError("invalid_protected_environment")
         with httpx.Client(
             timeout=30, verify=True, trust_env=False, follow_redirects=False
         ) as client:

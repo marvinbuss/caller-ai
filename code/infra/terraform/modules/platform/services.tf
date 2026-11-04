@@ -91,6 +91,9 @@ locals {
     configuration-audit = { partition = "/dayBucket", ttl = var.services.configuration_audit_ttl }
     call-sessions       = { partition = "/sessionId", ttl = var.services.call_session_ttl }
     call-audit          = { partition = "/dayBucket", ttl = var.services.call_audit_ttl }
+    # Text conversation history; each item carries its own `ttl` (30 days after the last turn),
+    # so the container default must be -1 (items opt in) and expiry is the only deletion path.
+    text-conversations = { partition = "/ownerKey", ttl = -1 }
   }
 }
 

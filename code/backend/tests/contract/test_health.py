@@ -4,6 +4,7 @@ import json
 import re
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import jsonschema
 import pytest
@@ -93,3 +94,25 @@ def test_injected_dependencies_fail_safely_without_affecting_liveness(behavior: 
         assert response.json()["reason_codes"] == ["dependency_unavailable"]
         assert "sensitive-dependency-details" not in response.text
         assert dependencies.calls == 1
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_readiness_reads_only_the_cached_history_probe(healthy: bool) -> None:
+    app = create_app(Settings())
+    with TestClient(app) as client:
+        checks = []
+
+        def history_ready() -> bool:
+            checks.append(True)
+            return healthy
+
+        app.state.runtime = SimpleNamespace(history_ready=history_ready)
+        response = client.get("/readyz")
+        jsonschema.validate(
+            response.json(),
+            {"$ref": "#/components/schemas/Readiness", "components": CONTRACT["components"]},
+        )
+        assert checks == [True]
+        assert response.status_code == (200 if healthy else 503)
+        assert response.json()["reason_codes"] == ([] if healthy else ["history_store_unavailable"])
+        assert client.get("/healthz").status_code == 200

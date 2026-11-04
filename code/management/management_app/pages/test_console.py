@@ -1,4 +1,11 @@
-"""Published-configuration console; controls are Reflex, content/media are browser-volatile."""
+"""Published-configuration console; controls are Reflex, content/media are browser-volatile.
+
+The console page renders the start, stop, mute and interrupt controls, the device pickers, the
+text form and the status line for one test of the published configuration. Reflex owns the
+controls and the permit request; the `LiveAudio` component owns the microphone, speaker and
+relay socket in the browser. Transcripts and audio live only in browser memory; they pass through
+the relay to the backend but are never kept in Reflex state or stored by the management app.
+"""
 
 from typing import cast
 
@@ -62,6 +69,13 @@ def device_control(label: str, identifier: str) -> rx.Component:
             spacing="2",
         ),
     )
+
+
+# Shown in text mode: the backend keeps text test conversations so a follow-up can continue them.
+TEXT_RETENTION_NOTICE = (
+    "Text test conversations are stored for 30 days after the last message "
+    "and are visible only to their owner."
+)
 
 
 def console_controls() -> rx.Component:
@@ -195,6 +209,13 @@ def console_controls() -> rx.Component:
                     margin_top="8px",
                     resize="vertical",
                     **CONTROL_STYLE,
+                ),
+                rx.text(
+                    TEXT_RETENTION_NOTICE,
+                    id="test-text-notice",
+                    size="2",
+                    color="#58615c",
+                    margin_top="8px",
                 ),
                 rx.flex(
                     rx.el.button(

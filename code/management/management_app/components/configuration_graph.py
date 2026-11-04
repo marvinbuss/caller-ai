@@ -1,4 +1,11 @@
-"""Thin Reflex-owned xyflow bridge; graph authority remains in backend commands."""
+"""Thin Reflex-owned xyflow bridge; graph authority remains in backend commands.
+
+`ConfigurationGraph` wraps `@xyflow/react` for the community and agent graphs. The browser only
+reports a validated node move, link or pick back to Reflex events; it never decides what is
+allowed, so the server still validates every change. Pending moves are kept per node (at most 200)
+so a re-render with the old position does not snap a dragged node back before the server state
+catches up. `ConfigurationLeaveGuard` warns before the page unloads while edits are unsaved.
+"""
 
 from typing import Any
 

@@ -1,4 +1,9 @@
-"""Run offline secret detection with metadata-only failure output."""
+"""Offline secret scan over the files named on the command line.
+
+Exits 0 only when every file exists and has no finding. A missing file or an empty file list exits 1
+and claims no clean result. Failure output is the file, line and rule type only, never the
+matched text.
+"""
 
 import json
 import subprocess

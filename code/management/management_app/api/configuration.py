@@ -1,10 +1,15 @@
-"""Explicit authenticated configuration composition; never mounted by foundation startup."""
+"""Configuration API: `GET` and `PUT /v2/configuration`, for authenticated managers only.
+
+`GET` returns the active revision with its ETag. `PUT` needs `If-Match` and a CSRF token, validates
+the graph (including the secret scan) and publishes a new revision, or answers 409 on a stale ETag.
+Bodies are capped and parsed with duplicate-key rejection. Errors are `application/problem+json`
+with a fixed code and, for validation, issues that carry only a field path and rule id.
+"""
 
 import asyncio
 import json
 import re
 from datetime import UTC, datetime
-from http import HTTPStatus
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -18,6 +23,7 @@ from management_app.adapters.configuration_repository import (
     graph_document,
     verified_revision,
 )
+from management_app.api.problems import problem_response
 from management_app.observability import sanitize_correlation_id
 from management_app.services.audit import AuditRecord
 from management_app.services.configuration_validation import SNAPSHOT_LIMIT, encoded
@@ -59,40 +65,25 @@ class AuditPort(Protocol):
 
 
 def problem(status: int, correlation: str, issues: list[Issue] | None = None) -> JSONResponse:
-    code = ERROR_CODES[status]
-    body: Document = {
-        "type": "about:blank",
-        "title": HTTPStatus(status).phrase,
-        "status": status,
-        "code": code,
-        "correlation_id": correlation,
-    }
-    if issues:
-        safe = [
-            {
-                "path": issue["path"],
-                "code": issue["code"],
-                "rule_id": issue["rule_id"],
-                "policy_version": issue["policy_version"],
-            }
-            for issue in issues[:64]
-        ]
-        body["errors"] = safe
-        allowed = {
-            "credential_literal_prohibited",
-            "secret_reference_invalid",
-            "secret_reference_unknown",
-            "invalid_configuration",
-            "configuration_too_large",
-            "publication_too_large",
+    safe = [
+        {
+            "path": issue["path"],
+            "code": issue["code"],
+            "rule_id": issue["rule_id"],
+            "policy_version": issue["policy_version"],
         }
-        body["code"] = next((issue["code"] for issue in safe if issue["code"] in allowed), code)
-    headers = {"Cache-Control": "no-store", "X-Correlation-ID": correlation}
-    if status == 401:
-        headers["WWW-Authenticate"] = "Bearer"
-    return JSONResponse(
-        body, status_code=status, headers=headers, media_type="application/problem+json"
-    )
+        for issue in (issues or [])[:64]
+    ]
+    allowed = {
+        "credential_literal_prohibited",
+        "secret_reference_invalid",
+        "secret_reference_unknown",
+        "invalid_configuration",
+        "configuration_too_large",
+        "publication_too_large",
+    }
+    code = next((item["code"] for item in safe if item["code"] in allowed), ERROR_CODES[status])
+    return problem_response(status, correlation, code, safe)
 
 
 def unique_object(pairs: list[tuple[str, Any]]) -> Document:

@@ -1,6 +1,10 @@
 
 # Implementation Plan: Unified Multimodal Agents and Management
 
+> **Superseded in part by feature 003.** The call-era endpoints and the `caller.test.v1` browser test protocol named
+> below were removed. The current contract is the text and voice conversation endpoints in
+> [docs/conversation-endpoints.md](../../docs/conversation-endpoints.md). The text below is kept unchanged as the record of this feature 002 plan.
+
 **Branch**: `main` (unchanged) | **Feature**: `002-multimodal-agent-management`
 **Date**: 2026-10-29 | **Spec**: [spec.md](spec.md)
 

@@ -221,13 +221,13 @@ steps were removed from the workflow and remote artifact 12749685420 was deleted
 The compiler copy remains ignored locally; no default compiler-log upload remains enabled.
 The canonical-path repair and no-upload regression do not relax any production boundary.
 
-## Call and Configuration Trust Boundaries
+## Conversation and Configuration Trust Boundaries
 
-Callers, model output, remote tool/MCP discovery, submitted configuration and dependency
+Clients, model output, remote tool/MCP discovery, submitted configuration and dependency
 responses are untrusted. One organization `default` is not a tenant-management feature;
 communities enforce discovery/context boundaries, not independent customer isolation.
-Management owns configuration/current permission/audit data; runtime owns session/handover/
-call-audit metadata and never reads management's private container. Actual Azure permissions
+Management owns configuration/current permission/audit data; runtime owns the admission authority,
+the text history and its audit metadata and never reads management's private container. Actual Azure permissions
 are additive and require effective negative-access review, not merely allowed-role definitions.
 
 Models cannot authorize tools, choose endpoints/credentials, grant operator identity or mutate
@@ -236,10 +236,10 @@ public/read-only review. Remote annotations do not confer permission. Runtime se
 manager/browser and internal operator identities have distinct audience/role/session controls;
 test headers and typed grants exist only in explicit local fixtures/ports, never default auth.
 
-Provider-neutral media is explicitly mounted only by a trusted composer, with identity before
-upgrade, exact admission/codec binding, one local socket, bounded frames/audio and fresh output
-epochs. Provider identity/codec/lease semantics and distributed authority still need actual
-qualification. No real telephony wire protocol or provider/scenario was invented to clear T042.
+Both conversation endpoints are mounted only by the reviewed composition, with the workload
+credential and signed permit verified before any resource is touched, one active test per manager,
+bounded frames and audio, and fresh output generations. Provider identity and distributed
+authority still need actual qualification; no telephony or provider scenario exists.
 Local cleanup purges owned context even on cancellation/error; it does not prove secure erasure
 of immutable/external copies, provider retention, dumps or backups. TTL is safe metadata policy,
 not permission to persist prohibited conversation content. Runtime audit rejects free text,
@@ -257,7 +257,27 @@ registry, network/identity grants, test data and on-call access. No legal jurisd
 compliance certification is claimed. Release threat review must also cover trusted tooling's
 Docker socket, delegated plan/publisher authority, immutable artifact binding, uncertain effects
 and persistent independent-removal guards. Read [release gates](acceptance/release-gates.md),
-[call lifecycle](runbooks/call-lifecycle.md) and [capacity](capacity.md).
+[conversation endpoints](conversation-endpoints.md) and [capacity](capacity.md).
+
+## Stored Text Conversation History
+
+Feature 003 deliberately narrows the earlier guarantee that no conversation content is persisted:
+text conversations (and only text) are stored so follow-up turns work on any backend instance.
+Voice conversations remain volatile, and nothing else in this document relaxes. This section is
+the threat assessment for that exception; the operational procedure is in the
+[text history runbook](runbooks/text-history.md).
+
+| Topic | Control |
+|-------|---------|
+| Data stored | User and assistant text of completed turns, the active agent position and timestamps, in one item per conversation. Never audio, transcripts, tool or transfer payloads, prompts, tokens or provider bodies |
+| Access | Only the backend runtime identity, with item read, create and replace on the `text-conversations` container; no delete. Management never reads it. Items are addressed by the owner's key (partition) and conversation id, so a foreign, unknown or expired id is indistinguishable (`conversation_not_found`) |
+| At rest | Cosmos encryption at rest with platform-managed keys, continuous backup; no local key authentication on the account |
+| In transit | TLS 1.2 or later over a private endpoint; the account has no public network access |
+| Identity | Workload identity (managed identity) on the runtime pod; no secret, key or connection string |
+| Logs and telemetry | Text never appears in logs, metrics, traces, error bodies, alert payloads or the admission authority record. `history.store` events carry outcome and duration only. A test (`test_text_content_exists_only_in_the_history_container`) enforces this |
+| Retention | 30 days after the last turn through the item `ttl`, rewritten on every update; expiry is the only deletion path. Emergency purge needs written approval and a temporary delete role |
+| Replay of stored untrusted content | Stored turns are untrusted. They are sent back to the model only as conversation turns, never as system instructions; the 256 KiB context limit and the agent-change reset still apply; the agent position is revalidated against the pinned revision and falls back to the welcome agent when it is no longer allowed; tools remain subject to current authority. Only the owner's history is loaded. A poisoned conversation is abandoned by starting a new one, or expires |
+| Residual risk | Backups keep expired text until their retention ends, and a compromised runtime identity can read stored text. Operators must approve disclosure, retention and jurisdiction for stored text before any live use, like the other items above |
 
 ## Historical Remediation Context
 

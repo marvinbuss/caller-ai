@@ -1,4 +1,13 @@
-"""Deny-by-default GPT-Live qualification; metadata never grants provider access."""
+"""Deny-by-default GPT-Live qualification; metadata never grants provider access.
+
+The module checks the items in `CHECKS` (existing bindings, workload identity, available quota,
+region lifecycle, privacy and retention, reasoning features, text without live, client
+delegation, confirmed closure) for the browser and endurance scopes. Every request is validated
+against a reviewed region and version allow-list, authorized again before each probe, and given
+only the time left of the original scope. Reports carry fixed codes and references only. The
+default and offline command line never construct a network client or look up credentials, so a
+valid manifest is not authorization and not live success.
+"""
 
 from __future__ import annotations
 

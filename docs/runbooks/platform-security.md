@@ -43,7 +43,7 @@ flowchart LR
     RuntimeSA[Exact runtime service account] --> RuntimeMI[Runtime identity]
     ManagementSA[Exact management service account] --> ManagementMI[Management identity]
     OperationsSA[Exact operations service account] --> OperationsMI[Operations identity]
-    RuntimeMI --> Calls[Call-sessions and call-audit item scopes]
+    RuntimeMI --> Calls[Call-sessions, call-audit and text-conversations item scopes]
     RuntimeMI --> Model[Specific Azure model account]
     RuntimeMI --> Gateway[Approved capability execution app role]
     ManagementMI --> Config[Configuration and configuration-audit item scopes]
@@ -61,7 +61,7 @@ no workload manifests, application activation or automatic token delivery were a
 
 | Principal | Declared permission | Scope |
 |-----------|---------------------|-------|
-| Runtime | Cosmos item read/create/replace | call-sessions and call-audit only |
+| Runtime | Cosmos item read/create/replace (no delete) | call-sessions, call-audit and text-conversations only |
 | Management | Cosmos item read/create/replace | configuration and configuration-audit only |
 | Runtime/management | Cosmos `readMetadata` only | Specific account; no item access from this grant |
 | Runtime | Cognitive Services OpenAI User | Specific approved model account |

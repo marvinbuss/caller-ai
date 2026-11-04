@@ -1,0 +1,30 @@
+schema_version: "1.0"
+
+extension:
+  id: caller-github
+  name: "Caller GitHub Push and Pull Request"
+  version: "1.0.0"
+  description: "Push the feature branch and open a pull request with gh, after explicit confirmation"
+  author: caller-ai
+  repository: https://github.com/marvinbuss/caller-ai
+  license: MIT
+
+requires:
+  speckit_version: ">=0.12.17"
+  tools:
+    - name: git
+      required: true
+      description: "Reads the branch and pushes it"
+    - name: gh
+      required: true
+      description: "Opens the pull request; the hook skips with a reason when it or its login is missing"
+
+provides:
+  commands:
+    - name: speckit.caller-github.push-pr
+      file: commands/push-pr.md
+      description: "Push the branch and open a pull request, confirming branch, target and title first"
+
+tags:
+  - "github"
+  - "pull-request"

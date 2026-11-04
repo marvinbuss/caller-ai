@@ -1,4 +1,11 @@
-"""Reviewed public read-only catalogs and exact ordinary-agent assignment controls."""
+"""Reviewed public read-only catalogs and exact ordinary-agent assignment controls.
+
+The page lists tools and MCP connections that were added from the reviewed catalog (a manager
+cannot define new ones here) and lets a manager enable them, edit their reviewed metadata, and
+assign exact actions and input constraints to ordinary agents. Protected lifecycle roles get no
+assignment controls. The page only renders state; the server checks every change against the
+reviewed catalog.
+"""
 
 from typing import Any, cast
 

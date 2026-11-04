@@ -72,7 +72,7 @@ def exported_points(batch):
 def test_delta_collection_does_not_recount_previous_intervals(exported):
     metrics, reader, sink = exported
     for seconds, saturation in [(0.25, 0.75), (0.5, 0.25)]:
-        metrics.request(route="operations", method="POST", status=503, seconds=seconds)
+        metrics.request(route="voice", method="GET", status=503, seconds=seconds)
         metrics.saturation("session_slots", saturation)
         assert reader.force_flush()
         values = exported_points(sink.batches[-1])
@@ -180,59 +180,19 @@ def points(reader):
 
 def test_runtime_exports_bounded_operational_signals(measured):
     metrics, reader = measured
-    metrics.request(route="operations", method="POST", status=503, seconds=0.1)
-    metrics.active_calls(12)
+    metrics.request(route="voice", method="GET", status=503, seconds=0.1)
     metrics.admission("unavailable")
-    metrics.handover("failed", 0.5)
-    metrics.speech_delay(0.25)
     metrics.dependency_failure("model", "quota")
     metrics.saturation("session_slots", 0.8)
     values = points(reader)
-    assert values["caller.active.calls"][0].value == 12
     assert values["caller.admissions"][0].attributes == {"outcome": "unavailable"}
-    assert values["caller.handovers"][0].attributes == {"outcome": "failed"}
-    assert values["caller.handover.duration"][0].sum == 0.5
-    assert values["caller.speech.delay"][0].sum == 0.25
     assert values["caller.dependency.failures"][0].attributes == {
         "dependency": "model",
         "reason": "quota",
     }
 
 
-def test_physical_call_observations_count_bound_connections_not_reservations(measured):
-    from caller_runtime.metrics import PhysicalCallObservations
-
-    metrics, reader = measured
-    observed = PhysicalCallObservations(metrics=metrics, maximum_calls=2)
-    observed.opened("session-observed", "owner-observed", 1)
-    observed.opened("session-observed", "owner-observed", 1)
-    metrics.reservations(9)
-    values = points(reader)
-    assert values["caller.active.calls"][0].value == 1
-    assert values["caller.active.reservations"][0].value == 9
-    assert observed.closed("session-observed", "foreign-owner", 1) is False
-    assert points(reader)["caller.active.calls"][0].value == 1
-    assert observed.closed("session-observed", "owner-observed", 1) is True
-    assert points(reader)["caller.active.calls"][0].value == 0
-    assert "session-observed" not in repr(reader.get_metrics_data())
-
-
-def test_physical_observation_limit_and_conflicting_owner_fail_closed(measured):
-    from caller_runtime.metrics import PhysicalCallObservations
-
-    metrics, reader = measured
-    observed = PhysicalCallObservations(metrics=metrics, maximum_calls=1)
-    observed.opened("session-one", "owner-one", 1)
-    with pytest.raises(PermissionError):
-        observed.opened("session-one", "owner-two", 2)
-    with pytest.raises(RuntimeError):
-        observed.opened("session-two", "owner-one", 1)
-    assert points(reader)["caller.active.calls"][0].value == 1
-
-
-@pytest.mark.parametrize(
-    "kind", ["request", "admission", "handover", "dependency", "reason", "resource"]
-)
+@pytest.mark.parametrize("kind", ["request", "admission", "dependency", "reason", "resource"])
 def test_untrusted_metric_dimensions_are_rejected_without_export(measured, kind):
     metrics, reader = measured
     marker = "synthetic-private-session-agent-content"
@@ -241,8 +201,6 @@ def test_untrusted_metric_dimensions_are_rejected_without_export(measured, kind)
             metrics.request(route=marker, method="GET", status=200, seconds=0.1)
         elif kind == "admission":
             metrics.admission(marker)
-        elif kind == "handover":
-            metrics.handover(marker, 0.1)
         elif kind == "dependency":
             metrics.dependency_failure(marker, "unavailable")
         elif kind == "reason":
@@ -252,16 +210,12 @@ def test_untrusted_metric_dimensions_are_rejected_without_export(measured, kind)
     assert marker not in repr(reader.get_metrics_data())
 
 
-@pytest.mark.parametrize("value", [-1, True, math.nan, math.inf])
-def test_active_call_gauge_rejects_invalid_counts(measured, value):
-    metrics, reader = measured
-    with pytest.raises(ValueError):
-        metrics.active_calls(value)
-
-
 def test_obsolete_or_empty_context_cannot_add_metric_labels(measured):
     metrics, reader = measured
-    assert metrics.route_for("/v1/operations/drain/owner-secret-fixture") == "operations"
+    assert metrics.route_for("/v1/conversations/text") == "text"
+    assert metrics.route_for("/v1/conversations/voice") == "voice"
+    assert metrics.route_for("/v1/operations/drain/owner-secret-fixture") == "unmatched"
+    assert metrics.route_for("/v1/dev/transport") == "unmatched"
     assert metrics.route_for("/private/session-secret-fixture") == "unmatched"
     metrics.close()
     with pytest.raises(RuntimeError, match="metrics_closed"):
@@ -290,98 +244,6 @@ def test_actual_runtime_http_lifespan_records_safe_routes_and_errors(measured):
         assert "synthetic-private" not in repr(values) and "session-secret-fixture" not in repr(
             values
         )
-
-
-def test_actual_capacity_reports_reservations_not_phone_calls(measured, community_configuration):
-    import asyncio
-
-    from caller_runtime.adapters.session_repository import LocalSessionRepository
-    from caller_runtime.services.capacity import CapacityService
-
-    metrics, reader = measured
-    capacity = CapacityService(
-        repository=LocalSessionRepository(),
-        configuration=community_configuration,
-        sessions_per_owner=1,
-        maximum_sessions=1,
-        model_session_quota=1,
-        metrics=metrics,
-    )
-
-    async def scenario():
-        await capacity.register_owner("owner-private-marker")
-        assert (
-            await capacity.admit(
-                session_id="session-private-marker", provider_call_ref="phone-private-marker"
-            )
-        ).outcome == "admitted"
-        assert (
-            await capacity.admit(
-                session_id="second-private-marker", provider_call_ref="other-private-marker"
-            )
-        ).outcome == "unavailable"
-        values = points(reader)
-        assert values["caller.active.reservations"][0].value == 1
-        assert "caller.active.calls" not in values
-        assert sum(point.value for point in values["caller.admissions"]) == 2
-        assert "private-marker" not in repr(values)
-
-    asyncio.run(scenario())
-
-
-def test_actual_handover_reports_only_outcome_and_elapsed_time(measured, handover_host):
-    import asyncio
-
-    metrics, reader = measured
-
-    async def scenario():
-        async with handover_host(metrics=metrics) as (
-            coordinator,
-            repository,
-            phone,
-            models,
-            telemetry,
-        ):
-            assert (
-                await coordinator.transfer("session-us3-fixture", "a-peer", context={})
-            ).outcome == "committed"
-            values = points(reader)
-            assert values["caller.handovers"][0].attributes == {"outcome": "committed"}
-            assert values["caller.handover.duration"][0].count == 1
-            assert "session-us3-fixture" not in repr(values) and "a-peer" not in repr(values)
-
-    asyncio.run(scenario())
-
-
-def test_zero_model_quota_is_saturated_even_without_reservations(measured, community_configuration):
-    import asyncio
-
-    from caller_runtime.adapters.session_repository import LocalSessionRepository
-    from caller_runtime.services.capacity import CapacityService
-
-    metrics, reader = measured
-    capacity = CapacityService(
-        repository=LocalSessionRepository(),
-        configuration=community_configuration,
-        sessions_per_owner=1,
-        maximum_sessions=1,
-        model_session_quota=0,
-        metrics=metrics,
-    )
-
-    async def scenario():
-        assert (
-            await capacity.admit(session_id="private-session", provider_call_ref="private-phone")
-        ).outcome == "unavailable"
-        values = points(reader)
-        model = next(
-            point
-            for point in values["caller.saturation"]
-            if point.attributes["resource"] == "model_sessions"
-        )
-        assert model.value == 1
-
-    asyncio.run(scenario())
 
 
 def test_readiness_failure_reports_only_generic_dependency(measured):

@@ -1,4 +1,10 @@
-"""Bounded browser-test metadata and phase clocks; content and I/O belong elsewhere."""
+"""Strict metadata models for one test session: the start permit, authority slots and clocks.
+
+Everything here is bounded metadata, never conversation content; models forbid extra fields, are
+frozen and hide input in validation errors. `StartPermit` encodes the timing rules the whole runtime
+relies on: a 10 s admission window, a permit lifetime of at most 30 s, and a session lifetime of
+600 s with a 120 s idle limit. Naive datetimes are rejected because every deadline is UTC.
+"""
 
 import hashlib
 from dataclasses import dataclass, field
@@ -46,6 +52,7 @@ class StartPermit(Metadata):
 
     @property
     def actor_key(self) -> str:
+        # Hashed so the owner key can address storage without holding the tenant or actor ids.
         return hashlib.sha256((self.tenant_id + "\0" + self.actor_id).encode("utf-8")).hexdigest()
 
     @property

@@ -1,4 +1,11 @@
-"""Sole execution admission boundary; every attempt is ordered against revocation."""
+"""The only path to execute a capability: authorize, admit, then call, in that order.
+
+Each attempt re-reads the permission authority and the pinned and active revisions, authorizes the
+call through `CapabilityPolicy`, records an admission conditioned on the authority ETag and only
+then runs the transport, all inside the caller's original deadline (10 s at most). A concurrent
+revocation moves the ETag and forces another pass, so a revoked grant cannot run. Failures raise
+`GatewayError` with a fixed status (403, 422, 503 or 504) and no detail.
+"""
 
 import asyncio
 import json
@@ -96,6 +103,7 @@ class CapabilityGateway:
             try:
                 async with asyncio.timeout_at(deadline):
                     for _attempt in range(1 if request.single_attempt else 3):
+                        # Re-read authority each pass: a revocation between attempts must win.
                         dependency = "configuration_store"
                         document = await self._repository.read_authority()
                         authority = PermissionAuthority.model_validate_json(json.dumps(document))
@@ -115,6 +123,7 @@ class CapabilityGateway:
                                 request, if_match=document["_etag"], actor_id=actor_id
                             )
                         except PermissionConflict:
+                            # The ETag moved (revocation or concurrent admit): authorize again.
                             continue
                         if loop.time() >= deadline:
                             raise GatewayError(504)
@@ -126,6 +135,7 @@ class CapabilityGateway:
                                 selected, request_id=request.request_id, deadline=deadline
                             )
                         except RetryableCapabilityError:
+                            # Only repeatable reads retry, and only with a fresh admission.
                             continue
                         return {
                             "requestId": request.request_id,

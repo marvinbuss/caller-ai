@@ -1,4 +1,10 @@
-"""Minimal health probes, never external dependency discovery or readiness claims."""
+"""Minimal health probes, never external dependency discovery or readiness claims.
+
+`/healthz` only says the process is up. `/readyz` reports ready when configuration loaded, the
+injected dependency check answers in time and the text history store is ready; otherwise it
+returns 503 with one fixed reason code. Neither probe carries conversation or dependency detail,
+and both are operational probes, not conversation endpoints.
+"""
 
 import asyncio
 
@@ -29,6 +35,7 @@ async def readiness(request: Request) -> JSONResponse:
     if ready:
         reason = "dependency_unavailable"
         try:
+            # A probe must answer quickly, so a slow dependency counts as not ready.
             ready = bool(
                 await asyncio.wait_for(request.app.state.dependencies.ready(), timeout=0.25)
             )
@@ -36,6 +43,10 @@ async def readiness(request: Request) -> JSONResponse:
             ready = False
         if not ready:
             request.app.state.metrics.dependency_failure("readiness", "unavailable")
+        runtime = request.app.state.runtime
+        if ready and runtime is not None and not runtime.history_ready():
+            ready, reason = False, "history_store_unavailable"
+            request.app.state.metrics.dependency_failure("history_store", "unavailable")
     return JSONResponse(
         {
             "status": "ready" if ready else "not_ready",

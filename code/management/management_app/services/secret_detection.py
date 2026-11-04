@@ -1,4 +1,10 @@
-"""Versioned credential scanning; returns field/rule metadata, never matched text."""
+"""Finds credentials pasted into configuration, using a versioned rule set.
+
+Input: a configuration graph and the approved secret alias names. Output: issues carrying only a
+field path, rule id and policy version, never the matched text. Rules cover private keys, URI
+userinfo, connection strings, SAS signatures and bearer tokens; credentials must be `secret://`
+aliases. Unknown field names are reported as `unknown` so attacker-chosen keys are not echoed.
+"""
 
 import re
 from typing import TypedDict

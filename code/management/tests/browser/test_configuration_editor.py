@@ -1,5 +1,6 @@
 """Real-browser editor contracts; identities are issued only by an owned test host."""
 
+import json
 import ssl
 from pathlib import Path
 
@@ -7,7 +8,28 @@ import httpx
 import pytest
 from playwright.sync_api import Browser, Locator, Page, expect
 
+from tests.conftest import EXPECT_TIMEOUT_MS
+
 pytestmark = pytest.mark.browser
+
+SPEECH_EXITS = (
+    "controls",
+    "devicechange",
+    "hidden",
+    "navigation",
+    "logout",
+    "connection_loss",
+    "playback_suspended",
+    "playback_closed",
+)
+SPEECH_WIDTHS = (360, 768, 1440)
+TEXT_ENTRIES = ("overview", "community")
+# Each console case runs as its own manager, so a session left in `cleanup pending` holds only
+# that case's slot instead of failing every case after it.
+CONSOLE_ACTORS = (
+    *(f"console-speech-{event}-{width}" for event in SPEECH_EXITS for width in SPEECH_WIDTHS),
+    *(f"console-text-{entry}" for entry in TEXT_ENTRIES),
+)
 
 
 @pytest.fixture(scope="module")
@@ -16,7 +38,7 @@ def editor_host(editor_host_factory):
 
     with editor_host_factory(
         graph=configuration_graph_document(),
-        identities=("manager-one", "manager-two"),
+        identities=("manager-one", "manager-two", *CONSOLE_ACTORS),
         mode="local",
     ) as host:
         yield host
@@ -53,6 +75,64 @@ def show_global_settings(page: Page) -> None:
     expect(settings).to_be_visible()
     if not settings.evaluate("element => element.open"):
         settings.locator(":scope > summary").click()
+
+
+def press_mute_when_no_audio_is_queued(page: Page) -> None:
+    # The console ends a session that is muted while audio is still queued on its socket (it
+    # cannot recall queued frames), so press the button in the same task that sees an empty queue.
+    page.wait_for_function(
+        """() => {
+            const socket = window.syntheticMedia.socket;
+            if (!socket || socket.bufferedAmount !== 0) return false;
+            document.getElementById('test-mute').click();
+            return true;
+        }""",
+        timeout=EXPECT_TIMEOUT_MS,
+    )
+
+
+def runtime_events(host: dict, limit: int = 16) -> list[str]:
+    # The runtime's own account of a session's end, which the browser assertion cannot show.
+    keep = {
+        "test.admission",
+        "test.relay",
+        "test.work",
+        "test.session",
+        "test.cleanup",
+        "test.alert",
+        "test.latency",
+    }
+    rows = []
+    for line in Path(host["log"]).read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and value.get("event") in keep:
+            rows.append(
+                " ".join(
+                    str(value.get(key, ""))
+                    for key in ("timestamp", "service", "event", "outcome", "reason", "value")
+                ).strip()
+            )
+    return rows[-limit:]
+
+
+def print_failure_context(page: Page, host: dict) -> None:
+    # A session that did not end as expected shows its reason here, which the assertion does not.
+    try:
+        print(
+            {
+                key: page.locator("#test-" + key).inner_text(timeout=1000)
+                for key in ("status", "error", "capture", "playback")
+            }
+        )
+    except Exception:
+        pass
+    try:
+        print({"runtime_events": runtime_events(host)})
+    except Exception:
+        pass
 
 
 def open_manager(
@@ -122,7 +202,7 @@ def test_console_entry_is_explicit_accessible_and_never_requests_media_or_ticket
     page.on(
         "request",
         lambda request: (
-            requested.append(request.url) if request.url.endswith("/v1/test-tickets") else None
+            requested.append(request.url) if request.url.endswith("/v1/console/tickets") else None
         ),
     )
     permission_script = """
@@ -176,7 +256,7 @@ def test_console_denied_permission_is_visible_and_precedes_ticket(
     page.on(
         "request",
         lambda request: (
-            requested.append(request.url) if request.url.endswith("/v1/test-tickets") else None
+            requested.append(request.url) if request.url.endswith("/v1/console/tickets") else None
         ),
     )
     page.evaluate("""
@@ -212,7 +292,7 @@ def test_console_stop_disposes_late_permission_without_ticket(browser: Browser, 
     page.on(
         "request",
         lambda request: (
-            requests.append(request.url) if request.url.endswith("/v1/test-tickets") else None
+            requests.append(request.url) if request.url.endswith("/v1/console/tickets") else None
         ),
     )
     page.evaluate("""() => {
@@ -241,19 +321,19 @@ def test_console_stop_disposes_late_permission_without_ticket(browser: Browser, 
         context.close()
 
 
-@pytest.mark.parametrize("entry", ["overview", "community"])
+@pytest.mark.parametrize("entry", TEXT_ENTRIES)
 def test_console_published_text_uses_owned_runtime_without_microphone(
     browser: Browser, configuration_host, entry: str
 ):
-    context, page = open_manager(browser, configuration_host, "manager-one", global_settings=False)
+    context, page = open_manager(
+        browser, configuration_host, f"console-text-{entry}", global_settings=False
+    )
     wire = []
 
     def observe(socket):
-        if socket.url.endswith("/v1/test-sessions"):
+        if socket.url.endswith("/v1/console/sessions"):
 
             def receive(raw):
-                import json
-
                 if isinstance(raw, str):
                     value = json.loads(raw)
                     wire.append(
@@ -275,7 +355,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         window.WebSocket = class extends NativeSocket {
             constructor(...arguments_) {
                 super(...arguments_);
-                if (String(arguments_[0]).endsWith('/v1/test-sessions')) {
+                if (String(arguments_[0]).endsWith('/v1/console/sessions')) {
                     window.callerTestSockets.push(this);
                     this.addEventListener('message', event => {
                         if (typeof event.data !== 'string') return;
@@ -321,7 +401,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.get_by_role("log", name="Conversation")).to_contain_text(
             "Synthetic shared reply"
         )
-        page.wait_for_function("window.callerTestCompleted === 1", timeout=5000)
+        page.wait_for_function("window.callerTestCompleted === 1", timeout=EXPECT_TIMEOUT_MS)
         expect(page.locator("#test-agent")).to_have_text("agent-alpha")
         assert page.evaluate("window.callerTestCaptureCount") == 0
         page.get_by_role("button", name="Stop test", exact=True).click()
@@ -344,7 +424,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.get_by_role("log", name="Conversation")).to_contain_text(
             "Synthetic shared reply"
         )
-        page.wait_for_function("window.callerTestCompleted === 2", timeout=5000)
+        page.wait_for_function("window.callerTestCompleted === 2", timeout=EXPECT_TIMEOUT_MS)
         page.get_by_role("button", name="Stop test", exact=True).click()
         expect(page.locator("#test-status")).to_have_text("ended")
         trust = ssl.create_default_context(cafile=configuration_host["certificate"])
@@ -359,6 +439,9 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
                 "group", name="Community Synthetic unsaved alpha", exact=True
             ).get_by_label("Name", exact=True)
         ).to_have_value("Synthetic unsaved alpha")
+    except AssertionError:
+        print_failure_context(page, configuration_host)
+        raise
     finally:
         context.close()
 
@@ -380,7 +463,7 @@ def test_console_unavailable_media_is_visible_before_ticket(
     page.on(
         "request",
         lambda request: (
-            requested.append(request.url) if request.url.endswith("/v1/test-tickets") else None
+            requested.append(request.url) if request.url.endswith("/v1/console/tickets") else None
         ),
     )
     page.evaluate(
@@ -429,27 +512,15 @@ def test_console_unavailable_media_is_visible_before_ticket(
         context.close()
 
 
-@pytest.mark.parametrize("width", [360, 768, 1440])
-@pytest.mark.parametrize(
-    "exit_event",
-    [
-        "controls",
-        "devicechange",
-        "hidden",
-        "navigation",
-        "logout",
-        "connection_loss",
-        "playback_suspended",
-        "playback_closed",
-    ],
-)
+@pytest.mark.parametrize("width", SPEECH_WIDTHS)
+@pytest.mark.parametrize("exit_event", SPEECH_EXITS)
 def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
     browser: Browser, configuration_host, width: int, exit_event: str
 ) -> None:
     context, page = open_manager(
         browser,
         configuration_host,
-        "manager-one",
+        f"console-speech-{exit_event}-{width}",
         global_settings=False,
         fresh_session=exit_event == "logout",
     )
@@ -471,7 +542,7 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
         window.WebSocket = class extends NativeSocket {
             constructor(...arguments_) {
                 super(...arguments_);
-                if (String(arguments_[0]).endsWith('/v1/test-sessions')) {
+                if (String(arguments_[0]).endsWith('/v1/console/sessions')) {
                     window.syntheticMedia.socket = this;
                     this.addEventListener('message', event => {
                         if (event.data instanceof ArrayBuffer) window.syntheticMedia.received++;
@@ -553,12 +624,12 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
             window.syntheticMedia.oldGrant = {...window.syntheticMedia.lastGrant};
             window.syntheticMedia.oldClear = {...window.syntheticMedia.lastClear};
         }""")
-        page.get_by_role("button", name="Mute input", exact=True).click()
+        press_mute_when_no_audio_is_queued(page)
         expect(page.locator("#test-capture")).to_have_text("Muted")
         expect(page.get_by_role("button", name="Mute input", exact=True)).to_have_attribute(
             "aria-pressed", "true"
         )
-        page.get_by_role("button", name="Mute input", exact=True).click()
+        press_mute_when_no_audio_is_queued(page)
         expect(page.locator("#test-capture")).to_have_text("Active")
         page.wait_for_function("""window.syntheticMedia.lastGrant.captureEpoch >
             window.syntheticMedia.oldGrant.captureEpoch""")
@@ -587,6 +658,9 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
         )
         expect(page.get_by_role("button", name="Start published test", exact=True)).to_be_enabled()
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    except AssertionError:
+        print_failure_context(page, configuration_host)
+        raise
     finally:
         context.close()
 
@@ -649,7 +723,7 @@ def test_us1_community_graph_publication_navigation_and_presentation(
         graph.locator(".react-flow__controls-fitview").click()
         native_node = graph.locator('.react-flow__node[data-id="community-alpha"]')
         expect(native_node).to_be_visible()
-        native_node.hover(timeout=5000)
+        native_node.hover(timeout=EXPECT_TIMEOUT_MS)
         node_box = native_node.bounding_box()
         assert node_box is not None
         start_x = node_box["x"] + node_box["width"] / 2
@@ -961,13 +1035,14 @@ def test_us1_protected_only_overview_is_explicitly_empty_without_model_resources
         expect(page.get_by_role("button", name="Add connection", exact=True)).to_be_disabled()
         expect(page.get_by_role("button", name="Add community", exact=True)).to_be_enabled()
         assert (
-            context.request.get(configuration_host["management"] + "/v1/test-tickets").status == 404
+            context.request.get(configuration_host["management"] + "/v1/console/tickets").status
+            == 404
         )
         denied = context.request.post(
             configuration_host["management"] + "/v1/unreviewed-test-tickets"
         )
         assert denied.status == 403 and denied.json()["error"] == "unreviewed_ingress_prohibited"
-        guarded = context.request.post(configuration_host["management"] + "/v1/test-tickets")
+        guarded = context.request.post(configuration_host["management"] + "/v1/console/tickets")
         assert guarded.status == 403 and guarded.json()["code"] == "test_permission_denied"
     finally:
         context.close()
@@ -1537,7 +1612,7 @@ def test_api_rejects_forged_relationship_policy_changes(
             "csrf"
         ]
         graph = configuration_graph_document()
-        from management_app.state.configuration_editor import EditorDraft
+        from management_app.state.editor_draft import EditorDraft
 
         draft = EditorDraft.from_revision(graph, current.headers["etag"])
         peer = draft.add_agent("community-alpha", "Alpha peer", "Synthetic peer prompt")
@@ -1586,7 +1661,7 @@ def test_api_rejects_forged_relationship_policy_changes(
 def test_conflict_retains_relationship_context_and_agent_edits_across_views(
     browser: Browser, configuration_host
 ) -> None:
-    from management_app.state.configuration_editor import EditorDraft
+    from management_app.state.editor_draft import EditorDraft
 
     with browser.new_context(ignore_https_errors=True) as setup:
         setup.add_cookies(configuration_host["sessions"]["manager-one"])

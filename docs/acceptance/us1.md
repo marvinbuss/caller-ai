@@ -33,5 +33,5 @@ and no sensitive trace/audit export. Each missing prerequisite is blocked, not s
 No live executor, automatic provisioning, phone number, provider selection, real model call or
 destructive cleanup is included in this local profile. A fake codec name, unit sample duration
 or typed provider port cannot satisfy these obligations. Logical disposal is not a provider/
-backup physical-erasure guarantee. Read the [call runbook](../runbooks/call-lifecycle.md) and
+backup physical-erasure guarantee. Read the call runbook (retired with feature 003) and
 [pending environment record](live-environment.md).

@@ -205,7 +205,7 @@ def test_multimodal_metadata_uses_fixed_vocabulary_and_correlated_safe_events():
     telemetry = Telemetry("management", "local")
     with telemetry.span(
         "test.relay",
-        {"http.route": "/v1/test-sessions", "test.mode": "text", "test.phase": "active"},
+        {"http.route": "/v1/console/sessions", "test.mode": "text", "test.phase": "active"},
     ):
         telemetry.event(
             "test.relay",

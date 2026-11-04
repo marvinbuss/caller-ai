@@ -1,4 +1,9 @@
-"""Management-owned dependency boundary, independent of runtime private data."""
+"""Management-owned dependency boundary, independent of runtime private data.
+
+`ReadinessPort` is the one question the management health API asks its dependencies: ready or
+not, with no detail. `LocalDependencies` answers it for the foundation shell and for tests; it
+holds no configuration and is not a persistence store.
+"""
 
 from dataclasses import dataclass
 from typing import Protocol

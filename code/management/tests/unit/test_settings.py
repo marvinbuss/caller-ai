@@ -65,6 +65,21 @@ def test_console_controls_are_not_obscured_by_framework_badge() -> None:
     assert config.show_built_with_reflex is False
 
 
+def test_theme_is_configured_by_the_plugin() -> None:
+    import reflex as rx
+
+    from rxconfig import config
+
+    plugin = next(
+        value for value in config.plugins if isinstance(value, rx.plugins.RadixThemesPlugin)
+    )
+    assert plugin.enabled and plugin.theme is not None
+    theme = {
+        name: str(getattr(plugin.theme, name)) for name in ("accent_color", "appearance", "radius")
+    }
+    assert theme == {"accent_color": '"teal"', "appearance": '"light"', "radius": '"small"'}
+
+
 def test_preview_warmup_hook_is_registered_and_idempotent() -> None:
     from rxconfig import PreviewWarmupPlugin, config
 

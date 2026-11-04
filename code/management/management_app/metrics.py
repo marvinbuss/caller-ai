@@ -1,4 +1,11 @@
-"""Management-owned bounded aggregate metrics; no payloads, IDs or default network export."""
+"""Management-owned bounded aggregate metrics; no payloads, IDs or default network export.
+
+`ManagementMetrics` records request, error, dependency-failure and saturation values under fixed
+route, method, dependency and reason names, so no identifier or content can become a label.
+`DeltaExportReader` lets a trusted exporter pull delta values by hand (no background worker or
+implicit destination); `_GuardedExporter` caps each export at one second and turns any exporter
+failure into a `failed` flag instead of an exception.
+"""
 
 import math
 from typing import Any
@@ -83,6 +90,7 @@ class _GuardedExporter(MetricExporter):
                 self.exported = True
                 return MetricExportResult.SUCCESS
         except Exception:
+            # Telemetry must never break the caller: any exporter error becomes a failed flag.
             pass
         self.failed = True
         return MetricExportResult.FAILURE

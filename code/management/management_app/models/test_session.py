@@ -1,4 +1,11 @@
-"""Strict browser-test control metadata; content and signed permits are never console state."""
+"""Strict browser-test control metadata; content and signed permits are never console state.
+
+The models carry only identifiers, modes, digests, timestamps and status words between the
+browser, the console state and the backend permit: a ticket request, the authenticate message,
+the start permit (with the original startup budget and the actor and nonce keys) and the console
+snapshot. All are strict and frozen, reject unknown fields, and keep serialized metadata under
+8 KiB, so conversation text, audio and signed permits cannot end up in console state.
+"""
 
 import hashlib
 from datetime import UTC, datetime, timedelta
@@ -86,7 +93,7 @@ class TicketResponse(TestMetadata):
     permit: str = Field(min_length=1, max_length=6144, repr=False)
     mode: Mode
     request_id: Identifier = Field(alias="requestId")
-    socket_path: Literal["/v1/test-sessions"] = Field(alias="socketPath")
+    socket_path: Literal["/v1/console/sessions"] = Field(alias="socketPath")
     expires_at: AwareTime = Field(alias="expiresAt")
     admission_deadline_utc: AwareTime = Field(alias="admissionDeadlineUtc")
 

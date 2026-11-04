@@ -1,8 +1,14 @@
-"""Runtime-owned bounded aggregate metrics; no call content or implicit network exporter."""
+"""Runtime-owned bounded aggregate metrics; no conversation content or implicit exporter.
+
+`RuntimeMetrics` records request, error, admission, dependency-failure and saturation values under
+fixed route, method, dependency and reason names, so no identifier, text or audio can become a
+label and cardinality stays bounded. Values stay in memory unless a trusted exporter is attached
+through `DeltaExportReader`, which collects by hand (no background worker or implicit
+destination); `_GuardedExporter` caps each export at one second and turns any exporter failure
+into a `failed` flag instead of an exception.
+"""
 
 import math
-import re
-from threading import Lock
 from typing import Any
 
 from opentelemetry.sdk.metrics import AlwaysOffExemplarFilter, Counter, Histogram, MeterProvider
@@ -17,15 +23,20 @@ from opentelemetry.sdk.metrics.export import (
 )
 from opentelemetry.sdk.resources import Resource
 
-METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "OTHER"})
-ROUTES = frozenset({"health", "readiness", "dev_transport", "media", "operations", "unmatched"})
+METHODS = frozenset({"GET", "POST", "OTHER"})
+ROUTE_PATHS = {
+    "/healthz": "health",
+    "/readyz": "readiness",
+    "/v1/conversations/text": "text",
+    "/v1/conversations/voice": "voice",
+}
+ROUTES = frozenset({"health", "readiness", "text", "voice", "unmatched"})
 DEPENDENCIES = frozenset(
-    {"readiness", "session_store", "model", "phone", "configuration", "capability_gateway"}
+    {"readiness", "session_store", "history_store", "model", "configuration", "capability_gateway"}
 )
 REASONS = frozenset({"unavailable", "deadline", "quota", "rejected"})
 RESOURCES = frozenset({"session_slots", "model_sessions", "admission_queue"})
 ADMISSIONS = frozenset({"admitted", "duplicate", "unavailable"})
-HANDOVERS = frozenset({"requested", "committed", "failed", "canceled"})
 
 
 def finite(value: float, *, maximum: float) -> float:
@@ -68,6 +79,7 @@ class _GuardedExporter(MetricExporter):
                 self.exported = True
                 return MetricExportResult.SUCCESS
         except Exception:
+            # Telemetry must never break the caller: any exporter error becomes a failed flag.
             pass
         self.failed = True
         return MetricExportResult.FAILURE
@@ -147,34 +159,14 @@ class RuntimeMetrics:
             unit="s",
             explicit_bucket_boundaries_advisory=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10, 30),
         )
-        self._active = meter.create_gauge("caller.active.calls", unit="{call}")
-        self._reservations = meter.create_gauge("caller.active.reservations", unit="{reservation}")
         self._admissions = meter.create_counter("caller.admissions", unit="{admission}")
-        self._handovers = meter.create_counter("caller.handovers", unit="{handover}")
-        self._handover_duration = meter.create_histogram(
-            "caller.handover.duration",
-            unit="s",
-            explicit_bucket_boundaries_advisory=(0.1, 0.25, 0.5, 1, 2, 3, 5, 10),
-        )
-        self._speech = meter.create_histogram(
-            "caller.speech.delay",
-            unit="s",
-            explicit_bucket_boundaries_advisory=(0.1, 0.25, 0.5, 1, 2, 3, 5, 10),
-        )
         self._dependencies = meter.create_counter("caller.dependency.failures", unit="{failure}")
         self._saturation = meter.create_gauge("caller.saturation", unit="1")
         self._closed = False
 
     @staticmethod
     def route_for(path: str) -> str:
-        fixed = {"/healthz": "health", "/readyz": "readiness", "/v1/dev/transport": "dev_transport"}
-        if path in fixed:
-            return fixed[path]
-        if path.startswith("/v1/operations/drain/"):
-            return "operations"
-        if path.startswith("/v1/calls/") and path.endswith("/media"):
-            return "media"
-        return "unmatched"
+        return ROUTE_PATHS.get(path, "unmatched")
 
     def _open(self) -> None:
         if self._closed:
@@ -196,35 +188,11 @@ class RuntimeMetrics:
         if status >= 500:
             self._errors.add(1, attributes)
 
-    def active_calls(self, count: int) -> None:
-        self._open()
-        if type(count) is not int or not 0 <= count <= 10000:
-            raise ValueError("invalid_active_call_count")
-        self._active.set(count)
-
     def admission(self, outcome: str) -> None:
         self._open()
         if outcome not in ADMISSIONS:
             raise ValueError("invalid_admission_metric_label")
         self._admissions.add(1, {"outcome": outcome})
-
-    def reservations(self, count: int) -> None:
-        self._open()
-        if type(count) is not int or not 0 <= count <= 10000:
-            raise ValueError("invalid_reservation_count")
-        self._reservations.set(count)
-
-    def handover(self, outcome: str, seconds: float) -> None:
-        self._open()
-        if outcome not in HANDOVERS:
-            raise ValueError("invalid_handover_metric_label")
-        duration = finite(seconds, maximum=3600)
-        self._handovers.add(1, {"outcome": outcome})
-        self._handover_duration.record(duration, {"outcome": outcome})
-
-    def speech_delay(self, seconds: float) -> None:
-        self._open()
-        self._speech.record(finite(seconds, maximum=3600))
 
     def dependency_failure(self, dependency: str, reason: str) -> None:
         self._open()
@@ -242,48 +210,3 @@ class RuntimeMetrics:
         if not self._closed:
             self._closed = True
             self._provider.shutdown()
-
-
-class PhysicalCallObservations:
-    """Process-local physical counts; retain unknown closure, never infer from reservations."""
-
-    def __init__(self, *, metrics: RuntimeMetrics, maximum_calls: int = 10000) -> None:
-        if metrics is None or type(maximum_calls) is not int or not 1 <= maximum_calls <= 10000:
-            raise ValueError("explicit_physical_observation_metrics_required")
-        self._metrics, self._maximum = metrics, maximum_calls
-        self._bindings: dict[str, tuple[str, int]] = {}
-        self._lock = Lock()
-
-    @staticmethod
-    def _binding(session_id: str, owner_id: str, epoch: int) -> tuple[str, int]:
-        if (
-            any(
-                not isinstance(value, str)
-                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value)
-                for value in (session_id, owner_id)
-            )
-            or type(epoch) is not int
-            or epoch < 1
-        ):
-            raise ValueError("invalid_physical_observation_binding")
-        return owner_id, epoch
-
-    def opened(self, session_id: str, owner_id: str, epoch: int) -> None:
-        binding = self._binding(session_id, owner_id, epoch)
-        with self._lock:
-            previous = self._bindings.get(session_id)
-            if previous is not None and previous != binding:
-                raise PermissionError("physical_observation_binding_conflict")
-            if previous is None and len(self._bindings) >= self._maximum:
-                raise RuntimeError("physical_observation_capacity_exhausted")
-            self._bindings[session_id] = binding
-            self._metrics.active_calls(len(self._bindings))
-
-    def closed(self, session_id: str, owner_id: str, epoch: int) -> bool:
-        binding = self._binding(session_id, owner_id, epoch)
-        with self._lock:
-            if self._bindings.get(session_id) != binding:
-                return False
-            del self._bindings[session_id]
-            self._metrics.active_calls(len(self._bindings))
-            return True

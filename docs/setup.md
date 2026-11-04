@@ -27,7 +27,8 @@ uv run --directory code/tools --locked --no-sync python scripts/smoke.py --edito
 The helper builds the normal Reflex frontend within its existing 180-second budget and starts
 both owned apps under one 120-second readiness deadline. Open its emitted HTTPS URL, sign in
 through the fixture-only declared manager route and follow the test control. Start is explicit;
-text acquires no microphone, speech permission precedes tickets, and Ctrl+C disposes owned
+text acquires no microphone, shows a notice that text test conversations are stored for 30 days
+and visible only to their owner, speech permission precedes tickets, and Ctrl+C disposes owned
 processes and temporary test keys/trust. No actual provider, cloud identity/store or physical
 device qualification is performed by this controlled fixture. Do not load fixture logins or
 keys into the shipped app.
@@ -488,13 +489,15 @@ Images publish runtime port 8000 and unified management port 3000, not developme
 8001; see [container verification](containers.md). Management images require an absolute
 build-time `PUBLIC_API_URL` matching the browser-visible origin.
 
-Both health endpoints are `/healthz` and `/readyz`; local readiness must keep live calls and
-configuration editing unavailable. Never treat a shell or probe acknowledgment as a real call.
+Both health endpoints are `/healthz` and `/readyz`; local readiness reports the business capability
+flags false and configuration editing unavailable. Never treat a shell or probe acknowledgment as a real conversation.
 Occupied ports must fail rather than silently selecting a different process. Stop only owned
 processes; the smoke harness selects free ports and cleans children on failed startup.
 Invalid `CALLER_MODE`, missing live configuration and missing/stale locks are errors, not
 permission to fall back or resolve unreviewed dependencies. Reprepare an environment only
 through its approved-feed locked commands. Recovery integration tests cover these outcomes.
+
+Optional GitHub steps in the Spec Kit workflow are described in [spec workflow hooks](spec-workflow-hooks.md).
 
 ## Failure Gate and Diagrams
 
@@ -623,4 +626,4 @@ fixtures; full management discovery remains unchanged and its prior export failu
 See [local evidence](acceptance/foundation.md) and [security gates](security.md).
 The earlier independent-work authorization did not waive this gate. Both actual-process recovery suites
 pass, and both architecture Mermaid diagrams have been rendered and visually reviewed.
-No live call handling, configuration editor, cloud provisioning or production readiness is claimed.
+No live provider connection, configuration editor, cloud provisioning or production readiness is claimed.

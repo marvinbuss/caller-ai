@@ -1,9 +1,10 @@
-variable "environment" {
+variable "label" {
   type        = string
-  description = "Explicit environment name shared by bootstrap and workload configuration."
+  default     = null
+  description = "Optional free-form label used only in tags; no behavior depends on its value."
   validation {
-    condition     = can(regex("^[a-z][a-z0-9-]{1,15}$", var.environment))
-    error_message = "Supply a canonical environment name without paths or whitespace."
+    condition     = var.label == null || can(regex("^[A-Za-z0-9][A-Za-z0-9 _.-]{0,62}$", var.label))
+    error_message = "Supply a short plain label without paths, or leave it unset."
   }
 }
 

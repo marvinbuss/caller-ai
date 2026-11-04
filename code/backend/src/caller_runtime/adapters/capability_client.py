@@ -1,4 +1,11 @@
-"""Bounded conversation capability dispatch through the authenticated management authority."""
+"""Calls the management capability gateway for one model tool call, inside the work budget.
+
+Input: the active session slot, a tool id, an action and arguments. The runtime selects only
+enabled, read-only, public tools granted to the active ordinary agent and validates the arguments
+against the tool and grant schemas before any request. Management re-checks current authority, so
+this is not the permission decision. Each attempt is recorded before dispatch and settled after,
+with zero retries; failures surface as fixed codes without response content.
+"""
 
 import asyncio
 import hashlib
@@ -13,11 +20,11 @@ from uuid import UUID, uuid4
 import httpx
 from jsonschema import Draft202012Validator
 
-from caller_runtime.adapters.azure_realtime import CredentialPort
-from caller_runtime.adapters.configuration_client import unique_object
+from caller_runtime.adapters.strict_json import unique_object
 from caller_runtime.domain.configuration import RevisionSnapshot
 from caller_runtime.domain.conversation import AttemptIntent, TestSlot, WorkBudget
-from caller_runtime.services.test_admission import SettlementObserver, TestAdmissionService
+from caller_runtime.domain.ports import CredentialPort
+from caller_runtime.services.admission import SettlementObserver, TestAdmissionService
 
 
 def reject_constant(value: str) -> Any:

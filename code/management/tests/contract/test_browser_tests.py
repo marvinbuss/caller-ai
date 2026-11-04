@@ -32,7 +32,15 @@ def test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots(edito
         async def scenario():
             sockets = []
 
-            async def begin(actor, *, mode="text", new_cookie=False):
+            async def message_of(socket, kind):
+                """Read until a message of this kind, skipping audio credits and agent changes."""
+                while True:
+                    value = json.loads(await asyncio.wait_for(socket.recv(), 5))
+                    if value["type"] == kind:
+                        return value
+                    assert value["type"] in {"audio.credit", "agent.changed"}
+
+            async def begin(actor, *, mode="speech", new_cookie=False):
                 cookie = host["sessions"][actor][0]
                 async with httpx.AsyncClient(
                     base_url=host["management"],
@@ -47,7 +55,7 @@ def test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots(edito
                         assert response.status_code == 303
                     csrf = (await client.get("/auth/session")).json()["csrf"]
                     response = await client.post(
-                        "/v1/test-tickets",
+                        "/v1/console/tickets",
                         json={"mode": mode, "requestId": uuid4().hex},
                         headers={"Origin": host["ui"], "X-CSRF-Token": csrf},
                     )
@@ -60,7 +68,7 @@ def test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots(edito
                     host["ui"].replace("https:", "wss:") + ticket["socketPath"],
                     ssl=trust,
                     origin=host["ui"],
-                    subprotocols=["caller.test.v1"],
+                    subprotocols=["caller.console.v1"],
                     additional_headers={"Cookie": cookie_header},
                     proxy=None,
                     compression=None,
@@ -99,7 +107,7 @@ def test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots(edito
                         }
                     )
                 )
-                assert json.loads(await asyncio.wait_for(first.recv(), 1))["type"] == "pong"
+                assert (await message_of(first, "pong"))["nonce"] == "original-still-owned"
                 active = [(first, ready, 2)]
                 for actor in actors[1:5]:
                     socket = await begin(actor)
@@ -112,7 +120,7 @@ def test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots(edito
                 assert failure.value.rcvd.code == 1013
                 async with httpx.AsyncClient(verify=trust, trust_env=False, timeout=1) as client:
                     counts = (await client.get(host["runtime"] + "/_test/runtime-status")).json()
-                    assert counts["occupied"] == 5 and counts["liveConnections"] == 0
+                    assert counts["occupied"] == 5 and counts["liveConnections"] == 5
                     for socket, response, sequence in active:
                         await socket.send(
                             json.dumps(
@@ -123,10 +131,39 @@ def test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots(edito
                                 }
                             )
                         )
-                        ended = json.loads(await asyncio.wait_for(socket.recv(), 5))
-                        assert ended["type"] == "ended" and ended["cleanupStatus"] == "complete"
+                        ended = await message_of(socket, "ended")
+                        assert ended["cleanupStatus"] == "complete"
                     counts = (await client.get(host["runtime"] + "/_test/runtime-status")).json()
-                    assert counts["occupied"] == 0 and counts["liveConnections"] == 0
+                    assert counts["occupied"] == 0 and counts["liveConnections"] == 5
+                    # A text console session is one backend request per turn and keeps no slot.
+                    text = await begin(actors[1], mode="text")
+                    opened = await message_of(text, "ready")
+                    assert opened["mode"] == "text" and opened["agentId"] == "agent-welcome"
+                    for sequence, content in ((1, "First question"), (2, "Second question")):
+                        await text.send(
+                            json.dumps(
+                                {
+                                    "type": "text.submit",
+                                    "sequence": sequence,
+                                    "sessionId": opened["sessionId"],
+                                    "text": content,
+                                }
+                            )
+                        )
+                        assert (await message_of(text, "text.delta"))["text"] == (
+                            "Synthetic shared reply"
+                        )
+                        await message_of(text, "text.completed")
+                    await text.send(
+                        json.dumps(
+                            {"type": "stop", "sequence": 3, "sessionId": opened["sessionId"]}
+                        )
+                    )
+                    assert (await message_of(text, "ended"))["cleanupStatus"] == "complete"
+                    counts = (await client.get(host["runtime"] + "/_test/runtime-status")).json()
+                    # Both turns continued one stored conversation and left no slot behind.
+                    assert counts["conversations"] == 1 and counts["occupied"] == 0
+                    assert counts["liveConnections"] == 5
                     fault = await client.post(
                         host["runtime"] + "/_test/unknown-prepare/on",
                         headers={"Authorization": "Bearer synthetic-browser-workload"},
@@ -502,7 +539,7 @@ def ticket_api(browser_identity, signing_key, monkeypatch):
 def test_ticket_post_has_fixed_path_short_signed_scope_and_no_provider_credentials(ticket_api):
     client, identity, ticket, signer, clock, ticks, telemetry = ticket_api
     response = client.post(
-        "/v1/test-tickets",
+        "/v1/console/tickets",
         json={"mode": "text", "requestId": "request-one"},
         headers=browser_headers(identity, ticket),
     )
@@ -516,7 +553,7 @@ def test_ticket_post_has_fixed_path_short_signed_scope_and_no_provider_credentia
         "expiresAt",
         "admissionDeadlineUtc",
     }
-    assert result["socketPath"] == "/v1/test-sessions" and result["mode"] == "text"
+    assert result["socketPath"] == "/v1/console/sessions" and result["mode"] == "text"
     claims = signer.verify(
         result["permit"],
         management_session_digest=identity.sessions.digest(ticket.cookie),
@@ -548,7 +585,7 @@ def test_ticket_authorization_time_uses_original_receipt_deadline_not_new_budget
 
     monkeypatch.setattr(identity, "require_test_manager", delayed)
     response = client.post(
-        "/v1/test-tickets",
+        "/v1/console/tickets",
         json={"mode": "speech", "requestId": "delayed-request"},
         headers=browser_headers(identity, ticket),
     )
@@ -569,14 +606,18 @@ def test_ticket_authorization_time_uses_original_receipt_deadline_not_new_budget
 def test_duplicate_ticket_delivery_never_resets_nonce_or_original_startup_time(ticket_api):
     client, identity, ticket, signer, clock, ticks, telemetry = ticket_api
     body = {"mode": "text", "requestId": "same-request"}
-    first = client.post("/v1/test-tickets", json=body, headers=browser_headers(identity, ticket))
+    first = client.post("/v1/console/tickets", json=body, headers=browser_headers(identity, ticket))
     clock[0] += timedelta(seconds=2)
     ticks[0] += 2
-    repeated = client.post("/v1/test-tickets", json=body, headers=browser_headers(identity, ticket))
+    repeated = client.post(
+        "/v1/console/tickets", json=body, headers=browser_headers(identity, ticket)
+    )
     assert first.status_code == repeated.status_code == 200 and repeated.json() == first.json()
     clock[0] += timedelta(seconds=8)
     ticks[0] += 8
-    expired = client.post("/v1/test-tickets", json=body, headers=browser_headers(identity, ticket))
+    expired = client.post(
+        "/v1/console/tickets", json=body, headers=browser_headers(identity, ticket)
+    )
     assert expired.status_code == 504
     assert expired.json()["code"] == "test_deadline_exceeded"
 
@@ -596,7 +637,7 @@ def test_ticket_late_authorization_never_signs_or_extends_startup(ticket_api, mo
     monkeypatch.setattr(identity, "require_test_manager", delayed)
     monkeypatch.setattr(signer, "sign", sign)
     response = client.post(
-        "/v1/test-tickets",
+        "/v1/console/tickets",
         json={"mode": "speech", "requestId": "late-request"},
         headers=browser_headers(identity, ticket),
     )
@@ -621,7 +662,7 @@ def test_ticket_rechecks_logout_before_signing_after_request_processing(ticket_a
     monkeypatch.setattr(TicketRequest, "model_validate_json", parse_and_revoke)
     monkeypatch.setattr(signer, "sign", sign)
     response = client.post(
-        "/v1/test-tickets",
+        "/v1/console/tickets",
         json={"mode": "text", "requestId": "revoked-request"},
         headers=browser_headers(identity, ticket),
     )
@@ -651,10 +692,10 @@ def test_raw_test_socket_denies_bad_origin_cookie_or_transport_before_upgrade(ti
         headers["Authorization"] = "Bearer synthetic-client-token"
     with pytest.raises(WebSocketDisconnect) as failure:
         with client.websocket_connect(
-            "ws://management.example.invalid/v1/test-sessions"
+            "ws://management.example.invalid/v1/console/sessions"
             if fault == "plaintext"
-            else "wss://management.example.invalid/v1/test-sessions",
-            subprotocols=["caller.test.v1"],
+            else "wss://management.example.invalid/v1/console/sessions",
+            subprotocols=["caller.console.v1"],
             headers=headers,
         ):
             pytest.fail("unverified_raw_socket_upgraded")
@@ -667,15 +708,15 @@ def test_raw_test_socket_verifies_first_permit_against_issued_cookie_before_any_
     client, identity, ticket, signer, clock, ticks, telemetry = ticket_api
     headers = browser_headers(identity, ticket)
     issued = client.post(
-        "/v1/test-tickets", json={"mode": "text", "requestId": "socket-request"}, headers=headers
+        "/v1/console/tickets", json={"mode": "text", "requestId": "socket-request"}, headers=headers
     ).json()
     headers.pop("X-CSRF-Token")
     with client.websocket_connect(
-        "wss://management.example.invalid/v1/test-sessions",
-        subprotocols=["caller.test.v1"],
+        "wss://management.example.invalid/v1/console/sessions",
+        subprotocols=["caller.console.v1"],
         headers=headers,
     ) as socket:
-        assert socket.accepted_subprotocol == "caller.test.v1"
+        assert socket.accepted_subprotocol == "caller.console.v1"
         socket.send_json(
             {"type": "authenticate", "permit": issued["permit"], "requestId": "foreign-request"}
         )
@@ -690,12 +731,12 @@ def test_raw_test_socket_rejects_late_first_message_despite_unexpired_signed_per
     client, identity, ticket, signer, clock, ticks, telemetry = ticket_api
     headers = browser_headers(identity, ticket)
     issued = client.post(
-        "/v1/test-tickets", json={"mode": "text", "requestId": "late-socket"}, headers=headers
+        "/v1/console/tickets", json={"mode": "text", "requestId": "late-socket"}, headers=headers
     ).json()
     headers.pop("X-CSRF-Token")
     with client.websocket_connect(
-        "wss://management.example.invalid/v1/test-sessions",
-        subprotocols=["caller.test.v1"],
+        "wss://management.example.invalid/v1/console/sessions",
+        subprotocols=["caller.console.v1"],
         headers=headers,
     ) as socket:
         clock[0] += timedelta(seconds=10)
@@ -717,7 +758,9 @@ def test_signed_ticket_handoff_is_one_use_current_cookie_and_original_remaining_
     client, identity, ticket, signer, clock, ticks, telemetry = ticket_api
     headers = browser_headers(identity, ticket)
     issued = client.post(
-        "/v1/test-tickets", json={"mode": "text", "requestId": "handoff-request"}, headers=headers
+        "/v1/console/tickets",
+        json={"mode": "text", "requestId": "handoff-request"},
+        headers=headers,
     ).json()
     calls = []
 
@@ -737,8 +780,8 @@ def test_signed_ticket_handoff_is_one_use_current_cookie_and_original_remaining_
     ticks[0] += 2
     headers.pop("X-CSRF-Token")
     with client.websocket_connect(
-        "wss://management.example.invalid/v1/test-sessions",
-        subprotocols=["caller.test.v1"],
+        "wss://management.example.invalid/v1/console/sessions",
+        subprotocols=["caller.console.v1"],
         headers=headers,
     ) as socket:
         socket.send_json(
@@ -757,7 +800,7 @@ def test_consumed_ticket_cannot_be_redelivered_or_relayed_again_with_still_valid
     client, identity, ticket, signer, clock, ticks, telemetry = ticket_api
     headers = browser_headers(identity, ticket)
     body = {"mode": "text", "requestId": "consumed-request"}
-    issued = client.post("/v1/test-tickets", json=body, headers=headers).json()
+    issued = client.post("/v1/console/tickets", json=body, headers=headers).json()
     calls = []
 
     class Relay:
@@ -769,8 +812,8 @@ def test_consumed_ticket_cannot_be_redelivered_or_relayed_again_with_still_valid
     client.app.state.test_relay.delegate = Relay()
     ws_headers = {key: value for key, value in headers.items() if key != "X-CSRF-Token"}
     with client.websocket_connect(
-        "wss://management.example.invalid/v1/test-sessions",
-        subprotocols=["caller.test.v1"],
+        "wss://management.example.invalid/v1/console/sessions",
+        subprotocols=["caller.console.v1"],
         headers=ws_headers,
     ) as socket:
         socket.send_json(
@@ -779,18 +822,18 @@ def test_consumed_ticket_cannot_be_redelivered_or_relayed_again_with_still_valid
         with pytest.raises(WebSocketDisconnect) as ended:
             socket.receive_json()
         assert ended.value.code == 1000
-    assert client.post("/v1/test-tickets", json=body, headers=headers).status_code == 409
+    assert client.post("/v1/console/tickets", json=body, headers=headers).status_code == 409
     with pytest.raises(WebSocketDisconnect) as rejected:
         with client.websocket_connect(
-            "wss://management.example.invalid/v1/test-sessions",
-            subprotocols=["caller.test.v1"],
+            "wss://management.example.invalid/v1/console/sessions",
+            subprotocols=["caller.console.v1"],
             headers=ws_headers,
         ):
             pytest.fail("consumed_ticket_socket_upgraded")
     assert rejected.value.code == 1008 and calls == [True]
 
 
-def test_ticket_gateway_uses_real_bounded_text_relay_without_credential_echo(ticket_api):
+def test_ticket_gateway_uses_real_bounded_voice_relay_without_credential_echo(ticket_api):
     from starlette.websockets import WebSocketDisconnect
 
     from tests.unit.test_test_console import build_active_relay_case
@@ -811,43 +854,32 @@ def test_ticket_gateway_uses_real_bounded_text_relay_without_credential_echo(tic
     client.app.state.test_relay.delegate = relay
     headers = browser_headers(identity, ticket)
     issued = client.post(
-        "/v1/test-tickets",
-        json={"mode": "text", "requestId": "real-relay-request"},
+        "/v1/console/tickets",
+        json={"mode": "speech", "requestId": "real-relay-request"},
         headers=headers,
     ).json()
     headers.pop("X-CSRF-Token")
     received = []
     with client.websocket_connect(
-        "wss://management.example.invalid/v1/test-sessions",
-        subprotocols=["caller.test.v1"],
+        "wss://management.example.invalid/v1/console/sessions",
+        subprotocols=["caller.console.v1"],
         headers=headers,
     ) as socket:
         socket.send_json(
             {"type": "authenticate", "permit": issued["permit"], "requestId": "real-relay-request"}
         )
         ready = socket.receive_json()
-        assert ready["type"] == "ready" and ready["mode"] == "text"
-        socket.send_json(
-            {
-                "type": "text.submit",
-                "sequence": 1,
-                "sessionId": ready["sessionId"],
-                "text": "Synthetic actual gateway text",
-            }
-        )
-        while True:
-            event = socket.receive_json()
-            received.append(event)
-            if event["type"] == "text.completed":
-                break
-        assert received[0]["text"] == "Synthetic exact reply"
-        socket.send_json({"type": "stop", "sequence": 2, "sessionId": ready["sessionId"]})
+        assert ready["type"] == "ready" and ready["mode"] == "speech"
+        credit = socket.receive_json()
+        received.append(credit)
+        assert credit["type"] == "audio.credit" and credit["availableSamples"] == 480
+        socket.send_json({"type": "stop", "sequence": 1, "sessionId": ready["sessionId"]})
         assert socket.receive_json()["type"] == "ended"
         with pytest.raises(WebSocketDisconnect) as ended:
             socket.receive_json()
         assert ended.value.code == 1000
     assert json.loads(sent[0])["permit"] == issued["permit"]
-    assert json.loads(sent[1])["text"] == "Synthetic actual gateway text"
+    assert json.loads(sent[1])["type"] == "stop"
     assert "synthetic-workload-token" not in json.dumps(received)
     assert issued["permit"] not in json.dumps(received) + json.dumps(telemetry.events)
     assert client.portal is not None
@@ -862,7 +894,9 @@ def test_raw_gateway_pre_auth_is_two_per_verified_manager_and_releases_on_discon
     client, identity, ticket, signer, clock, ticks, telemetry = ticket_api
     headers = browser_headers(identity, ticket)
     response = client.post(
-        "/v1/test-tickets", json={"mode": "text", "requestId": "pending-request"}, headers=headers
+        "/v1/console/tickets",
+        json={"mode": "text", "requestId": "pending-request"},
+        headers=headers,
     )
     assert response.status_code == 200
     headers.pop("X-CSRF-Token")
@@ -870,8 +904,8 @@ def test_raw_gateway_pre_auth_is_two_per_verified_manager_and_releases_on_discon
         sockets = [
             stack.enter_context(
                 client.websocket_connect(
-                    "wss://management.example.invalid/v1/test-sessions",
-                    subprotocols=["caller.test.v1"],
+                    "wss://management.example.invalid/v1/console/sessions",
+                    subprotocols=["caller.console.v1"],
                     headers=headers,
                 )
             )
@@ -879,8 +913,8 @@ def test_raw_gateway_pre_auth_is_two_per_verified_manager_and_releases_on_discon
         ]
         with pytest.raises(WebSocketDisconnect) as rejected:
             with client.websocket_connect(
-                "wss://management.example.invalid/v1/test-sessions",
-                subprotocols=["caller.test.v1"],
+                "wss://management.example.invalid/v1/console/sessions",
+                subprotocols=["caller.console.v1"],
                 headers=headers,
             ):
                 pytest.fail("third_manager_pre_auth_socket_upgraded")
@@ -888,11 +922,11 @@ def test_raw_gateway_pre_auth_is_two_per_verified_manager_and_releases_on_discon
         for socket in sockets:
             socket.close()
     with client.websocket_connect(
-        "wss://management.example.invalid/v1/test-sessions",
-        subprotocols=["caller.test.v1"],
+        "wss://management.example.invalid/v1/console/sessions",
+        subprotocols=["caller.console.v1"],
         headers=headers,
     ) as recovered:
-        assert recovered.accepted_subprotocol == "caller.test.v1"
+        assert recovered.accepted_subprotocol == "caller.console.v1"
         recovered.close()
 
 
@@ -916,7 +950,7 @@ def test_raw_gateway_pre_auth_has_ten_global_slots_and_no_runtime_allocation(tic
         )
         current = browser_headers(identity, scoped)
         response = client.post(
-            "/v1/test-tickets",
+            "/v1/console/tickets",
             json={"mode": "text", "requestId": "pre-" + str(number)},
             headers=current,
         )
@@ -927,8 +961,8 @@ def test_raw_gateway_pre_auth_has_ten_global_slots_and_no_runtime_allocation(tic
         sockets = [
             stack.enter_context(
                 client.websocket_connect(
-                    "wss://management.example.invalid/v1/test-sessions",
-                    subprotocols=["caller.test.v1"],
+                    "wss://management.example.invalid/v1/console/sessions",
+                    subprotocols=["caller.console.v1"],
                     headers=headers[number // 2],
                 )
             )
@@ -936,8 +970,8 @@ def test_raw_gateway_pre_auth_has_ten_global_slots_and_no_runtime_allocation(tic
         ]
         with pytest.raises(WebSocketDisconnect) as failure:
             with client.websocket_connect(
-                "wss://management.example.invalid/v1/test-sessions",
-                subprotocols=["caller.test.v1"],
+                "wss://management.example.invalid/v1/console/sessions",
+                subprotocols=["caller.console.v1"],
                 headers=headers[5],
             ):
                 pytest.fail("eleventh_pre_auth_socket_upgraded")
@@ -945,11 +979,11 @@ def test_raw_gateway_pre_auth_has_ten_global_slots_and_no_runtime_allocation(tic
         for socket in sockets:
             socket.close()
     with client.websocket_connect(
-        "wss://management.example.invalid/v1/test-sessions",
-        subprotocols=["caller.test.v1"],
+        "wss://management.example.invalid/v1/console/sessions",
+        subprotocols=["caller.console.v1"],
         headers=headers[5],
     ) as recovered:
-        assert recovered.accepted_subprotocol == "caller.test.v1"
+        assert recovered.accepted_subprotocol == "caller.console.v1"
         recovered.close()
 
 
@@ -959,7 +993,7 @@ def test_raw_gateway_logout_before_first_message_cannot_invoke_relay(ticket_api)
     client, identity, ticket, signer, clock, ticks, telemetry = ticket_api
     headers = browser_headers(identity, ticket)
     issued = client.post(
-        "/v1/test-tickets", json={"mode": "text", "requestId": "logout-pending"}, headers=headers
+        "/v1/console/tickets", json={"mode": "text", "requestId": "logout-pending"}, headers=headers
     ).json()
     calls = []
 
@@ -971,8 +1005,8 @@ def test_raw_gateway_logout_before_first_message_cannot_invoke_relay(ticket_api)
     client.app.state.test_relay.delegate = Forbidden()
     headers.pop("X-CSRF-Token")
     with client.websocket_connect(
-        "wss://management.example.invalid/v1/test-sessions",
-        subprotocols=["caller.test.v1"],
+        "wss://management.example.invalid/v1/console/sessions",
+        subprotocols=["caller.console.v1"],
         headers=headers,
     ) as socket:
         identity.sessions.revoke(ticket.cookie)
@@ -994,7 +1028,7 @@ def test_raw_gateway_first_message_uses_only_remaining_signed_startup_budget(tic
     headers = browser_headers(identity, ticket)
     assert (
         client.post(
-            "/v1/test-tickets",
+            "/v1/console/tickets",
             json={"mode": "text", "requestId": "nearly-expired"},
             headers=headers,
         ).status_code
@@ -1005,8 +1039,8 @@ def test_raw_gateway_first_message_uses_only_remaining_signed_startup_budget(tic
     headers.pop("X-CSRF-Token")
     started = time.monotonic()
     with client.websocket_connect(
-        "wss://management.example.invalid/v1/test-sessions",
-        subprotocols=["caller.test.v1"],
+        "wss://management.example.invalid/v1/console/sessions",
+        subprotocols=["caller.console.v1"],
         headers=headers,
     ) as socket:
         with pytest.raises(WebSocketDisconnect) as ended:

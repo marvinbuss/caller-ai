@@ -1,4 +1,11 @@
-"""Community routing metadata and safe enabled entry-agent selection."""
+"""Community routing metadata and safe enabled entry-agent selection.
+
+The community list page and the single-community page: each community shows its name, routing
+description and entry agent (only an enabled agent of that community can be chosen), its graph
+position and the connections to other communities. Deleting a community asks for confirmation
+because it also removes its agents and the transfer paths that touch them. As with the other
+editor pages, every change is a server event and the server decides whether it is allowed.
+"""
 
 from typing import Any, cast
 

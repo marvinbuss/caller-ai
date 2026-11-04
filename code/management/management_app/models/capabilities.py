@@ -1,4 +1,12 @@
-"""Declarative public read-only capability configuration, never executable grants."""
+"""Declarative public read-only capability configuration, never executable grants.
+
+The models describe tools, MCP connections and per-agent assignments as strict, frozen, bounded
+data that rejects unknown fields and hides submitted values from errors. `ApprovedCapabilities`
+is the server-side reviewed catalog: it is built only from trusted input (never from a manager's
+submitted graph), checks sizes, duplicates, credential references and that every tool's
+connection exists, and then answers whether a tool or connection a manager submits is allowed.
+Only public, read-only actions are expressible.
+"""
 
 import json
 import re

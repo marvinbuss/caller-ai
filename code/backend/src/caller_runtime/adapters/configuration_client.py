@@ -1,27 +1,26 @@
-"""Fixed-origin authenticated ordinary configuration refresh, never permission authority."""
+"""Refreshes the published configuration from management over HTTPS with a workload token.
+
+The endpoint must be a bare HTTPS origin; redirects, environment proxies and credentials in the URL
+are refused. Responses are capped at 512 KiB, parsed with duplicate-key rejection and installed
+into the `RevisionCache` only if its policy hash verifies. `If-None-Match` makes an unchanged
+revision a validated 304. Refresh is rate-limited to once per 30 s unless `require_current` is set,
+and a failure returns False and counts a dependency failure; the cache is ordinary configuration,
+never the authority for permissions.
+"""
 
 import asyncio
 import json
 import time
 from collections.abc import Callable
-from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
 
-from caller_runtime.adapters.azure_realtime import CredentialPort
+from caller_runtime.adapters.strict_json import unique_object
 from caller_runtime.domain.configuration import RevisionCache
+from caller_runtime.domain.ports import CredentialPort
 from caller_runtime.metrics import RuntimeMetrics
-
-
-def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    document: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in document:
-            raise ValueError("duplicate_configuration_field")
-        document[key] = value
-    return document
 
 
 class ConfigurationClient:
@@ -83,6 +82,7 @@ class ConfigurationClient:
                     remaining = deadline - asyncio.get_running_loop().time()
                     token = await self._credential.get_token(f"api://{self._audience}/.default")
                     if token.expires_on <= time.time() + remaining:
+                        # A token that dies mid-request would fail after the work is half done.
                         raise ValueError("configuration_token_not_current")
                     headers = {"Authorization": "Bearer " + token.token}
                     if current is not None:

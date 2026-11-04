@@ -1,4 +1,10 @@
-"""Independent management startup settings with no live-client construction."""
+"""Frozen management startup settings read from `CALLER_*` environment variables.
+
+Independent of the backend settings and free of live clients: local mode never discovers
+credentials and live mode is refused at startup until a reviewed composition exists. Content tracing
+is forbidden and validation errors hide their input. `composition_fingerprint` ties a reviewed
+resource manifest to the settings it was reviewed under.
+"""
 
 import hashlib
 import json

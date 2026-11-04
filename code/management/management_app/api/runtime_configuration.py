@@ -1,7 +1,11 @@
-"""Explicit runtime-identity snapshot API; no direct private-store permission for runtime."""
+"""Runtime configuration API: `GET /v2/runtime/configuration`, for the backend workload only.
+
+Returns the active revision's runtime projection (no layout, no credential references) with its
+ETag, or 304 when `If-None-Match` matches. The backend identity gets no other access to management
+data, and failures are fixed `application/problem+json` codes.
+"""
 
 import asyncio
-from http import HTTPStatus
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException, Request
@@ -10,6 +14,7 @@ from starlette.responses import JSONResponse, Response
 from management_app.adapters.configuration_repository import Publication, verified_revision
 from management_app.api.capabilities import RuntimeIdentityPort
 from management_app.api.configuration import ETAG
+from management_app.api.problems import problem_response
 from management_app.observability import Telemetry, sanitize_correlation_id
 from management_app.services.configuration_publication import runtime_projection
 
@@ -27,21 +32,7 @@ class RepositoryPort(Protocol):
 
 
 def problem(status: int, correlation: str) -> JSONResponse:
-    headers = {"Cache-Control": "no-store", "X-Correlation-ID": correlation}
-    if status == 401:
-        headers["WWW-Authenticate"] = "Bearer"
-    return JSONResponse(
-        {
-            "type": "about:blank",
-            "title": HTTPStatus(status).phrase,
-            "status": status,
-            "code": ERROR_CODES[status],
-            "correlation_id": correlation,
-        },
-        status_code=status,
-        headers=headers,
-        media_type="application/problem+json",
-    )
+    return problem_response(status, correlation, ERROR_CODES[status])
 
 
 def create_router(
