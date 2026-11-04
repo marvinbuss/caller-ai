@@ -1,4 +1,10 @@
-"""Policy-filtered handover paths and allowlisted context-field editing."""
+"""Policy-filtered handover paths and allowlisted context-field editing.
+
+Each row is one handover path between two agents with the context fields it passes on. The
+server offers only the sources and targets the relationship rules allow, and the context fields
+are a fixed allowlist, so a manager can switch a listed field on or off but cannot add one.
+Relationships that a lifecycle role requires are shown as required and cannot be removed.
+"""
 
 from typing import Any, cast
 

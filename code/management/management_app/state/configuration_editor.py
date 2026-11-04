@@ -1,4 +1,12 @@
-"""Reflex state for the configuration editor: browser events, derived rows and saving."""
+"""Reflex state for the configuration editor: browser events, derived rows and saving.
+
+`ConfigurationEditorState` holds one detached `EditorDraft` per browser session and turns it into
+the rows, nodes and edges the pages render. Every event first re-authorizes through the socket
+guard, applies one change to the draft (the draft enforces the rules) and bumps `generation` so
+the page knows it has unsaved edits. `save` sends the draft with its entity tag through the
+in-process API and handles three outcomes: accepted, a conflict or validation problem (edits
+are kept and the paths shown) and a save that raced with a newer edit (only the tag moves on).
+"""
 
 import copy
 import json
@@ -652,6 +660,7 @@ class ConfigurationEditorState(rx.State):
             )
             current_draft = self._editing()
             if current_draft._identity != submitted_identity:
+                # The draft was reloaded while the save was in flight; its result is stale.
                 return
             draft = current_draft
             if response.status_code == 200:
@@ -663,6 +672,8 @@ class ConfigurationEditorState(rx.State):
                         else "Saved; audit pending"
                     )
                 else:
+                    # Edits arrived during the save: keep them, take only the new tag so the
+                    # next save does not conflict with our own earlier one.
                     draft.etag = response.headers["ETag"]
                     draft.errors, draft.conflict = {}, False
                     self.status = "Unsaved"

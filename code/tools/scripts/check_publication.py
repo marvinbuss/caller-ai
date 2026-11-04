@@ -1,4 +1,13 @@
-"""Reject private feed URLs and relocate unchanged locks against verified public metadata."""
+"""Reject private feed URLs and relocate unchanged locks against verified public metadata.
+
+`check` (the default) scans the given files, the git index and all history for URLs that point at
+a private package feed and prints only a fixed code, never the URL. `relocate` rewrites the
+Python and frontend lock files that were resolved through a private mirror so they point at the
+public registries, but only when every artifact hash and size matches the public metadata; a
+mismatch stops the run instead of editing the lock. `frontend` restores just the frontend lock,
+and `inventory` lists the registry packages that the locks name. Public origins must be exactly
+`https` on the expected host, with no credentials, port, query or fragment.
+"""
 
 import argparse
 import base64
@@ -50,6 +59,7 @@ def check_paths(paths: list[Path], root: Path) -> int:
                 host = (urlsplit(value).hostname or "").lower()
                 private |= "feedproxy" in host or ".pkgs." in host
             except ValueError:
+                # A malformed URL must not hide a private feed: fall back to the raw authority.
                 authority = value.partition("://")[2].split("/", 1)[0].lower()
                 private |= "feedproxy" in authority or ".pkgs." in authority
         if private:
@@ -67,6 +77,8 @@ def check_git(root: Path) -> int:
     failed = False
     for command in commands:
         result = subprocess.run(command, cwd=root, capture_output=True, timeout=30, check=False)
+        # `git grep` exits 1 for no match; any other failure means the check could not run, and
+        # an unrun check must not read as a pass.
         if result.returncode not in (0, 1) or (command[1] == "log" and result.returncode != 0):
             raise RuntimeError("publication_git_check_unavailable")
         if result.stdout:

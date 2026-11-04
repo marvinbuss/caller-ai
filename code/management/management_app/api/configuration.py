@@ -1,4 +1,10 @@
-"""Explicit authenticated configuration composition; never mounted by foundation startup."""
+"""Configuration API: `GET` and `PUT /v2/configuration`, for authenticated managers only.
+
+`GET` returns the active revision with its ETag. `PUT` needs `If-Match` and a CSRF token, validates
+the graph (including the secret scan) and publishes a new revision, or answers 409 on a stale ETag.
+Bodies are capped and parsed with duplicate-key rejection. Errors are `application/problem+json`
+with a fixed code and, for validation, issues that carry only a field path and rule id.
+"""
 
 import asyncio
 import json

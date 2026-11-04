@@ -1,4 +1,11 @@
-"""Pure graph validation before any publication; issues contain metadata only."""
+"""Validates a configuration graph before it can be published.
+
+Input: a submitted graph and the previous revision. Output: a list of issues carrying only a field
+path, rule id and policy version, never submitted text. Checks cover the schema, protected roles,
+relationships and community connections, bounded sizes (512 KiB per revision, 768 KiB per batch),
+tool input schemas (local `$ref` only) and the secret scan. It is pure: no I/O, so the same input
+always gives the same issues.
+"""
 
 import json
 from collections.abc import Mapping, Sequence

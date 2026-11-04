@@ -1,4 +1,10 @@
-"""Explicit bounded public-read transport with validated DNS pinned beneath TLS."""
+"""Transport for reviewed public read-only tool calls with a pinned, validated destination.
+
+The host is resolved once and every address must be globally routable; the connection then goes to
+that address with the original host name kept for TLS (SNI) so a later DNS change cannot redirect
+it. Only the reviewed URL is allowed, redirects are refused, and bodies are capped at 64 KiB within
+the request deadline. Failures raise fixed `capability_*` errors without response content.
+"""
 
 import asyncio
 import ipaddress
@@ -67,6 +73,7 @@ class PinnedTransport(httpx.AsyncBaseTransport):
             ):
                 raise RuntimeError("unsafe_capability_destination")
             request.headers["Host"] = self._destination.netloc.decode("ascii")
+            # Connect to the validated address but present the real name, so TLS still checks it.
             request.extensions["sni_hostname"] = self._destination.host
             request.url = request.url.copy_with(host=addresses[0])
             response = await self._network.handle_async_request(request)

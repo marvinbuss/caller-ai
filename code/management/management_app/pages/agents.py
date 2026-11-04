@@ -1,4 +1,11 @@
-"""Accessible agent controls; protected lifecycle roles expose only safe prompt/name edits."""
+"""Accessible agent controls; protected lifecycle roles expose only safe prompt/name edits.
+
+`agent_row` renders one agent as a labelled fieldset with its editable fields, enable switch and
+position inputs; `field_control` is the shared labelled-input helper that the other editor pages
+reuse. Rows read the editor state only: every edit is a Reflex event that the server validates,
+so the page decides nothing about what is allowed. Protected lifecycle roles cannot be deleted
+and show only the fields that are safe to change.
+"""
 
 from typing import Any, cast
 
@@ -18,6 +25,7 @@ SET_POSITION = cast(EventHandler, Editor.set_agent_coordinate)
 
 def field_control(label: str, control: rx.Component, identifier: Any, path: Any) -> rx.Component:
     if control.tag in {"input", "textarea"} and "on_change" in control.event_triggers:
+        # Debounce typing so each keystroke is not a server round trip; blur flushes the last value.
         control = rx.debounce_input(control, debounce_timeout=200, force_notify_on_blur=True)
     return cast(
         rx.Component,

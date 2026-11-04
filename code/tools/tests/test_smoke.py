@@ -20,6 +20,12 @@ sys.modules[SPECIFICATION.name] = SMOKE
 SPECIFICATION.loader.exec_module(SMOKE)
 
 
+@pytest.fixture(autouse=True)
+def fresh_editor_build(monkeypatch):
+    # The harness caches one compiled frontend per session; each test starts without it.
+    monkeypatch.setattr(SMOKE, "_EDITOR_BUILD", {})
+
+
 def test_smoke_loads_local_settings_without_shell_activation(monkeypatch, tmp_path):
     monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
     for key in (
@@ -260,6 +266,7 @@ def test_editor_uses_canonical_absolute_temporary_paths(monkeypatch, tmp_path):
         return child
 
     monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
+    monkeypatch.setattr(SMOKE, "_EDITOR_BUILD", {})
     monkeypatch.setattr(SMOKE.tempfile, "TemporaryDirectory", relative_directory)
     monkeypatch.setattr(SMOKE.psutil, "Popen", spawn)
     monkeypatch.setattr(SMOKE, "free_ports", lambda count: [12345, 12346])
@@ -270,10 +277,38 @@ def test_editor_uses_canonical_absolute_temporary_paths(monkeypatch, tmp_path):
             graph={}, identities=("manager-one",), mode="local"
         ):
             pytest.fail("failed_build_was_accepted")
-    assert environments[0]["REFLEX_WEB_WORKDIR"] == str(temporary.resolve() / "web")
+    web = Path(environments[0]["REFLEX_WEB_WORKDIR"])
+    assert web.is_absolute() and web == web.resolve()
     assert environments[0]["CALLER_EDITOR_TEST_FIXTURE"] == str(
         temporary.resolve() / "fixture.json"
     )
+    assert SMOKE._EDITOR_BUILD == {}
+
+
+def test_editor_hosts_of_one_session_reuse_the_compiled_frontend_and_ports(monkeypatch, tmp_path):
+    commands = []
+
+    def spawn(arguments, **options):
+        commands.append(arguments)
+        return SimpleNamespace(wait=lambda **keywords: 1)
+
+    cached = {"compiled": True, "ports": (12345, 12346), "web": tmp_path / "web"}
+    monkeypatch.setattr(SMOKE, "ROOT", tmp_path)
+    monkeypatch.setattr(SMOKE, "_EDITOR_BUILD", cached)
+    monkeypatch.setattr(SMOKE, "ports_available", lambda ports: True)
+    monkeypatch.setattr(
+        SMOKE, "free_ports", lambda count: pytest.fail("a second host must reuse the ports")
+    )
+    monkeypatch.setattr(SMOKE.psutil, "Popen", spawn)
+    monkeypatch.setattr(SMOKE, "stop", lambda processes: None)
+    monkeypatch.setattr(SMOKE, "restore_frontend_lock", lambda: None)
+    with pytest.raises(RuntimeError, match="editor_frontend_build_failed"):
+        with SMOKE.running_configuration_editor(
+            graph={}, identities=("manager-one",), mode="local"
+        ):
+            pytest.fail("failed_preparation_was_accepted")
+    # Only the per-host certificate is prepared; the frontend is not compiled again.
+    assert "compile_frontend(False)" in commands[0][-1]
 
 
 def test_image_cleanup_targets_owned_ids_only(images, monkeypatch: pytest.MonkeyPatch) -> None:

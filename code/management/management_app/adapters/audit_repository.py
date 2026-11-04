@@ -1,4 +1,11 @@
-"""Idempotent metadata-only audit stores; Cosmos ownership stays in management."""
+"""Idempotent, metadata-only audit stores (in memory for local use, Cosmos for reviewed runs).
+
+`append` returns True for a new record and False for an exact repeat; the same id with different
+content raises `AuditIdentityConflict`, so a retry after an ambiguous write is safe. Cosmos items
+carry a retention TTL and a day bucket partition, and a duplicate create (409) is confirmed with a
+strongly consistent read. Records hold fixed metadata only, never configuration or conversation
+content.
+"""
 
 import asyncio
 import json

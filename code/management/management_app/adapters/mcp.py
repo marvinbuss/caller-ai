@@ -1,4 +1,11 @@
-"""Maintained MCP SDK over the pinned boundary; advertisements never grant authority."""
+"""Executes one reviewed MCP tool call over the pinned, DNS-validated public transport.
+
+The tool list is paged (at most 4 pages of 256) and the reviewed action must match exactly one
+advertised tool; an unlisted, duplicated or paginated-away action fails with
+`reviewed_mcp_action_unavailable`. What a server advertises never grants authority: the call runs
+only after the capability policy authorized it. Server log output is discarded and results are
+decoded under the same size and shape limits as plain public reads.
+"""
 
 import asyncio
 import logging

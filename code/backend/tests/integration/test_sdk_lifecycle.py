@@ -1,6 +1,7 @@
 """Startup tracing policy of the real locked Agents SDK; no provider, persistence or credentials."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,7 @@ async def tracing_probe(enabled: bool) -> None:
     settings = Settings(agents_sdk_tracing_enabled=enabled)
     telemetry = Telemetry("caller-runtime", "local")
     initialize_sdk(settings, telemetry)
+    assert os.environ["OPENAI_AGENTS_DISABLE_TRACING"] == ("0" if enabled else "1")
     try:
         with agents.trace(SENSITIVE, metadata={"prompt": SENSITIVE}):
             with agents.custom_span(
@@ -33,6 +35,8 @@ async def tracing_probe(enabled: bool) -> None:
         assert SENSITIVE not in json.dumps(
             [dict(span.attributes or {}) for span in telemetry.spans]
         )
+        with pytest.raises(RuntimeError, match="^tracing_change_requires_restart$"):
+            initialize_sdk(Settings(agents_sdk_tracing_enabled=not enabled), telemetry)
     finally:
         telemetry.close()
 

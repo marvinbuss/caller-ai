@@ -1,4 +1,11 @@
-"""Portable foundation CI commands; fail on every unsuccessful child command."""
+"""The commands CI and developers run: prepare, check, frontend, test, quick and diagnostics.
+
+Each command runs its child processes in order and stops at the first failure with a non-zero exit.
+`prepare` builds the three locked environments, `check` runs lint, types, module reachability,
+Terraform, secret and publication checks and the tools tests, `test` runs every suite and `quick`
+runs only the fast tier. Local mirror settings come from the ignored `code/.local/` files; CI uses
+public indexes.
+"""
 
 import argparse
 import os

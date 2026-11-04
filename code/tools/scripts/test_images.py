@@ -1,4 +1,12 @@
-"""Build and exercise real Linux images; never substitute native source servers."""
+"""Build and exercise real Linux images; never substitute native source servers.
+
+The script builds the backend and management images, checks that each runs as the non-root user
+with no build tools and works with the network disabled, starts both on free local ports with a
+run-unique label, and verifies `/healthz` and `/readyz` against the OpenAPI contract, including
+the `X-Caller-Instance` header so a response from someone else's container cannot pass. The
+browser shell test then runs against the management image. Every container it created is removed
+at the end, and a failed removal fails the run.
+"""
 
 import json
 import subprocess

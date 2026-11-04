@@ -1,4 +1,10 @@
-"""Reflex-owned browser media bridge; raw content stays in bounded browser memory."""
+"""Reflex-owned browser media bridge; raw content stays in bounded browser memory.
+
+`LiveAudio` is a Reflex component without markup of its own: it loads the engine from
+`live_audio_js`, binds it to the test console controls once the user is authorized, and sends
+only encoded control snapshots and begin events back to Reflex. Audio and transcript content never
+leave the browser except over the relay socket.
+"""
 
 from typing import Any
 

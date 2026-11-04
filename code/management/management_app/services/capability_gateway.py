@@ -1,4 +1,11 @@
-"""Sole execution admission boundary; every attempt is ordered against revocation."""
+"""The only path to execute a capability: authorize, admit, then call, in that order.
+
+Each attempt re-reads the permission authority and the pinned and active revisions, authorizes the
+call through `CapabilityPolicy`, records an admission conditioned on the authority ETag and only
+then runs the transport, all inside the caller's original deadline (10 s at most). A concurrent
+revocation moves the ETag and forces another pass, so a revoked grant cannot run. Failures raise
+`GatewayError` with a fixed status (403, 422, 503 or 504) and no detail.
+"""
 
 import asyncio
 import json

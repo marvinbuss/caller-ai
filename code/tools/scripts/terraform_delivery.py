@@ -1,4 +1,11 @@
-"""Protected OIDC Terraform delivery; exact private saved plans, never public artifacts."""
+"""Protected Terraform delivery: plan, review and apply for any stage, using OIDC only.
+
+The stage name and state key come from the backend and variable files, and the protected
+deployment environment comes from the workflow input, so no stage list exists here. A plan is saved
+privately and bound to the exact source, workflow run and inputs for one day; apply refuses a
+tampered, expired or cross-run plan and any plan that deletes a resource. Output is fixed metadata
+only and plan bytes are never published.
+"""
 
 import argparse
 import hashlib

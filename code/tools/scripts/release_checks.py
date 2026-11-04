@@ -1,4 +1,12 @@
-"""Protected release orchestration over separately qualified trusted ports; CLI is blocked."""
+"""Protected release orchestration over separately qualified trusted ports; CLI is blocked.
+
+`release` publishes only exact immutable commit and image digests, and only after authority
+approves, a reviewed plan exists and authority approves again just before the publish (the
+second check closes the gap in which the approval could have been revoked). Any failure before
+the publish is `blocked`; a failure after it started is `uncertain` and is never retried here.
+The command line is always blocked: real release needs adapters and external evidence that this
+repository does not provide.
+"""
 
 import argparse
 import asyncio

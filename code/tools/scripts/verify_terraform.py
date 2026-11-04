@@ -1,4 +1,9 @@
-"""Pinned Terraform preparation and credential-free native validation, never deployment."""
+"""Prepares the pinned Terraform binary and runs the credential-free native tests.
+
+It downloads Terraform 1.17.0 once, verifies its hash, then validates each root and runs its native
+tests with mocked providers, plus the static checks (no stage-name logic, text history owned by the
+runtime, example stage pairs). It never runs `plan` or `apply` and needs no cloud credential.
+"""
 
 import argparse
 import hashlib

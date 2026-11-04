@@ -1,4 +1,11 @@
-"""Bounded conversation capability dispatch through the authenticated management authority."""
+"""Calls the management capability gateway for one model tool call, inside the work budget.
+
+Input: the active session slot, a tool id, an action and arguments. The runtime selects only
+enabled, read-only, public tools granted to the active ordinary agent and validates the arguments
+against the tool and grant schemas before any request. Management re-checks current authority, so
+this is not the permission decision. Each attempt is recorded before dispatch and settled after,
+with zero retries; failures surface as fixed codes without response content.
+"""
 
 import asyncio
 import hashlib

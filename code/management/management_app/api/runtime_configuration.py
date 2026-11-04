@@ -1,4 +1,9 @@
-"""Explicit runtime-identity snapshot API; no direct private-store permission for runtime."""
+"""Runtime configuration API: `GET /v2/runtime/configuration`, for the backend workload only.
+
+Returns the active revision's runtime projection (no layout, no credential references) with its
+ETag, or 304 when `If-None-Match` matches. The backend identity gets no other access to management
+data, and failures are fixed `application/problem+json` codes.
+"""
 
 import asyncio
 from typing import Protocol

@@ -1,4 +1,10 @@
-"""One registry of pinned configured SDK agents for text and client-delegated speech."""
+"""Builds the SDK agents of one pinned revision, shared by text and client-delegated speech.
+
+Input: a revision snapshot, the model and two tool factories. Output: agents keyed by id. Agents
+get no handoffs, no MCP servers and no stored model state, and retries are off, so every step the
+model takes is an explicit tool call that application code authorizes. More than 128 tools,
+duplicate names or non-function tools raise `unapproved_agent_tools`.
+"""
 
 from collections.abc import Callable
 from typing import Any

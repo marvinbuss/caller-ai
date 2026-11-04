@@ -1,4 +1,10 @@
-"""Explicit idempotent protected-role initialization, never automatic foundation I/O."""
+"""One-time creation of the protected welcome, routing and goodbye agents.
+
+`bootstrap` writes the initial graph through the repository's `initialize`, which fails if state
+already exists, so running it twice never resets configuration. Agent ids are derived from fixed
+names so a repeat produces the same ids. It runs only when an operator calls it; startup never
+creates data.
+"""
 
 from dataclasses import dataclass
 from typing import Protocol

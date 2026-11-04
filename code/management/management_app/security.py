@@ -1,4 +1,12 @@
-"""Entra JWT verification and bounded server-owned sessions; no implicit identity sources."""
+"""Entra ID token verification, server-owned browser sessions and the start-permit signer.
+
+`TokenVerifier` accepts only RS256 tokens whose key id matches the tenant's fixed key set (no
+`jku`, `x5u`, `jwk` or `crit` headers), then checks issuer, audience, expiry and role.
+`SessionStore` keeps bounded server-side sessions behind an opaque `__Host-` cookie with a CSRF
+token, and `TestPermitSigner` mints the short-lived signed permit the backend verifies. Every
+failure is a plain 401, 403 or 503 without detail, and nothing here reads identity from headers,
+query strings or the environment.
+"""
 
 import asyncio
 import base64
@@ -115,6 +123,7 @@ class TokenVerifier:
                 or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", kid)
                 or any(name in header for name in ("jku", "x5u", "crit", "jwk"))
             ):
+                # Key-pointing or critical headers would let a token choose its own trust.
                 raise ValueError("invalid_header")
         except Exception:
             raise unauthorized() from None

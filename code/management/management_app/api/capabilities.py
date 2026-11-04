@@ -1,4 +1,11 @@
-"""Explicit capability API composition; never mounted by foundation startup."""
+"""Capability API: `POST /v1/runtime/capabilities/execute` and `PUT /v1/security/revocations`.
+
+Execution is called by the backend workload identity and goes through the capability gateway; a
+manager with the right role revokes tools, connections or assignments, which takes effect for the
+next call because the gateway re-reads the authority. Bodies are size-limited and parsed with
+duplicate-key rejection, and every error is a fixed `application/problem+json` code. The router is
+mounted only by the reviewed composition.
+"""
 
 import asyncio
 import json

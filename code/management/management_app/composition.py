@@ -1,4 +1,11 @@
-"""Guarded management composition over explicit reviewed resources; no implicit cloud access."""
+"""Reviewed composition of the management application from explicitly supplied resources.
+
+`compose_management` turns a reviewed `ManagementResources` bundle (stores, identity, workload
+credential, capability transports) and an authority grant into the running app: configuration,
+capability and runtime APIs, the console, the Reflex event guard and the permit signer. Nothing is
+discovered from the environment; a missing or unreviewed resource raises before any router is
+mounted, so a bare start serves only health.
+"""
 
 import asyncio
 import time

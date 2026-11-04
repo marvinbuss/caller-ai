@@ -1,4 +1,8 @@
-"""Runtime dependency boundary; implementations must not block the event loop."""
+"""Runtime dependency ports: credentials, the Cosmos container and readiness.
+
+Implementations are supplied by the reviewed composition, never discovered. They must not block the
+event loop, and their failures must not carry credential or storage detail to callers.
+"""
 
 from collections.abc import Mapping
 from dataclasses import dataclass

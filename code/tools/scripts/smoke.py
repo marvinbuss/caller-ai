@@ -1,8 +1,15 @@
-"""Own both local application processes and verify readiness within a fixed budget."""
+"""Starts the real backend and management processes locally and verifies they become ready.
+
+It owns the processes it starts on free loopback ports, waits for `/readyz` within a fixed budget,
+checks the instance header so a foreign listener is never accepted, and stops only its own process
+trees. `running_configuration_editor` is the test host for the browser and relay suites; hosts in
+one session share a single compiled frontend and ports (see `_EDITOR_BUILD`).
+"""
 
 from __future__ import annotations
 
 import argparse
+import atexit
 import importlib.util
 import json
 import shutil
@@ -16,6 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 from types import ModuleType
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -55,6 +63,41 @@ def free_ports(count: int) -> list[int]:
     finally:
         for listener in listeners:
             listener.close()
+
+
+# The compiled frontend bakes in its origin port, so editor hosts of one session reuse the ports
+# and the build; each host still gets its own certificate, server processes and state.
+_EDITOR_BUILD: dict[str, Any] = {}
+
+
+def ports_available(ports: tuple[int, ...]) -> bool:
+    listeners: list[socket.socket] = []
+    try:
+        for port in ports:
+            listener = socket.socket()
+            listeners.append(listener)
+            listener.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        for listener in listeners:
+            listener.close()
+
+
+def shared_web_directory() -> Path:
+    if "web" not in _EDITOR_BUILD:
+        directory = Path(tempfile.mkdtemp(prefix="caller-editor-web-"))
+        atexit.register(shutil.rmtree, directory, ignore_errors=True)
+        _EDITOR_BUILD["web"] = directory
+    return _EDITOR_BUILD["web"]
+
+
+def discard_editor_build() -> None:
+    directory = _EDITOR_BUILD.pop("web", None)
+    _EDITOR_BUILD.clear()
+    if directory is not None:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def stop(processes: list[psutil.Popen]) -> None:
@@ -213,7 +256,12 @@ def running_configuration_editor(
 ) -> Iterator[dict]:
     if mode != "local":
         raise ValueError("test_identity_live_mode_prohibited")
-    port, runtime_port = free_ports(2)
+    reused = _EDITOR_BUILD.get("ports")
+    if reused is not None and ports_available(reused):
+        port, runtime_port = reused
+    else:
+        discard_editor_build()
+        port, runtime_port = free_ports(2)
     origin = f"https://127.0.0.1:{port}"
     environment = {
         key: value
@@ -257,7 +305,9 @@ def running_configuration_editor(
             )
         )
         environment["CALLER_EDITOR_TEST_FIXTURE"] = str(fixture)
-        environment["REFLEX_WEB_WORKDIR"] = str(directory / "web")
+        web = shared_web_directory()
+        compiled = bool(_EDITOR_BUILD.get("compiled"))
+        environment["REFLEX_WEB_WORKDIR"] = str(web)
         with (directory / "process.log").open("w+", encoding="utf-8") as output:
             try:
                 build = psutil.Popen(
@@ -269,7 +319,8 @@ def running_configuration_editor(
                         "--locked",
                         "python",
                         "-c",
-                        "from tests.editor_app import compile_frontend; compile_frontend()",
+                        "from tests.editor_app import compile_frontend; "
+                        f"compile_frontend({not compiled})",
                     ],
                     cwd=ROOT,
                     env=environment,
@@ -288,6 +339,7 @@ def running_configuration_editor(
                         + ":"
                         + json.dumps(metadata, separators=(",", ":"))
                     )
+                _EDITOR_BUILD.update(compiled=True, ports=(port, runtime_port))
                 environment.update(
                     {
                         "__REFLEX_SKIP_COMPILE": "true",
@@ -361,11 +413,13 @@ def running_configuration_editor(
                 log = ROOT / "code/management/test-results/editor-host.log"
                 log.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(directory / "process.log", log)
-                renderer = directory / "web/build/server/index.js"
+                renderer = web / "build/server/index.js"
                 if renderer.is_file():
                     shutil.copyfile(renderer, log.parent / "editor-renderer.js")
                     retained = ROOT / "code/management/.web/editor-renderer"
                     shutil.copytree(renderer.parent, retained, dirs_exist_ok=True)
+                if not _EDITOR_BUILD.get("compiled"):
+                    discard_editor_build()
                 raise
             finally:
                 stop(processes)

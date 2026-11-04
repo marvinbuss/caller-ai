@@ -1,4 +1,12 @@
-"""Detached unsaved configuration drafts and the in-process request path they save through."""
+"""Detached unsaved configuration drafts and the in-process request path they save through.
+
+`EditorDraft` is a deep copy of the loaded revision plus the entity tag it came from. Each
+method makes one edit and raises a `ValueError` with a fixed code when the rule is broken
+(protected role, unreviewed capability, missing confirmation), so the state can show a short
+message without leaking detail. `EditorServices` calls the management API in the same process
+through an ASGI transport, with the session's own cookie and CSRF token, so a save passes the
+same authentication, validation and audit path as any other client.
+"""
 
 import asyncio
 import copy

@@ -1,4 +1,12 @@
-"""Explicit reviewed browser-test composition; construction never discovers resources."""
+"""Reviewed composition of the conversation runtime; construction never discovers resources.
+
+`RuntimeOptions` is the review record: every endpoint must be a bare HTTPS origin on an approved
+host, the text and Live deployments must differ, and region, retention, identity and private-store
+reviews must be explicitly true. `ConversationRuntime` then builds the admission authority, the
+text history, the model and Live adapters and the two routers from injected credentials and
+containers. A failed review or a missing port raises at construction, so an app without a runtime
+serves only health.
+"""
 
 import asyncio
 import math

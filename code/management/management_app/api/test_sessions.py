@@ -1,4 +1,11 @@
-"""Explicit cookie-authorized test tickets; no model allocation or ambient relay ports."""
+"""Console gateway: `POST /v1/console/tickets` and the `WS /v1/console/sessions` socket.
+
+A signed-in manager (cookie, origin and CSRF checked) requests a short-lived ticket for text or
+voice testing; the browser then opens the console socket with it (subprotocol `caller.console.v1`)
+and the session relays to the backend endpoints. Tickets are single use, tied to the console
+session and bounded in number, and no model or backend resource is allocated until the relay
+authenticates.
+"""
 
 import asyncio
 import hashlib

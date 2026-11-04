@@ -1,4 +1,11 @@
-"""Metadata-only console control; credentials and content never enter Reflex state."""
+"""Reflex state for the test console: control metadata only.
+
+`ConsoleControl` is a small state machine for one test (idle, permission, starting, ready, stopping,
+ended, unavailable, busy, cleanup pending). It accepts browser-reported metadata only if it is under
+8 KiB, keeps the same mode, session and revision, never moves the generation backwards and refuses
+`ended` until cleanup is confirmed. Credentials, permits, text and audio never enter Reflex state;
+any authorization failure moves the console to `unavailable` rather than showing stale controls.
+"""
 
 import json
 from dataclasses import dataclass, field
@@ -76,6 +83,7 @@ class ConsoleControl:
             and incoming.status == "ended"
             and incoming.cleanup_status != "complete"
         ):
+            # "Ended" must mean confirmed cleanup: a new start is allowed only after it.
             raise PermissionError("console_cleanup_unconfirmed")
         retained = {
             name: getattr(previous, name)

@@ -1,4 +1,8 @@
-"""Strict JSON object parsing: duplicate keys are an error, never "last one wins"."""
+"""Strict JSON object parsing: duplicate keys are an error, never "last one wins".
+
+Pass `unique_object` as `object_pairs_hook` to `json.loads`. A repeated key would otherwise let
+one parser see a different value than another, so it is rejected with a fixed error code.
+"""
 
 from typing import Any
 

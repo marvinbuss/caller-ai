@@ -1,4 +1,10 @@
-"""Maps the backend's public error vocabulary to the browser-facing close codes of the relay."""
+"""Maps the backend's public error vocabulary to the browser-facing close codes of the relay.
+
+The backend ends a session either with an `error` message or with its own 4xxx WebSocket close
+code. `BackendRefusal` turns both into one public code plus an optional lowercase reason, and
+`browser_close` picks the standard close code the browser receives. Anything outside the
+vocabulary becomes `internal_error`, so backend detail never reaches the browser.
+"""
 
 import re
 from typing import Any

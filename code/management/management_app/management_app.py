@@ -1,4 +1,11 @@
-"""Foundation shell plus an explicit authenticated editor composition; live calls stay off."""
+"""Foundation shell plus an explicit authenticated editor composition; live calls stay off.
+
+`create_app` always serves the status shell and its health API and reports live calls and
+configuration as unavailable. When an `EditorServices` bundle is passed it also registers the
+configuration editor and test console pages behind the Reflex socket guard. Reflex registers
+states in a context that is forked while the app is built, so the editor pages and states are
+imported before that fork; moving those imports later breaks the frontend export.
+"""
 
 from contextlib import AbstractContextManager, nullcontext
 from typing import TYPE_CHECKING, cast

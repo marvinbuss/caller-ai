@@ -95,9 +95,9 @@ Measured on the same Windows developer machine on 2026-11-04 with nothing else r
 
 | Project | Before | After | Note |
 | --- | --- | --- | --- |
-| backend | 855 passed, 4 failed, 64.8 s | 510 passed, 73.1 s (quick tier 444 passed, 46.3 s); the same 4 environmental failures | Fewer tests did not make the run faster: the SDK lifecycle, owned-TLS and port cases dominate it, and this run was slower than the baseline run on the same machine. With `pytest-xdist` the same 510 tests took about 40 s, but the lock for it could not be produced here (see `docs/library-decisions.md`) |
-| management | 715 passed, 4 failed, 537.7 s | 732 passed, 594.2 s (unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames); each editor browser case still compiles its own frontend, so the target is not met until T072 and T073 are done |
-| tools | 368 passed, 90.9 s | 324 passed, 71-73 s | Call-era tooling cases were removed |
+| backend | 855 passed, 4 failed, 64.8 s | 505 passed, about 65 to 75 s (quick tier 439 passed, 36.4 s); the same 4 environmental failures | Fewer tests did not make the run faster: the SDK lifecycle, owned-TLS and port cases dominate it, and this run was slower than the baseline run on the same machine. The duplicate SDK startup case was removed (T071), which is why the count went from 510 to 505. With `pytest-xdist` the same tests took about 40 s, but the lock for it could not be produced here (see `docs/library-decisions.md`) |
+| management | 715 passed, 4 failed, 537.7 s | 732 passed, 506.4 s (8 min 26 s; unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames) in less time: the editor browser cases now share one compiled frontend build (T072) instead of compiling per case, which took the run from 594.2 s to about 506 s. The remaining time is the 81 real browser cases, each driving Chromium, so the advisory target is still not met. One earlier run showed a single failure in `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop[chromium-controls-768]`; it passed alone, in a 24-case group, in a relay-plus-browser run and in the next full run, so it is recorded as a timing flake |
+| tools | 368 passed, 90.9 s | 325 passed, 71 to 88 s | Call-era tooling cases were removed. Three real child-process runs (the failure gate at 37 s and two service-alert contract cases at 11 to 13 s) account for about two thirds of the time (T074) |
 
 CI step durations (native test step, documentation render, image audit) were not re-measured: no CI
 run exists for this branch yet. A first run on the pull request will give the comparable values; the
@@ -189,18 +189,32 @@ reports zero findings), the management console on the public endpoints with a si
 builder, per-turn permits and a retention notice, one Terraform definition per stack with
 stage-neutral delivery tooling and examples, the `quick` test tier, the optional Spec Kit hooks,
 GPT-Live on the OpenAI SDK, the file splits, the duplicate-helper sweep (strict JSON parsing, the
-authority encoder and the management problem response), the library decision log and the refreshed
-documents (68 documents and 46 Mermaid diagrams verified by `verify_docs.py`).
+authority encoder and the management problem response), the wording pass (a multi-line docstring
+and why-comments in every module of the backend, management app and tools scripts), the library
+decision log and the refreshed documents (68 documents and 46 Mermaid diagrams verified by
+`verify_docs.py`).
 
-Deferred (not started or only partly done), each needing its own change:
+Test speed-up decisions (T071 to T076):
 
-- The wording pass of T054 to T057: every module has a purpose docstring and the modules touched by
-  this feature carry fuller ones with why-comments, but most older modules still have only the
-  one-line statement and few why-comments.
-- Test speed-ups beyond the `quick` tier: duplicate removal between the backend conversation test
-  files (T071), the shared browser build and merged browser cases (T072, T073; the compiled frontend
-  bakes in the per-test origin port, so sharing it needs a fixed-port redesign), module-scoped tools
-  fixtures (T074) and CI restructuring (T076). `pytest-xdist` (T075) is available but needs a lock
-  with public artifact URLs; see `docs/library-decisions.md`.
+- **T071, duplicate coverage**: the paired backend conversation test files were reviewed per
+  behavior. Only the SDK startup case was a true duplicate: `tests/unit/test_sdk_startup.py` was
+  removed and `tests/integration/test_sdk_lifecycle.py` covers both of its cases (it gained the
+  environment-variable and restart assertions). The conversation unit and integration pairs test
+  different layers and stay.
+- **T072, shared browser build**: the editor frontend is compiled once per test session on fixed
+  ports and shared by one host per browser module. The relay contract test keeps its own host,
+  because it leaves an occupied slot and both suites assert runtime-wide counters.
+- **T073, merged browser cases**: all 81 browser cases were reviewed and none merged. They cover
+  distinct behaviors, and the width parametrization is the required responsive evidence.
+- **T074, tools fixtures**: profiling showed the time is three real child-process runs, not
+  repeated setup, so no fixture change was made.
+- **T075, `pytest-xdist`**: not adopted. It is on the approved mirror, but its lock needs public
+  artifact URLs that could not be produced here; see `docs/library-decisions.md`.
+- **T076, CI**: job names stay as they are (they are the required check names) and dependency
+  caching was added. The saving is not measured until a CI run exists for this branch, and
+  caching the Mermaid renderer or Chromium needs a pinned `actions/cache` reference.
+
+Still open, each needing its own change:
+
 - `call-audit` container and `retirement.tf` stay until a reviewed destructive plan exists.
 

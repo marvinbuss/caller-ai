@@ -1,4 +1,12 @@
-"""Reflex socket and event authorization plus the reviewed-ingress allow-list."""
+"""Reflex socket and event authorization plus the reviewed-ingress allow-list.
+
+`ReflexEventGuard` binds each Socket.IO connection to the browser session cookie and a client
+token when it connects (same origin only, bounded owner and connection tables) and re-checks that
+binding on every event, so a revoked or foreign session stops at once. `SecureEventNamespace` and
+`EventAuthorizationMiddleware` apply the guard to the socket and to event processing, and
+`ProtectedReflexBoundary` rejects any mutating HTTP route that was not reviewed, because Reflex
+mounts mutating routes of its own. Cookie and authorization headers never reach Reflex handlers.
+"""
 
 import re
 from typing import TYPE_CHECKING, Any

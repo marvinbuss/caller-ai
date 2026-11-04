@@ -1,4 +1,12 @@
-"""Browser-side JavaScript for the live audio bridge: capture worklet, budget and test engine."""
+"""Browser-side JavaScript for the live audio bridge: capture worklet, budget and test engine.
+
+The module holds JavaScript as strings that Reflex injects into the page. `WORKLET_CODE` runs in
+the audio thread and moves 24 kHz PCM16 between the microphone, the speaker and the engine in
+bounded packets, ordered by generation, capture epoch and sequence numbers so stale audio is
+dropped after a clear or mute. `BUDGET_CODE` bounds the samples and bytes in flight in either
+direction, `ENGINE_CODE` is the test engine that owns the socket, devices and status line, and
+`HOOK_CODE` wires it to the page controls. Content and media stay in bounded browser memory.
+"""
 
 import json
 

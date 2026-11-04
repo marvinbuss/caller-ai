@@ -1,4 +1,12 @@
-"""Atomic single-partition publication; injected Cosmos only, never credential discovery."""
+"""Cosmos persistence for configuration revisions, the permission authority and security audit.
+
+Publication, capability admission and revocation each commit as one transactional batch in a single
+partition, so readers never see a half-published revision or a revocation without its audit outbox
+entry. Writes are ETag-conditioned and a conflict raises `PermissionConflict` or a rejected
+publication instead of overwriting. The container
+is injected by the reviewed composition; this module never builds a client or looks for credentials.
+Storage errors surface as fixed codes without document content.
+"""
 
 import asyncio
 import copy

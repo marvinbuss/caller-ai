@@ -1,4 +1,10 @@
-"""Startup-only SDK policy with no default exporter or provider tracing."""
+"""One-time Agents SDK tracing policy; no default exporter and no provider-side tracing.
+
+Input: the startup `Settings` and the service `Telemetry`. Output: process-wide SDK state. Tracing
+is off unless explicitly enabled, and then only fixed metadata spans reach `Telemetry`, never
+payloads. The SDK's tracing switches are global, so a second call with a different policy raises
+`tracing_change_requires_restart` instead of silently changing a running process.
+"""
 
 from __future__ import annotations
 
@@ -50,6 +56,7 @@ def initialize_sdk(settings: Settings, telemetry: Telemetry) -> None:
                 return None
 
         agents.set_tracing_disabled(True)
+        # Replacing the processor list also removes the SDK's default exporter to the provider.
         agents.set_trace_processors([MetadataProcessor()] if policy[0] else [])
         if policy[0]:
             os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "0"

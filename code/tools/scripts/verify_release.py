@@ -1,4 +1,11 @@
-"""Deterministic full-suite regression entry point; no live execution or release approval."""
+"""Deterministic full-suite regression entry point; no live execution or release approval.
+
+`run_local` runs the backend, management and tools suites in separate processes with a clean
+environment (no runtime, Azure or OpenAI settings), reads each suite's JUnit file and reports one
+status per suite. A suite passes only when pytest exited 0 and ran at least one test with no
+failures, errors or skipped cases, so a skipped or empty run cannot look green. Live status stays
+`pending` and release status `blocked` whatever the local result.
+"""
 
 import argparse
 import json

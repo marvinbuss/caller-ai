@@ -1,4 +1,11 @@
-"""Immutable service-authenticated policy projections, never current permission authority."""
+"""Immutable, validated snapshots of the published configuration and the cache that pins them.
+
+Input: the revision document management serves; output: `RevisionSnapshot`s whose runtime
+projection is hash-checked and bounded (16 KiB prompts, 4 KiB community descriptions, at most two
+transfer context fields). A snapshot is a policy projection, never the current permission
+authority: management checks revocations on every capability call. A session keeps the snapshot it
+started with.
+"""
 
 import hashlib
 import json

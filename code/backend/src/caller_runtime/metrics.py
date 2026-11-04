@@ -1,4 +1,12 @@
-"""Runtime-owned bounded aggregate metrics; no conversation content or implicit exporter."""
+"""Runtime-owned bounded aggregate metrics; no conversation content or implicit exporter.
+
+`RuntimeMetrics` records request, error, admission, dependency-failure and saturation values under
+fixed route, method, dependency and reason names, so no identifier, text or audio can become a
+label and cardinality stays bounded. Values stay in memory unless a trusted exporter is attached
+through `DeltaExportReader`, which collects by hand (no background worker or implicit
+destination); `_GuardedExporter` caps each export at one second and turns any exporter failure
+into a `failed` flag instead of an exception.
+"""
 
 import math
 from typing import Any
@@ -71,6 +79,7 @@ class _GuardedExporter(MetricExporter):
                 self.exported = True
                 return MetricExportResult.SUCCESS
         except Exception:
+            # Telemetry must never break the caller: any exporter error becomes a failed flag.
             pass
         self.failed = True
         return MetricExportResult.FAILURE

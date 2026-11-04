@@ -1,4 +1,10 @@
-"""Pin one configuration revision per test session; gateway authority stays independent."""
+"""Pins one configuration revision per test session and owns the optional refresh loop.
+
+`select_new_call` returns the current pinned snapshot for a new session, or raises
+`configuration_unavailable` when no community is enabled. A running session keeps its snapshot, so a
+later publication changes only new sessions. The refresh client exists only when the composition
+supplies one; management stays the authority for current permissions.
+"""
 
 import asyncio
 from collections.abc import AsyncIterator

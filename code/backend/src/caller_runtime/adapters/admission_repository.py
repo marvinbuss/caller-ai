@@ -1,4 +1,12 @@
-"""Strong fixed-partition browser authority; no clients, TTL reclaim or implicit reset."""
+"""Cosmos-backed store of the one admission authority item (`browser-test-authority-v1`).
+
+Reads are strongly consistent and writes are ETag-conditioned in a single fixed partition, so two
+instances can never both admit the same slot. Input and output are validated `TestAuthority`
+snapshots; `verify_transition` rejects any write that would move state backwards (high-water time,
+consumed nonces, attempt and settlement counters). The item has no TTL (`ttl=-1`), is never created
+or reset implicitly, and storage failures surface as `AuthorityUnavailable` or `AuthorityConflict`
+without storage detail.
+"""
 
 import asyncio
 import math
@@ -41,6 +49,7 @@ class AuthoritySnapshot:
 def snapshot(document: Mapping[str, Any]) -> AuthoritySnapshot:
     etag = document.get("_etag")
     if not isinstance(etag, str) or not ETAG.fullmatch(etag) or document.get("ttl") != -1:
+        # An item that could expire would silently free slots, so any other ttl is unavailable.
         raise AuthorityUnavailable()
     clean = {key: value for key, value in document.items() if key not in COSMOS_METADATA}
     content = encoded(clean)

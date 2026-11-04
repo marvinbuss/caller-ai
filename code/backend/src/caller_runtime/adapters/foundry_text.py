@@ -1,4 +1,11 @@
-"""Explicit async Foundry Chat Completions model with application-owned dispatch gates."""
+"""Foundry Chat Completions model for text turns, wrapped so the application owns every dispatch.
+
+The adapter gives the Agents SDK a model whose calls go through admission (an attempt is recorded
+before the request and settled after), use a managed-identity token, and travel over a bounded
+transport: no environment proxies, no retries, identity encoding only and responses capped at
+256 KiB. Failures surface as fixed codes; provider text, tokens and request bodies are never logged
+or returned.
+"""
 
 import asyncio
 import hashlib
@@ -69,6 +76,7 @@ class _BoundedTransport(httpx2.AsyncBaseTransport):
         )
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        # Compressed bodies could expand past the size bound after the limit check.
         request.headers["Accept-Encoding"] = "identity"
         response = await self._delegate.handle_async_request(request)
         length = response.headers.get("content-length")

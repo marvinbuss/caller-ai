@@ -1,4 +1,10 @@
-"""Fixed-key manager assertions; no key discovery, algorithm negotiation or allocation."""
+"""Verifies the signed start permit minted by the management console.
+
+Input: the compact RS256 JWT. Output: a validated `StartPermit`. Keys are fixed at construction (1-4
+RSA keys of 2,048-8,192 bits); the key id must name one of them and the algorithm is not negotiated.
+Duplicate JSON keys, unknown header fields, oversized tokens and a clock that moves backwards are
+rejected. Every failure raises the same `invalid_test_permit` so callers learn nothing about why.
+"""
 
 import json
 import math
@@ -85,6 +91,7 @@ class TestPermitVerifier:
                 audience=self._audience,
                 issuer=self._issuer,
                 options={
+                    # Time claims are checked below against the injected clock and its skew bound.
                     "verify_exp": False,
                     "verify_iat": False,
                     "verify_nbf": False,
@@ -92,6 +99,7 @@ class TestPermitVerifier:
                 },
             )
             if claims != payload:
+                # The signed payload must equal what was parsed with strict duplicate-key checks.
                 raise ValueError("invalid_permit")
             permit = StartPermit.model_validate_json(json.dumps(claims, allow_nan=False))
             now = utc(self._utc_now())

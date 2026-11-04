@@ -1,4 +1,12 @@
-"""Runtime-owned metadata telemetry; no content-bearing fields or network exporters."""
+"""Runtime telemetry: spans and events limited to fixed, content-free metadata.
+
+Operation names, event names, outcomes and attribute values come from closed sets, so an unknown
+name or an arbitrary attribute is rejected before a span starts. Correlation ids are bounded opaque
+values; credential-like prefixes are replaced. Spans and events are kept in memory (512 each) with
+no network exporter, trace context propagates only `traceparent`, and an optional alert sink
+receives a detached copy of `test.alert` events. Conversation text, audio, prompts and tool data
+never enter it.
+"""
 
 import asyncio
 import json
@@ -107,6 +115,7 @@ VALUES = {
 
 def sanitize_correlation_id(value: str | None) -> str:
     if value and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
+        # Callers sometimes paste keys or tokens into headers; never echo those into telemetry.
         if not value.startswith(("sk-", "AKIA", "eyJ")):
             return value
     return uuid4().hex
