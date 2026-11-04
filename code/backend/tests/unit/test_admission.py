@@ -1682,6 +1682,51 @@ def test_live_close_confirms_receipt_settlement_after_reader_cancellation(
     asyncio.run(scenario())
 
 
+def test_live_close_retries_a_failed_closure_settlement_until_cleanup_verifies(
+    live_case, monkeypatch
+):
+    from caller_runtime.services.admission import AdmissionError
+    from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
+
+    service, repository, clock, socket, opened = live_case
+
+    async def scenario():
+        original, segment = await opened()
+        observations = CleanupObservations(owner_id=service.owner_id, utc_now=clock.utc_now)
+
+        async def disposed():
+            return segment.disposed
+
+        observations.register(original, disposed=disposed)
+        monkeypatch.setattr(segment.adapter, "_settlement_observer", observations)
+        settle = service.settle_attempt
+        calls = []
+
+        async def unavailable_once(intent, **keywords):
+            calls.append(keywords["settlement_ref"])
+            if len(calls) == 1:
+                raise AdmissionError("authority_unavailable")
+            return await settle(intent, **keywords)
+
+        monkeypatch.setattr(service, "settle_attempt", unavailable_once)
+        await service.mark_terminal(original.session_id, original.owner_epoch)
+        receipt = await segment.close()
+        deadline = asyncio.get_running_loop().time() + 1
+        terminal = (await repository.read(deadline=deadline)).authority.slots[0]
+        assert len(calls) == 2 and calls[0] == calls[1]
+        assert terminal.closure_receipt == receipt
+        assert terminal.resources["live"].attempted == terminal.resources["live"].settled == 1
+        observed = await observations.observe(terminal, deadline)
+        assert observed is not None
+        verifier = ResourceCleanupVerifier(observe=observations.observe, utc_now=clock.utc_now)
+        assert (
+            await verifier.verify(terminal, verifier.evidence(terminal, observed), deadline)
+            == "verified"
+        )
+
+    asyncio.run(scenario())
+
+
 def test_cleanup_observation_source_uses_actual_bound_live_close_and_owned_disposal(
     live_case, monkeypatch
 ):

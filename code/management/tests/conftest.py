@@ -10,6 +10,16 @@ from pathlib import Path
 
 import pytest
 
+# CI runners are several times slower than a workstation; the assertions stay the same.
+EXPECT_TIMEOUT_MS = 15000 if os.environ.get("CI") else 5000
+
+
+@pytest.fixture(scope="session", autouse=True)
+def browser_expectation_timeout() -> None:
+    from playwright.sync_api import expect
+
+    expect.set_options(timeout=EXPECT_TIMEOUT_MS)
+
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Keep Playwright's session greenlet after ordinary asyncio.run-based checks."""

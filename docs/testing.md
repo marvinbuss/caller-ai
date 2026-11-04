@@ -16,4 +16,9 @@ is not shared between hosts). The editor-host cases are timing-sensitive: do not
 commands (the documentation render, another suite) at the same time, because a build or startup
 that exceeds its deadline fails the test.
 
+Browser assertions wait 5 s on a workstation and 15 s when `CI` is set, because CI runners are
+slower; the assertions themselves are the same. Each console case (text and speech) runs as its own
+manager identity, so a test session left in `cleanup pending` holds only that case's slot and does
+not fail the cases after it.
+
 Markers: `quick` (fast tier) and `browser` (needs prepared Chromium). `--strict-markers` is on.

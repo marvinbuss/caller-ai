@@ -50,6 +50,17 @@ class WirePressure(PermissionError):
     pass
 
 
+def finished_in_priority(
+    completed: Any, *, reader: "asyncio.Task[Any]", watcher: "asyncio.Task[Any]"
+) -> "list[asyncio.Task[Any]]":
+    # `asyncio.wait` returns a set, so two tasks failing in one tick would otherwise pick the
+    # client's error by chance: the client's own refusal first, then authority loss, then the rest.
+    done = list(completed)
+    return [task for task in (reader, watcher) if task in done] + [
+        task for task in done if task is not reader and task is not watcher
+    ]
+
+
 async def receive_text(socket: WebSocket) -> str:
     message = await socket.receive()
     if message["type"] == "websocket.disconnect":
@@ -862,7 +873,7 @@ def create_router(
             if watcher in completed and reader not in completed:
                 watcher.result()
                 raise AdmissionError("terminal")
-            for finished in completed:
+            for finished in finished_in_priority(completed, reader=reader, watcher=watcher):
                 finished.result()
             if reader not in completed:
                 raise AdmissionError("terminal")

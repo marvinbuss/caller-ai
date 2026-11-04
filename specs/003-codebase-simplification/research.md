@@ -95,8 +95,8 @@ Measured on the same Windows developer machine on 2026-11-04 with nothing else r
 
 | Project | Before | After | Note |
 | --- | --- | --- | --- |
-| backend | 855 passed, 4 failed, 64.8 s | 505 passed, about 65 to 75 s (quick tier 439 passed, 36.4 s); the same 4 environmental failures | Fewer tests did not make the run faster: the SDK lifecycle, owned-TLS and port cases dominate it, and this run was slower than the baseline run on the same machine. The duplicate SDK startup case was removed (T071), which is why the count went from 510 to 505. With `pytest-xdist` the same tests took about 40 s, but the lock for it could not be produced here (see `docs/library-decisions.md`) |
-| management | 715 passed, 4 failed, 537.7 s | 732 passed, 503.4 s (8 min 23 s; unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames) in less time. The editor browser module already shares one host per module, and each host builds its own frontend; a session-wide shared build gave no further measurable saving (506 s against 503 s, see T072). The time is the 81 real browser cases, each driving Chromium, so the advisory target is not met. One run showed a single failure in `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop[chromium-controls-768]`; it passed alone, in a 24-case group and in the next full run, so it is recorded as a timing flake |
+| backend | 855 passed, 4 failed, 64.8 s | 508 passed, about 65 to 75 s (quick tier 439 passed, 36.4 s); the same 4 environmental failures | Fewer tests did not make the run faster: the SDK lifecycle, owned-TLS and port cases dominate it, and this run was slower than the baseline run on the same machine. The duplicate SDK startup case was removed (T071) and three race tests were added (T096), so the count went from 510 to 508. With `pytest-xdist` the same tests took about 40 s, but the lock for it could not be produced here (see `docs/library-decisions.md`) |
+| management | 715 passed, 4 failed, 537.7 s | 732 passed, 518.9 s (8 min 39 s; unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames) in less time. The editor browser module already shares one host per module, and each host builds its own frontend; a session-wide shared build gave no further measurable saving (506 s against 503 s, see T072). The time is the 81 real browser cases, each driving Chromium, so the advisory target is not met. One run showed a single failure in `test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop[chromium-controls-768]`; it passed alone, in a 24-case group and in the next full run, so it is recorded as a timing flake |
 | tools | 368 passed, 90.9 s | 325 passed, 71 to 88 s | Call-era tooling cases were removed. Three real child-process runs (the failure gate at 37 s and two service-alert contract cases at 11 to 13 s) account for about two thirds of the time (T074) |
 
 CI step durations of two green pull-request runs against the baseline run 41672927903: run
@@ -245,12 +245,41 @@ Test speed-up decisions (T071 to T076):
   unchanged from `main`. Two leads, not confirmed: the closure receipt is recorded in
   `CleanupObservations` before `settle_attempt` stores it on the slot, so a failed settle makes
   `observe()` report a mismatch and hold the slot; and `api/voice.py` re-raises the first finished
-  task from an unordered set, so two tasks failing in one tick can pick either error. A fix to
-  either needs its own change with a reproduction.
+  task from an unordered set, so two tasks failing in one tick can pick either error.
+  Both leads were hardened without a reproduction, each with a test that fails before the change
+  and passes after it: `GptLiveSession` now keeps the provider's close receipt when the first
+  settlement fails and `close()` retries the settlement up to three times within its deadline
+  (`test_live_close_retries_a_failed_closure_settlement_until_cleanup_verifies`), and the voice
+  endpoint re-raises finished tasks in a fixed order, the client's own refusal first, then
+  authority loss, then the rest (`tests/unit/test_voice_task_order.py`). Whether these were the
+  actual causes of the two CI failures is not confirmed; if either failure returns, the leads were
+  wrong and the CI log is the next evidence.
+- **Third Windows failure and test isolation** (run 41847352921, a docs-only commit): the text
+  case `test_console_published_text_uses_owned_runtime_without_microphone` timed out waiting for
+  the reply (5 s default), and every later session-starting case then found the manager slot
+  `busy`. Two test changes follow from that (T098, T099): browser expectations wait 15 s when
+  `CI` is set (5 s locally), and each speech and text console case runs under its own manager
+  identity, so one stuck session fails only its own case. The runtime-wide `occupied == 0`
+  assertion in the text case is unchanged, so a stuck session can still trip it. Repeated local
+  runs of the text and speech cases (17 runs of 5 tests) failed twice on the first speech case: once
+  with `stopping` still shown after 5 s, once with capture `Off` where `Muted` was expected because
+  the session ended about half a second after it started. The client clock watch in
+  `live_audio_js.py` (`watch()`) stops a session as `lifetime_expired` when `Date.now()` and
+  `performance.now()` drift apart by more than 1 s between its 900 ms ticks, which would explain
+  the second case, but this is not confirmed. The speech case now prints the console status and
+  error when an assertion fails, so the next occurrence names the reason.
+
+- **SC-008 decision (T097)**: the owner chose to record that the required-check time reduction is
+  not met rather than cut browser cases. Local suites dropped from 693 s to about 645 s in total
+  (management 537.7 s to 503.4 s, tools 90.9 s to about 75 s, backend 64.8 s to about 67 s), but
+  CI shows none (native tests 218 s on Ubuntu and 303 s on Windows against 195-222 s). What was
+  tried: a shared browser build (no gain), `pytest-xdist` (its lock needs public artifact URLs),
+  merging browser cases (none merge) and fixture sharing in tools (the time is child processes).
+  The remaining levers cut evidence: the responsive width matrix and the speech exit-event cases
+  are required coverage (FR-021), so they stay.
 
 Still open, each needing its own change:
 
 - `call-audit` container and `retirement.tf` stay until a reviewed destructive plan exists.
-- The intermittent Windows CI failures above are open: they need a reproduction before a change.
 - A shared editor frontend build (T072) is not worth retrying unless it first shows a measured saving.
 

@@ -531,7 +531,12 @@ class GptLiveSession:
                     voiceSeconds=self.protocol.voice_seconds,
                     authenticated=True,
                 )
-                await self._confirm_closure()
+                try:
+                    await self._confirm_closure()
+                except Exception:
+                    # The provider's close event is already proven; close() settles it again, so
+                    # one transient authority failure must not leave the slot held as unverified.
+                    pass
             return event
 
     async def _confirm_closure(self) -> None:
@@ -647,7 +652,14 @@ class GptLiveSession:
                     # Only the provider's close event proves usage ended; a dropped socket does not.
                     while self._receipt is None:
                         await self._receive()
-                    await self._confirm_closure()
+                    for attempt in range(3):
+                        try:
+                            await self._confirm_closure()
+                            break
+                        except Exception:
+                            if attempt == 2:
+                                raise
+                            await asyncio.sleep(0.05 * (attempt + 1))
             except Exception:
                 raise PermissionError("live_closure_unverified") from None
             finally:

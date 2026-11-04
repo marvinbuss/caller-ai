@@ -7,7 +7,28 @@ import httpx
 import pytest
 from playwright.sync_api import Browser, Locator, Page, expect
 
+from tests.conftest import EXPECT_TIMEOUT_MS
+
 pytestmark = pytest.mark.browser
+
+SPEECH_EXITS = (
+    "controls",
+    "devicechange",
+    "hidden",
+    "navigation",
+    "logout",
+    "connection_loss",
+    "playback_suspended",
+    "playback_closed",
+)
+SPEECH_WIDTHS = (360, 768, 1440)
+TEXT_ENTRIES = ("overview", "community")
+# Each console case runs as its own manager, so a session left in `cleanup pending` holds only
+# that case's slot instead of failing every case after it.
+CONSOLE_ACTORS = (
+    *(f"console-speech-{event}-{width}" for event in SPEECH_EXITS for width in SPEECH_WIDTHS),
+    *(f"console-text-{entry}" for entry in TEXT_ENTRIES),
+)
 
 
 @pytest.fixture(scope="module")
@@ -16,7 +37,7 @@ def editor_host(editor_host_factory):
 
     with editor_host_factory(
         graph=configuration_graph_document(),
-        identities=("manager-one", "manager-two"),
+        identities=("manager-one", "manager-two", *CONSOLE_ACTORS),
         mode="local",
     ) as host:
         yield host
@@ -241,11 +262,13 @@ def test_console_stop_disposes_late_permission_without_ticket(browser: Browser, 
         context.close()
 
 
-@pytest.mark.parametrize("entry", ["overview", "community"])
+@pytest.mark.parametrize("entry", TEXT_ENTRIES)
 def test_console_published_text_uses_owned_runtime_without_microphone(
     browser: Browser, configuration_host, entry: str
 ):
-    context, page = open_manager(browser, configuration_host, "manager-one", global_settings=False)
+    context, page = open_manager(
+        browser, configuration_host, f"console-text-{entry}", global_settings=False
+    )
     wire = []
 
     def observe(socket):
@@ -321,7 +344,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.get_by_role("log", name="Conversation")).to_contain_text(
             "Synthetic shared reply"
         )
-        page.wait_for_function("window.callerTestCompleted === 1", timeout=5000)
+        page.wait_for_function("window.callerTestCompleted === 1", timeout=EXPECT_TIMEOUT_MS)
         expect(page.locator("#test-agent")).to_have_text("agent-alpha")
         assert page.evaluate("window.callerTestCaptureCount") == 0
         page.get_by_role("button", name="Stop test", exact=True).click()
@@ -344,7 +367,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.get_by_role("log", name="Conversation")).to_contain_text(
             "Synthetic shared reply"
         )
-        page.wait_for_function("window.callerTestCompleted === 2", timeout=5000)
+        page.wait_for_function("window.callerTestCompleted === 2", timeout=EXPECT_TIMEOUT_MS)
         page.get_by_role("button", name="Stop test", exact=True).click()
         expect(page.locator("#test-status")).to_have_text("ended")
         trust = ssl.create_default_context(cafile=configuration_host["certificate"])
@@ -429,27 +452,15 @@ def test_console_unavailable_media_is_visible_before_ticket(
         context.close()
 
 
-@pytest.mark.parametrize("width", [360, 768, 1440])
-@pytest.mark.parametrize(
-    "exit_event",
-    [
-        "controls",
-        "devicechange",
-        "hidden",
-        "navigation",
-        "logout",
-        "connection_loss",
-        "playback_suspended",
-        "playback_closed",
-    ],
-)
+@pytest.mark.parametrize("width", SPEECH_WIDTHS)
+@pytest.mark.parametrize("exit_event", SPEECH_EXITS)
 def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
     browser: Browser, configuration_host, width: int, exit_event: str
 ) -> None:
     context, page = open_manager(
         browser,
         configuration_host,
-        "manager-one",
+        f"console-speech-{exit_event}-{width}",
         global_settings=False,
         fresh_session=exit_event == "logout",
     )
@@ -587,6 +598,18 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
         )
         expect(page.get_by_role("button", name="Start published test", exact=True)).to_be_enabled()
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    except AssertionError:
+        # A session that ended on its own shows its reason here, which the assertion alone does not.
+        try:
+            print(
+                {
+                    key: page.locator("#test-" + key).inner_text(timeout=1000)
+                    for key in ("status", "error", "capture", "playback")
+                }
+            )
+        except Exception:
+            pass
+        raise
     finally:
         context.close()
 
@@ -649,7 +672,7 @@ def test_us1_community_graph_publication_navigation_and_presentation(
         graph.locator(".react-flow__controls-fitview").click()
         native_node = graph.locator('.react-flow__node[data-id="community-alpha"]')
         expect(native_node).to_be_visible()
-        native_node.hover(timeout=5000)
+        native_node.hover(timeout=EXPECT_TIMEOUT_MS)
         node_box = native_node.bounding_box()
         assert node_box is not None
         start_x = node_box["x"] + node_box["width"] / 2
