@@ -89,6 +89,20 @@ The editor frontend export failed once after the `configuration_editor` split be
 module was imported inside the forked registration context; importing the editor pages and states
 before the fork (as the old composition import did) restored it. Keep that ordering.
 
+### Final suite timings (T078)
+
+Measured on the same Windows developer machine on 2026-11-04 with nothing else running.
+
+| Project | Before | After | Note |
+| --- | --- | --- | --- |
+| backend | 855 passed, 4 failed, 64.8 s | 510 passed, 73.1 s (quick tier 444 passed, 46.3 s); the same 4 environmental failures | Fewer tests did not make the run faster: the SDK lifecycle, owned-TLS and port cases dominate it, and this run was slower than the baseline run on the same machine. With `pytest-xdist` the same 510 tests took about 40 s, but the lock for it could not be produced here (see `docs/library-decisions.md`) |
+| management | 715 passed, 4 failed, 537.7 s | 732 passed, 594.2 s (unit and contract tiers 554 passed, about 100 s) | More cases (backend connection builder, text relay, relay frames); each editor browser case still compiles its own frontend, so the target is not met until T072 and T073 are done |
+| tools | 368 passed, 90.9 s | 324 passed, 71-73 s | Call-era tooling cases were removed |
+
+CI step durations (native test step, documentation render, image audit) were not re-measured: no CI
+run exists for this branch yet. A first run on the pull request will give the comparable values; the
+advisory targets for test time stay unmet and the reasons are above.
+
 ## Decision 1: Two public conversation endpoints, one connection contract
 
 - **Decision**: Replace the internal test-session WebSocket and all call-era routes with exactly two conversation endpoints: `POST /v1/conversations/text` (one text turn) and `WS /v1/conversations/voice` (voice session). Both use one connection contract: the signed manager start permit as the credential (verified independently by the backend, so verified user context, revision binding and admission deadlines are unchanged), admission and limits, a stable error vocabulary, and an optional `settings` object that MUST be absent or empty and is rejected otherwise (clarification Q4). `/healthz` and `/readyz` remain operational probes, not conversation endpoints.
@@ -188,6 +202,5 @@ Deferred (not started or only partly done), each needing its own change:
   bakes in the per-test origin port, so sharing it needs a fixed-port redesign), module-scoped tools
   fixtures (T074) and CI restructuring (T076). `pytest-xdist` (T075) is available but needs a lock
   with public artifact URLs; see `docs/library-decisions.md`.
-- The quickstart walk-through (T091).
 - `call-audit` container and `retirement.tf` stay until a reviewed destructive plan exists.
 

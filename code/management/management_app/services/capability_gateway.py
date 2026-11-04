@@ -96,6 +96,7 @@ class CapabilityGateway:
             try:
                 async with asyncio.timeout_at(deadline):
                     for _attempt in range(1 if request.single_attempt else 3):
+                        # Re-read authority each pass: a revocation between attempts must win.
                         dependency = "configuration_store"
                         document = await self._repository.read_authority()
                         authority = PermissionAuthority.model_validate_json(json.dumps(document))
@@ -115,6 +116,7 @@ class CapabilityGateway:
                                 request, if_match=document["_etag"], actor_id=actor_id
                             )
                         except PermissionConflict:
+                            # The ETag moved (revocation or concurrent admit): authorize again.
                             continue
                         if loop.time() >= deadline:
                             raise GatewayError(504)
@@ -126,6 +128,7 @@ class CapabilityGateway:
                                 selected, request_id=request.request_id, deadline=deadline
                             )
                         except RetryableCapabilityError:
+                            # Only repeatable reads retry, and only with a fresh admission.
                             continue
                         return {
                             "requestId": request.request_id,

@@ -596,6 +596,7 @@ def create_router(
                 await refuse(PermissionError("invalid_control"))
                 return
             if pre_auth >= 10:
+                # Unauthenticated sockets are capped so a flood cannot hold server resources.
                 await refuse(WirePressure("pre_auth_full"))
                 return
             pre_auth += 1
@@ -610,6 +611,7 @@ def create_router(
                         or len(principal) > 128
                     ):
                         raise PermissionError("unverified_workload")
+                    # Accept only once the workload credential is verified; bad callers get HTTP.
                     await socket.accept(
                         subprotocol=SUBPROTOCOL, headers=[(b"cache-control", b"no-store")]
                     )
@@ -624,6 +626,7 @@ def create_router(
                         raise PermissionError("mode_mismatch")
                     parse_settings(assertion.settings)
                     if pre_auth_by_actor.get(permit.actor_key, 0) >= 2:
+                        # One manager cannot fill the pre-auth pool with unfinished starts.
                         raise WirePressure("actor_pre_auth_full")
                     verified_actor = permit.actor_key
                     pre_auth_by_actor[verified_actor] = pre_auth_by_actor.get(verified_actor, 0) + 1

@@ -32,6 +32,7 @@ class ReflexEventGuard:
         scope["method"] = "GET"
         request = Request(scope)
         if request.headers.get("origin") != self.identity.policy.origin:
+            # Browsers always send Origin on socket upgrades; a mismatch is a cross-site attempt.
             raise HTTPException(403, "csrf_validation_failed")
         session = self.identity.browser_session(request, mutation=False)
         query = parse_qs(environ.get("QUERY_STRING", ""), max_num_fields=16)
@@ -41,8 +42,10 @@ class ReflexEventGuard:
         token_hash = self.identity.sessions.digest(tokens[0])
         owner = self._owners.get(token_hash)
         if owner is not None and owner != session.principal.actor_id:
+            # A client token belongs to its first actor for good; no other actor may reuse it.
             raise unauthorized()
         if (owner is None and len(self._owners) >= 5000) or len(self._connections) >= 2000:
+            # Fixed caps keep a flood of sockets from growing server memory.
             raise HTTPException(503, "identity_capacity_unavailable")
         self._owners[token_hash] = session.principal.actor_id
         self._connections[sid] = (
@@ -51,6 +54,7 @@ class ReflexEventGuard:
         )
         self._session_handles[sid] = request.cookies[COOKIE]
         allowed_headers = {b"origin", b"user-agent", b"accept-language"}
+        # Cookie and authorization never reach Reflex handlers; the guard keeps them server-side.
         scope["headers"] = [
             (name, value)
             for name, value in scope.get("headers", [])
@@ -61,6 +65,7 @@ class ReflexEventGuard:
         return cleaned
 
     def authorize(self, sid: str, token: str) -> str:
+        # Checked on every event, not just at connect, so a revoked session stops at once.
         binding = self._connections.get(sid)
         if binding is None or binding[1] != self.identity.sessions.digest(token):
             raise unauthorized()
@@ -191,6 +196,7 @@ class ProtectedReflexBoundary:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and scope["method"] not in {"GET", "HEAD", "OPTIONS"}:
+            # Reflex mounts mutating routes of its own; only reviewed paths may change state.
             if scope["path"] not in self.allowed:
                 response = JSONResponse(
                     {"error": "unreviewed_ingress_prohibited"},
