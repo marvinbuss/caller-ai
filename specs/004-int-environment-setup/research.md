@@ -1,0 +1,285 @@
+# Research: First Internal Test Environment
+
+All unknowns from the plan's Technical Context are resolved here. Sources are the repository on
+2026-11-05, a code survey of both applications, and Microsoft Learn and Terraform provider
+documentation read during planning. Items marked **Spike** need a short proof during implementation,
+and each has a task. Items marked **Verify** are provider or platform behaviors to confirm with a
+real `terraform validate` or first apply.
+
+## Findings about the current repository
+
+| Finding | Evidence | Consequence |
+|---|---|---|
+| Both images start only in `local` mode. `live` is refused at startup. | `Settings.validate_startup` in both applications raises `live_mode_unavailable`. | The plan adds a live mode (R-10, R-11). |
+| Without injected resources the runtime serves only health probes, and the management app serves a status shell. | `caller_runtime/main.py` (`app = create_app()`), `management_app.py` (`app = create_app()`). | Both module-level apps need a composition path that reads settings. |
+| The runtime is built from `RuntimeOptions` plus a container factory, a credential factory, a workload identity verifier and permit verification keys. Five `*_reviewed` flags must be `True`. | `caller_runtime/composition.py`. | A live composition supplies each, from settings. |
+| The management app composes through `compose_management(settings, resources, authority, request)` and needs a short-lived `CompositionGrant` for a fingerprint of the settings. | `management_app/composition.py`. | An authority for deployments is needed (R-11). |
+| There is no Cosmos client factory, no credential factory and no reading of Azure settings in either app. | Code survey. | New `azure_clients.py` in each project. |
+| `azure-cosmos`, `azure-identity` and `msal` are already dependencies. | `pyproject.toml` of both projects. | No new application dependency for the stores or sign-in. |
+| The management app has its own Entra authorization-code sign-in (MSAL), server-side sessions, CSRF and role checks. It does not read platform sign-in headers. | `security.py`, `adapters/entra_oidc.py`. | Platform sign-in would conflict (R-04). |
+| The runtime fetches configuration from the management app with an identity token whose audience and role are checked, and the management app calls the runtime. Start permits are RS256 JWTs signed by management and verified by the runtime with 1 to 4 public keys. | `configuration_client.py`, `test_session_client.py`, `identity.py`, `security.py`. | Settings for audiences, roles and keys; the key pair (R-05); the application role (R-06). |
+| The management image bakes `API_URL` at build time and its exported frontend contains only the default page. | `code/management/Dockerfile`, `rxconfig.py`. | Editor pages and the runtime address must come out of the build or start (R-12). |
+| `azurerm_container_app` has no authentication settings block. `ingress.ip_security_restriction` needs all rules to use the same action. Secrets can be Key Vault references with a user-assigned identity. | Provider documentation. | The application's own sign-in avoids a second provider. Allow-list uses `Allow` rules only. |
+| `azurerm_container_app_environment` can be created external and its `public_network_access` can then change in place. `internal_load_balancer_enabled` cannot change. | Provider and Learn networking documentation. | Create external, toggle the setting (R-02). |
+| The repository is private and `code/.local/` is ignored by git. | `gh repo view`, `.gitignore`. | Public images publish code. The secret hand-over file goes under `code/.local/`. |
+
+## R-01 Hosting platform
+
+- **Decision**: Azure Container Apps, workload profiles environment with the Consumption profile, one
+  container app per application, `revision_mode = Single`, exactly one replica each.
+- **Rationale**: The owner's choice. It is a managed service with native HTTP, WebSocket, health
+  probes, Key Vault secret references, user-assigned identities and ingress allow-lists in the pinned
+  provider (FR-022, FR-025).
+- **Alternatives considered**: App Service (earlier plan, now superseded by the owner), AKS (node
+  management, rejected by FR-022).
+- **Verify**: the environment subnet needs a delegation to `Microsoft.App/environments` and at least a /27
+  for the workload profiles type; the Consumption profile must be declared at creation time.
+
+## R-02 Public access mechanics
+
+- **Decision**: The environment is created external with `public_network_access` taken from the flag
+  (`Enabled` or `Disabled`). Each app sets `ingress.external_enabled` to the flag and, when enabled, one
+  `Allow` `ip_security_restriction` per allowed range. Enabling without a range fails validation. An explicit open range (`0.0.0.0/0`, `::/0`) is allowed and gives no source restriction. `int` uses it so GitHub-hosted runners, whose addresses change, can reach the apps. Validation warns and D-05 records the exposure. No
+  environment private endpoint is created in this feature.
+- **Rationale**: The setting changes in place for an external environment, so switching the flag does not
+  remove data or touch unrelated services (FR-020). A private environment has no consumer yet, and the
+  platform team that owns the customer network adds one when needed.
+- **Alternatives considered**: an internal environment (cannot become public later, rejected); a front door
+  or application gateway (extra service).
+- **Verify**: that the toggle is an in-place update; that an app with `external_enabled = false` is
+  unreachable from outside while the environment stays external.
+
+## R-03 Network and outbound traffic
+
+- **Decision**: Bootstrap creates the virtual network, the Container Apps subnet (delegated), the
+  private-endpoint subnet, one network security group with only the default rules, one route table with no
+  routes (both associated), and the private DNS zones with links. No outbound rule, route, NAT gateway or
+  firewall exists anywhere (FR-044, SC-014). The app environment deployment reads identifiers from bootstrap
+  outputs only (FR-045).
+- **Rationale**: The owner's decision: real hosting lands in a network that a platform team provides and owns,
+  including outbound policy. Private endpoints are created with the service they expose, in the subnet from
+  bootstrap, and are not network foundation.
+- **Alternatives considered**: an allow-list by service tag (earlier plan, dropped by the owner); a firewall.
+- **Note**: because outbound is open by default, the image pull from ghcr.io and the model calls need nothing
+  extra. The documentation states that outbound policy belongs to the network owner.
+
+## R-04 Management sign-in
+
+- **Decision**: Use the management application's own Entra authorization-code sign-in and its server
+  sessions, with the client secret read from the vault. Do not enable the platform's built-in sign-in.
+- **Rationale**: The application already authenticates users, issues its own session cookie and CSRF token and
+  checks roles. A second sign-in in front would double-authenticate and the app does not read the platform
+  headers. It also removes the need for a provider for authentication settings.
+- **Spec interpretation**: the spec now names the application's own sign-in (FR-019, FR-041, a clarification). The approved
+  secret exception is unchanged, because the application's flow is a confidential client.
+- **Possible later removal of the secret**: MSAL for Python supports a client assertion callback. The
+  application could present a token from a managed identity as a federated credential, which would remove the
+  exception. That is an application change, so it is left as a follow-up.
+- **Spike S-4**: confirm `entra_oidc.LoginFlow` can take the secret from a setting and that the redirect
+  address derived from the app's default domain matches the registered redirect.
+
+## R-05 Permit signing key pair
+
+- **Decision**: A `permit-key` module generates an RSA 2048 key pair with the `tls` provider. The private key
+  is written to the vault by the `key-vault-secret` module. The public key is passed to the runtime as the
+  setting for its verification keys (key id `int-1`, up to four allowed for rotation). The management app reads
+  the private key from the vault through its identity.
+- **Rationale**: FR-051 and the clarification. Rotation adds a second pair and keeps both public keys in the
+  runtime setting during the overlap, which the runtime verifier already allows (1 to 4 keys).
+- **Risks**: the private key is in the remote state (accepted, FR-031).
+- **Alternatives considered**: key generation by the identity script (more manual steps); a vault-held
+  non-exportable key (needs a signer change in the management app).
+
+## R-06 Roles and who may use the editor
+
+- **Decision**: The identity script creates the application roles on the management registration: an editor
+  role, a tester role, and a runtime role used for calls from the runtime. It assigns the runtime role to the
+  runtime's identity (FR-052). For people, it assigns the editor and tester roles to the group named in the
+  variable file (`app_environment.identity.user_group_id`, required). For the pipeline's functional journey it also
+  assigns the tester role to the deployment identity named by `environment.client_id` (FR-053). Role names come
+  from the variable file.
+- **Problem**: the application checks a role claim (`manager_role`, `test_role`) for editing and testing, so a
+  user with no role can sign in but cannot use the editor or console.
+- **Resolution**: any tenant user may sign in (FR-019). The owner names the group that holds the roles, which
+  can be as broad as the owner wants. The guard is not relaxed.
+
+## R-07 Writing secrets to the vault
+
+- **Decision**: The `key-vault-secret` module uses `azapi_resource` of type `Microsoft.KeyVault/vaults/secrets`.
+  The vault has public access disabled and a private endpoint. The deployment identity needs a role that
+  allows the management-plane write.
+- **Rationale**: `azurerm_key_vault_secret` writes through the vault's data plane. A GitHub-hosted runner cannot
+  reach a private vault, so the data-plane write would fail. The management-plane write does not need a network
+  path to the vault.
+- **Verify**: the management-plane secret write succeeds with public access disabled; Container Apps resolve
+  vault references through the private endpoint with the app's user-assigned identity; a second plan shows zero
+  changes for the secret resources (the sensitive body must not cause a perpetual diff, FR-026).
+- **Provider note**: `azapi` is pinned exactly and used for this module and for read-only data sources that
+  `azurerm` lacks (model deployments). The module sets the value through the provider's sensitive body input, and
+  a test inspects the plan JSON for it (FR-046). Recorded in `docs/library-decisions.md`.
+
+## R-08 Remote state creation
+
+- **Decision**: A separate `state` root creates a storage account, `tfstate` and `tfplans` containers, a delete
+  lock and container-scoped writer roles. The one-time creation is the delivery tool's `state-create`
+  operation: `init -backend=false`, plan, a confirmed apply, `init -migrate-state -force-copy`, confirm the
+  blob, delete local state. Later changes use the normal workflow.
+- **Rationale**: Keeps state in Terraform and outside bootstrap (FR-006). The storage has shared keys off,
+  identity-only access and a public endpoint so runners can reach it (FR-031).
+- **Verify**: role assignment propagation before the migrate step (bounded retry).
+
+## R-09 Environment files and variable slicing
+
+- **Decision**: `code/infra/environments/<env>/` holds `<env>.tfvars.json` and three backend files. The
+  variable file has top-level objects `environment`, `state`, `bootstrap`, `app_environment`. The delivery tool
+  gives each root only `environment` plus its own object through a temporary file outside the repository.
+- **Rationale**: One variable file (FR-009), no undeclared-variable warnings. Adding an environment adds a
+  directory (FR-014). The sign-in secret arrives as a sensitive environment variable, never in a file.
+
+## R-10 Runtime live mode
+
+- **Decision**: Add `caller_runtime/entrypoint.py` with `create_app_from_environment()` used as the container
+  command with `uvicorn --factory`. In `local` mode it returns the existing health-only app. In `live` mode it
+  reads a frozen `LiveSettings` and builds, through `caller_runtime/live.py`: `RuntimeOptions`, a credential
+  factory based on the managed identity named by `AZURE_CLIENT_ID`, Cosmos container factories for
+  `call-sessions` and `text-conversations`, the workload identity verifier, the permit verification keys, the
+  configuration client and activation, and the readiness port. Missing or invalid settings stop the start with
+  one fixed reason code and no value in the message.
+- **Rationale**: Matches the existing "construction never discovers resources" rule. All values arrive as
+  settings (FR-047). The `*_reviewed` flags and `review_reference` are set from a recorded approval reference
+  setting, and the live module refuses an empty reference.
+- **Settings**: see [application-settings.md](contracts/application-settings.md).
+- **Spike S-10**: confirm the async Cosmos client and `ManagedIdentityCredential` satisfy `ContainerPort` and
+  `CredentialPort` without wrapper surprises, and that readiness stays under its 0.25 s limit.
+
+## R-11 Management live mode and composition authority
+
+- **Decision**: Add `management_app/live.py` that builds the `ManagementRequest`, a `ManagementResources`
+  factory (Cosmos configuration and audit repositories, token verifier with signing keys from the tenant's
+  discovery document, identity service and session store, runtime identity, test permit signer with the private
+  key from the vault, test session client, empty approved capabilities for `int`) and an authority for
+  deployments.
+- **Authority for deployments**: a small `ReviewedFingerprintAuthority` grants a composition when the computed
+  settings fingerprint equals `CALLER_REVIEWED_FINGERPRINT`, which the owner records in the variable file after
+  reviewing the non-secret settings. A tool prints the fingerprint for the settings that a deployment would give.
+- **Spike S-11**: the fingerprint covers the settings, some of which come from deployment outputs (for example
+  the other app's address). Decide whether those values are derived from names that the variable file fixes, or
+  excluded from the fingerprint. The owner approves the final rule.
+- **Capabilities**: tools and MCP are not part of the journey, so the approved capability set is empty (FR-048).
+
+## R-12 Management frontend build and runtime address
+
+- **Decision**: The deployed image must contain the editor and test console pages, and must learn the address
+  that the browser uses at start, not at build.
+- **Why this is a risk**: the Dockerfile exports the frontend from the default app, which registers only the
+  index page, and bakes `API_URL` at build time. FR-047 and FR-038 forbid an image per environment.
+- **Spike S-12**: (a) build the export with the editor pages registered through a build-only stub composition
+  (they register states and pages, not live services); (b) start the image with two different `API_URL`
+  values and see whether the frontend follows it. If it does not, write the value into the frontend's
+  environment file in a small start script, with a container test that fails before the change.
+- **Constraint**: Reflex must stay the frontend framework (Principle V).
+
+## R-13 Data store and credentials
+
+- **Decision**: Cosmos DB for NoSQL, serverless, local authentication disabled, public access off, a private
+  endpoint, continuous backup, one database, and the containers the repositories expect: `configuration`
+  (`/organizationId`, no default TTL), `configuration-audit` (`/dayBucket`), `call-sessions`, `call-audit`
+  (`/dayBucket`) and `text-conversations` (`/ownerKey`, item TTL). Each app gets a data role scoped to its own
+  containers only (the container lists are confirmed by S-13). Credentials are managed identities (`ManagedIdentityCredential` with the identity's client
+  ID).
+- **Spike S-13**: confirm `call-sessions` needs the partition key `/id` (a single authority item) and that the
+  container list and key paths match the repositories exactly, with a test that reads the repositories' names.
+
+## R-14 Model account and deployments
+
+- **Decision**: An existing account with two named deployments: one for text and one realtime deployment for
+  speech. The variable file names the account and both deployments. The text endpoint and the live endpoint
+  differ (`*.openai.azure.com` and `*.services.ai.azure.com`), so the module creates a private endpoint for the
+  account and the documentation lists the DNS zones. The runtime's identity gets the least role that allows
+  calls. If the account is in another subscription the endpoint request waits for the owner's approval.
+- **Verify**: the role names for text and realtime use, and the region rule in `RuntimeOptions.live_region`
+  (one of four regions) against the owner's account. The existing deployments are the evidence of regional
+  support and quota (Principle I). The module reads the deployments through `azapi` data sources.
+
+## R-15 Environment check and the functional journey
+
+- **Decision**: `check_environment.py` runs from the pipeline with read access only: services and settings
+  match, each revision is healthy (revision `healthState` over the management API), image versions match,
+  public access matches the flag, no custom outbound rules, private endpoints approved, role assignments and
+  secrets exist (names, never values), the runtime role assignment exists, the named sign-in registration and roles exist (a Graph read with the deployment identity's `Application.Read.All` permission, FR-042), and the state is isolated. The
+  functional journey runs in the pipeline too (`--functional`): the runner reaches the apps because `int` sets an
+  open allow-list range, and it signs in as the deployment identity, which the identity script assigns the tester
+  role (FR-053). It checks the unauthenticated redirect, the health probes, a text conversation and a speech
+  session start and stop. A person walks the editor in a browser as a release gate.
+- **Rationale**: the spec requires the check to include the conversation journey (FR-028, FR-029). The existing
+  browser tests and an in-process end-to-end test (both applications with fake Azure ports) give Principle IX
+  evidence in CI.
+- **Spike S-14**: confirm that the management API accepts a bearer token with the tester role from the
+  deployment identity (federated credential), not only the browser sign-in session. If not, add a small
+  application change.
+- **Alternatives considered**: a Container Apps job inside the environment that runs the journey (new service
+  and code, deferred); a temporary runner rule outside Terraform (rejected, the open range for `int` makes it
+  unnecessary).
+
+## R-16 Image publishing
+
+- **Decision**: `images.yml` builds both Dockerfiles, scans with Trivy for secrets and HIGH or CRITICAL
+  vulnerabilities, refuses to overwrite a tag, pushes `ghcr.io/marvinbuss/caller-ai/runtime` and `/management`
+  as `sha-<full commit>` and `v<semver>` on a `v*` tag push, then checks an anonymous pull. A one-time manual
+  step makes each package public; the anonymous-pull check fails until then.
+- **Rationale**: FR-036 to FR-038. GHCR does not enforce immutability, so it is a workflow rule plus digests.
+
+## R-17 Identity script
+
+- **Decision**: `code/infra/scripts/identity/Initialize-Identity.ps1`, PowerShell 7 with Azure CLI, `-WhatIf`
+  preview. It creates, idempotently: the management registration with redirect URI
+  `https://<management app default domain>/v1/security/callback` (path confirmed in S-4), the service
+  principal, the application roles from R-06, the runtime's user-assigned identity and its role assignment, the
+  tester role assignment of the deployment identity, a
+  client secret valid at most 90 days, and writes only that secret to
+  `code/.local/identity/<env>/management-signin-secret` (ignored by git, file mode restricted). It prints
+  identifiers and never the secret.
+- **Redirect address**: derived from the app's default domain, which the platform generates. The script cannot
+  know it before the app exists. **Resolution**: the script registers the redirect after the first app
+  environment deployment (a second `-Phase redirect` run reads the management app's FQDN with `az containerapp show`, using the app name from the variable file). The check
+  `signin-redirect-matches` reports a mismatch.
+- **Permissions**: a directory role that can create app registrations and consent to Graph application permissions (Privileged Role Administrator or Global Administrator), because the same script run grants the deployment identity `Application.Read.All`, and Contributor on the identity resource group. The preflight names the missing right.
+- **Tests**: Pester with mocked `az`.
+
+## R-18 Monitoring and alerts
+
+- **Decision**: Log Analytics workspace (daily cap, retention from the file), workspace-based Application
+  Insights with a private link scope, the environment's log destination set to the workspace, and metric alerts
+  on platform signals (5xx request count, restart count, replica count below one, CPU and memory). An action
+  group emails the receivers in the file. Each alert carries an owner and a runbook link.
+- **Application signals**: scheduled log-query alerts over the applications' structured events cover dependency
+  failures and latency. The monitoring task confirms the event fields. A correlation test and a sensitive-data
+  exclusion test run in CI (Principle VII).
+
+## R-19 One replica and capacity
+
+- **Decision**: `min_replicas = 1`, `max_replicas = 1` for both apps. No autoscale. `docs/capacity.md` states
+  that `int` has no capacity target and why.
+- **Rationale**: the management app holds sessions in memory, the runtime holds live sessions in memory.
+
+## R-20 Terraform security scan (FR-030)
+
+- **Decision**: `verify_terraform.py check` also runs a pinned Trivy `config` scan over `code/infra/terraform`
+  and fails on HIGH or CRITICAL findings, with tests that a seeded misconfiguration fails.
+- **Rationale**: Principle VIII and FR-030 require security checks, and Trivy is already used for images.
+
+## R-21 What gets removed
+
+- **Decision**: Delete the AKS-era platform module and fixtures, the old shared root, the old config examples,
+  the old infrastructure workflow, and every document passage describing them. Rename the third deployment to
+  `app_environment` everywhere (directory, backend file, variable object, workflow, docs). Search for `aks`,
+  `acr`, `firewall`, `platform` as a deployment name, stage names `dev`, `test`, `prod` and App Service.
+- **Rationale**: FR-015, no backward compatibility.
+
+## Open items for the owner
+
+| Item | Needed by |
+|---|---|
+| Ratify in a constitution update that Principle VIII governs infrastructure resources and that the identity script administers directory objects (FR-043). | Before the script is built |
+| Confirm that code becomes public through the images. | Before the first publish |
+| Provide region, subscription, deployment identity, model account, deployment names and the group for `identity.user_group_id`. | First bring-up |
