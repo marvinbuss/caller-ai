@@ -89,7 +89,8 @@ real `terraform validate` or first apply.
     (`CALLER_API_AUDIENCE` equals `CALLER_ENTRA_CLIENT_ID`); and `MsalCodeFlow.begin` builds the scope as
     `api://<api_audience>/<manager_scope>`, while the contract names `CALLER_MANAGER_SCOPE` as the full
     `api://<client id>/.default`. Either the policy and flow accept a single registration, or a second
-    registration is created. The owner decides; the application code is not changed until then.
+    registration is created. **Decision (owner, 2026-11-05): one registration.** T083 changes the policy and the
+    sign-in flow to accept `api_audience == client_id` and the full `CALLER_MANAGER_SCOPE`; the contract and tests follow.
 
 ## R-05 Permit signing key pair
 
