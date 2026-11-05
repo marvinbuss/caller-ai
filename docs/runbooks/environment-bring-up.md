@@ -62,12 +62,18 @@ are in [Terraform state](terraform-state.md).
 1. Run the `terraform-bootstrap` workflow for the environment, review the private plan and approve the apply.
    Expected: network, one network security group with default rules only, one route table without routes, the
    private DNS zones.
-2. A directory administrator runs the identity script, preview first, then for real:
+2. A directory administrator runs the identity script from the repository root, preview first, then for real. Sign
+   in first as a person (not a service principal) in the environment's tenant and subscription:
 
    ```powershell
+   az login --tenant <tenant-id>
+   az account set --subscription <subscription-id>
    pwsh code/infra/scripts/identity/Initialize-Identity.ps1 -Environment int -WhatIf
    pwsh code/infra/scripts/identity/Initialize-Identity.ps1 -Environment int
    ```
+
+   The administrator needs a checkout of the repository with the reviewed `<env>.tfvars.json`, which the script
+   reads. The script reads that file only and takes no other input.
 
    It needs PowerShell 7, the Azure CLI signed in as a person in the environment's tenant and subscription, the
    directory role Privileged Role Administrator or Global Administrator, and Owner (or Contributor with User Access
@@ -78,9 +84,16 @@ are in [Terraform state](terraform-state.md).
    roles for the user group; and a client secret valid for at most 90 days, written only to
    `code/.local/identity/<env>/management-signin-secret`. Exit codes: 0 success or preview, 1 preflight failure, 2
    invalid input, 3 a failed step (named). A second run changes nothing.
-3. Copy the registration's client ID, the identity name and the role names into `app_environment.identity`,
-   store the client secret once as `MANAGEMENT_SIGNIN_SECRET` in the two `app_environment` GitHub
-   environments, and delete any local copy of the secret.
+3. Place the results. The script prints a block of values and writes one file; nothing else is produced.
+
+   | Result | Where it goes | Notes |
+   |--------|---------------|-------|
+   | `management_app_client_id` (printed) | `app_environment.identity.management_app_client_id` in `code/infra/environments/<env>/<env>.tfvars.json` | Not a secret; commit it with the reviewed environment files after `validate_environment.py` passes |
+   | `tenant_id`, `runtime_identity_name`, `roles.*` (printed) | Already inputs in the same file (`environment.tenant_id`, `app_environment.identity`); compare them with the printed values | The script reads them, so they should match; a difference means the file was edited after the run |
+   | Client secret (file `code/.local/identity/<env>/management-signin-secret`) | The secret `MANAGEMENT_SIGNIN_SECRET` in the GitHub environments `<env>-terraform-app-environment-plan` and `<env>-terraform-app-environment-apply` | Paste it once from the file, then delete `code/.local/identity/<env>/`. The folder is ignored by git and the file has owner-only access. It is created only when no valid secret exists, and it is never printed |
+
+   Run the script again at any time: with a valid secret it creates nothing and writes no file. After the first
+   app environment deployment run it once more with `-Phase redirect` (step 5).
 
 ## 5. App environment
 
