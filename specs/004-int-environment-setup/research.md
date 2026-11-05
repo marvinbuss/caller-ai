@@ -179,6 +179,16 @@ real `terraform validate` or first apply.
 - **Spike S-11**: the fingerprint covers the settings, some of which come from deployment outputs (for example
   the other app's address). Decide whether those values are derived from names that the variable file fixes, or
   excluded from the fingerprint. The owner approves the final rule.
+- **S-11 rule (owner chose "all nonsecret live settings" on 2026-11-05; refinement awaiting confirmation)**: the
+  management fingerprint covers every nonsecret management setting except `CALLER_REVIEWED_FINGERPRINT` and
+  `CALLER_REVIEW_REFERENCE`, and never a secret. A reviewer has to approve the fingerprint before the apply, so a
+  value that exists only after the apply cannot be part of it. These values are therefore excluded and covered
+  through the names that determine them, which the variable file fixes: the two app origins and everything derived
+  from them (`CALLER_MANAGEMENT_ORIGIN`, `CALLER_PUBLIC_ORIGIN`, `CALLER_RUNTIME_ENDPOINT`,
+  `CALLER_RUNTIME_AUDIENCE`, `CALLER_PERMIT_ISSUER`, `CALLER_PERMIT_AUDIENCE`) by the app names and the environment
+  name; the management identity's `AZURE_CLIENT_ID` by its name; and the generated public key by
+  `CALLER_SIGNING_KEY_ID`. All other nonsecret settings (tenant, client IDs, roles, scope, data store endpoint and
+  database, retention, signing key ID) enter the fingerprint as values.
 - **Capabilities**: tools and MCP are not part of the journey, so the approved capability set is empty (FR-048).
 
 ## R-12 Management frontend build and runtime address
