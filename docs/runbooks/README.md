@@ -14,13 +14,17 @@ or claim production acceptance. Start with [release gates](../acceptance/release
 | Same-community visibility and filtered fresh-session transfers | [Communities](communities.md) |
 | Reviewed public read-only tools/MCP and current authority | [Capabilities](capabilities.md) |
 | Limits, admission, voice-session behavior, instance loss and rollback | [Scaling](scaling.md) |
-| Both-service metrics, fixed labels and disabled alert qualification | [Monitoring](monitoring.md) |
-| Protected remote state and Terraform verification | [Terraform state](terraform-state.md) |
-| Bootstrap/shared-environment OIDC plan, private review and protected apply | [Terraform delivery](terraform-delivery.md) |
-| Platform composition, reviewed inputs and cost boundaries | [Platform](platform.md) |
-| Workload identities, service ownership and private connectivity | [Platform security](platform-security.md) |
+| Both-service metrics, fixed labels and environment alerts | [Monitoring](monitoring.md) |
+| Protected remote state, first creation and recovery | [Terraform state](terraform-state.md) |
+| The three roots, plan, protected apply, repeat check and teardown | [Terraform delivery](terraform-delivery.md) |
+| Services, modules and reviewed inputs of an environment | [Platform](platform.md) |
+| Identities, roles, network boundaries and secrets | [Platform security](platform-security.md) |
+| Bringing an environment up, changing, recovering and removing it | [Environment bring-up](environment-bring-up.md) |
+| Public access flag, allow-list, enabling, disabling and verifying | [Public access](public-access.md) |
+| Image tags, scans, public packages and rollback | [Image publishing](image-publishing.md) |
+| Application live settings, reviewed composition and reason codes | [Application live mode](application-live-mode.md) |
 
-No guide substitutes a model instruction, health probe, fake/typed port, PodDisruptionBudget,
+No guide substitutes a model instruction, health probe, fake/typed port, replica setting,
 stale snapshot, unobserved CI job or generated plan for authorization and measured evidence.
 Current revocations override pinned grants. Media/content stays volatile; TTL/backups do not
 erase prohibited content. Use bounded safe metadata for diagnosis, never raw conversation or

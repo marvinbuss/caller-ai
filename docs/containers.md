@@ -74,3 +74,12 @@ Use separate terminals for the two foreground runs. Require actual health/readin
 the real browser shell and event connection, non-root execution, no startup downloads, and
 guaranteed cleanup before accepting either image. Do not publish images or provision Azure
 resources as part of this credential-free foundation.
+
+## Published images
+
+The two images are published by the `images` workflow to GitHub's container registry as
+`ghcr.io/marvinbuss/caller-ai/runtime` and `ghcr.io/marvinbuss/caller-ai/management`, with the immutable tags
+`sha-<40 hex>` and `v<semver>`. They are scanned for secrets and HIGH or CRITICAL vulnerabilities before
+publishing and are pulled without a credential. Nothing environment-specific is built into an image; a deployed
+app receives its settings at start (see [Application live mode](runbooks/application-live-mode.md)). Publishing
+rules are in [Image publishing](runbooks/image-publishing.md).

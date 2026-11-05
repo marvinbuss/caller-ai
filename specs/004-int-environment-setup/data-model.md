@@ -145,7 +145,7 @@ No other secret, certificate or key exists. The documentation records both excep
 
 | Object | Fields and rules |
 |---|---|
-| Sign-in registration | `tenant_id`, `app_client_id`, redirect URI `https://<management default domain>/v1/security/callback` (path confirmed in spike S-4). |
+| Sign-in registration | `tenant_id`, `app_client_id`, redirect URI `https://<management default domain>/auth/callback` (path confirmed in spike S-4). |
 | Application roles | `editor`, `tester`, `runtime`. Names come from the variable file and equal the settings `CALLER_MANAGER_ROLE`, `CALLER_TEST_ROLE` and the runtime role. |
 | Runtime identity | A user-assigned managed identity in `app_environment.identity.resource_group_name`, attached to the runtime app by the deployment, assigned the `runtime` role by the script. |
 | User group | `user_group_id` (required): a group that receives the `editor` and `tester` roles. See research R-06. |

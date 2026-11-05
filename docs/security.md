@@ -221,6 +221,50 @@ steps were removed from the workflow and remote artifact 12749685420 was deleted
 The compiler copy remains ignored locally; no default compiler-log upload remains enabled.
 The canonical-path repair and no-upload regression do not relax any production boundary.
 
+## First Internal Test Environment (`int`)
+
+The deployed environment is described in [Environments](environments.md) and its identities, roles and network in
+[Platform security](runbooks/platform-security.md). This section records the threats, the controls and the
+approvals behind them.
+
+### Threats and controls
+
+| Threat | Control |
+|--------|---------|
+| The environment is reachable by anyone | The allow-list is required when public access is on. `int` sets the explicit open range `0.0.0.0/0` so GitHub-hosted runners, whose addresses change, can reach it; validation reports a warning. With an open range, **sign-in, roles and permits are the only access control**: the health endpoints and the sign-in page are reachable by anyone, and every data endpoint needs sign-in plus a role, or a signed permit. Health endpoints carry no conversation or dependency detail. See [Public access](runbooks/public-access.md) |
+| Open tenant sign-in | Anyone in the tenant can reach the sign-in. Editing and testing need the editor or tester role, which the identity script assigns to the configured group only |
+| Sign-in secret or permit private key exposed | Written to the vault through the management API, never printed or logged, read only by the management app through its identity, held in the protected remote state and never in files or logs. The sign-in secret is valid for at most 90 days |
+| State storage on a public endpoint | Identity-only access, shared keys off, anonymous access off, versioning, soft delete, a delete lock, and writer roles scoped to two containers |
+| Public images leak code or secrets | The Trivy scan for secrets and HIGH or CRITICAL vulnerabilities blocks publishing; tags are immutable. Publishing exposes the application code, which the owner accepts |
+| Deployment identity abused | OIDC federation limited to this repository, protected environments for plan and apply with required reviewers, and least-privilege roles |
+| The deployment identity holds the tester role | A compromised pipeline identity could use the test console and model sessions. Controls: protected environments, an OIDC subject limited to this repository, the runtime's admission limit on live sessions, and no directory write permission (it holds only the read permission `Application.Read.All`) |
+| Model sessions abused | Allow-list, sign-in, the test-role check and the admission limit |
+| Configuration drift or a manual change | `expect_no_changes` plans fail on any difference, and the environment check compares services and settings with the configuration |
+
+### The two approved secret exceptions
+
+The project rule is no secret where a federated credential or managed identity can do the job. Two exceptions are
+approved by the owner:
+
+| Secret | Why it is needed | Validity and renewal | Where it lives |
+|--------|------------------|----------------------|----------------|
+| Management sign-in client secret | The management app signs users in as a confidential client, which cannot use a federated credential | At most 90 days; renew as described in [Environment bring-up](runbooks/environment-bring-up.md) | The vault, read only by the management app; the protected GitHub environment secret `MANAGEMENT_SIGNIN_SECRET` and the remote state during a deployment |
+| Permit private key | The management app signs start permits that the runtime verifies | No fixed expiry; rotate with an overlap as described in the bring-up runbook | The vault, read only by the management app, and the remote state |
+
+### Remote state sensitivity
+
+The remote state and saved plans hold both secrets. The state account is identity-only, so whoever holds a blob
+data role holds the secrets: grant roles for a reason and a period, never copy a blob into a ticket or a log, and
+rotate both secrets after any suspected exposure ([Terraform state](runbooks/terraform-state.md)).
+
+### Approvals and ratifications
+
+| Item | Status |
+|------|--------|
+| Principle I (Azure first): GitHub's container registry as the image source | The owner approved the exception for public, scanned images. The written assessment is this section and [Image publishing](runbooks/image-publishing.md): no registry resource is deployed, the images hold no secret or environment value, and a pull needs no credential. Recording the owner's approval for making the packages public in the [acceptance record](acceptance/int-environment.md) is part of the first publication |
+| Principle VIII (Terraform infrastructure as code): the identity script administers directory objects | Needs a separate constitution update by the maintainers (the identity script is not merged before it is recorded). Rationale: a deployment identity must not hold directory write permissions, so a short, previewable script run by a directory administrator creates the registration, the roles and the runtime identity. **Not yet recorded** |
+| Public exposure of `int` with an open range | Accepted by the owner for `int` only, with the limits above |
+
 ## Conversation and Configuration Trust Boundaries
 
 Clients, model output, remote tool/MCP discovery, submitted configuration and dependency

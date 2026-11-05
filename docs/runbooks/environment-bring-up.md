@@ -1,0 +1,133 @@
+# Environment bring-up
+
+How to bring up, verify, change, recover and remove an environment such as `int`. The concepts are in
+[Environments](../environments.md). Commands run from the repository root in PowerShell 7.
+
+## Status of the pieces
+
+| Piece | Status |
+|-------|--------|
+| Environment files, validator, Terraform roots and modules, delivery script, workflows, environment check | Delivered and tested offline |
+| Image publishing workflow | Delivered; first publication and the public package setting are manual |
+| Identity script | Not delivered yet. Its tasks wait for the maintainers to ratify the constitution update for Principle VIII. Until then the directory objects are created by hand following the table in step 4 |
+| Application live mode | Settings validation is delivered; the live composition is not. Until it is, the deployed apps stop at start with a fixed reason code (see [Application live mode](application-live-mode.md)) |
+| Functional journey in the check (`--functional`) | Not delivered yet |
+| Live acceptance on `int` | Not run. Results go to [the acceptance record](../acceptance/int-environment.md) |
+
+## Prerequisites
+
+| Need | Detail |
+|------|--------|
+| Azure | A tenant, one subscription for the environment, an account allowed to create resource groups and role assignments, and a deployment identity with OIDC federation to this repository's GitHub environments |
+| Directory rights | A directory administrator for the identity objects (app registrations, roles, role assignments, and consent for the Graph read permission `Application.Read.All`; Privileged Role Administrator or Global Administrator), and a group that will hold the editor and tester roles (`identity.user_group_id`) |
+| Model | An existing account with a text deployment and a realtime deployment in an allowed region |
+| GitHub | Environments `<env>-terraform-state-plan`, `-apply`, `<env>-terraform-bootstrap-plan`, `-apply`, `<env>-terraform-app-environment-plan`, `-apply`, with required reviewers on every `apply` environment; secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` in each; the variable `TF_PLAN_CONTAINER` (`tfplans`); `MANAGEMENT_SIGNIN_SECRET` in the two `app_environment` environments |
+| Local | Terraform 1.17.0 (the pinned binary prepared by the tools), Python through `uv`, PowerShell 7, Azure CLI, Docker for the security scan |
+
+## 1. Offline checks
+
+```powershell
+. .\code\.local\feeds.ps1   # only in the mirror-feed development setup
+uv run --project code/tools --locked python code/tools/scripts/validate_environment.py
+uv run --project code/tools --locked python code/tools/scripts/check_terraform_structure.py
+uv run --project code/tools --locked python code/tools/scripts/verify_terraform.py prepare
+uv run --project code/tools --locked python code/tools/scripts/verify_terraform.py check
+```
+
+Expected: the environment is valid, the structure is valid, every root and module test passes and the
+security scan reports nothing at high or critical level. Nothing here needs an Azure credential.
+
+## 2. Publish the images
+
+Merge to `main` or push a `v*` tag; the `images` workflow builds, scans, publishes and prints digests. The
+first time, make both packages public in the repository's package settings and rerun the workflow so that the
+anonymous pull check passes. Copy the `sha-<40 hex>` tags into `app_environment.container_apps` in the
+environment's `<env>.tfvars.json`. See [Image publishing](image-publishing.md).
+
+## 3. State
+
+Edit the environment files with the real values, validate again, then create the state storage once, locally:
+
+```powershell
+az login --tenant <tenant-id>
+uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation state-create --environment int --root state --plan-container tfplans
+```
+
+Without `--confirm-apply` this only plans. Add `--confirm-apply` to create the storage account, migrate the
+state to `<env>/state.tfstate` and remove the local copy. It refuses when the state blob already exists. Details
+are in [Terraform state](terraform-state.md).
+
+## 4. Bootstrap, then identity
+
+1. Run the `terraform-bootstrap` workflow for the environment, review the private plan and approve the apply.
+   Expected: network, one network security group with default rules only, one route table without routes, the
+   private DNS zones.
+2. A directory administrator creates, once per environment: the resource group for the runtime identity and the
+   runtime's user-assigned identity; the management app registration with its service principal, the three app
+   roles named in `app_environment.identity.roles`, the redirect address phase described below, the role
+   assignment for the runtime identity, the tester role and the Graph permission `Application.Read.All` for the
+   deployment identity, the assignment of the user group, and a client secret that is valid for at most 90 days.
+   The identity script automates this when it is delivered.
+3. Copy the registration's client ID, the identity name and the role names into `app_environment.identity`,
+   store the client secret once as `MANAGEMENT_SIGNIN_SECRET` in the two `app_environment` GitHub
+   environments, and delete any local copy of the secret.
+
+## 5. App environment
+
+Run `terraform-app-environment`, review the plan and approve the apply. Expected: both apps, the data store,
+the vault, the permit key pair, both vault secrets, the private endpoints, model access and monitoring. After
+the apply the job runs the environment check and writes its JSON result to the job summary. The job fails when a
+check fails.
+
+On the first deployment the check is expected to fail only at `signin-redirect-matches`, because the
+management callback address (`https://<management default domain>/auth/callback`) exists only after the apps
+exist. The resources are applied. Register that address as a redirect of the sign-in registration (the identity
+script's `-Phase redirect`), then rerun the check:
+
+```powershell
+uv run --project code/tools --locked python code/tools/scripts/check_environment.py --environment int --manifest <manifest.json> --test-alert
+```
+
+The manifest is the `environment_manifest` output of the `app_environment` root.
+
+## 6. Repeatability
+
+Run `terraform-app-environment` and `terraform-bootstrap` with `expect_no_changes: true`. The plan must show
+zero changes. A change means drift or a nondeterministic resource and stops the job.
+
+## Change
+
+Edit the environment file, validate, run the plan, review it and approve the apply. A new image is a new tag
+in `app_environment.container_apps`.
+
+## Rollback
+
+Set the previous `sha-<40 hex>` tag again and apply. Published tags are never deleted, so the earlier image is
+always available.
+
+## Recovery
+
+| Situation | Action |
+|-----------|--------|
+| Apply stopped half-way | Run the workflow again; Terraform converges. A stale lock is released by the state lease after the lock timeout; never force-unlock without reading the holder |
+| A revision is unhealthy | Read the failing check: it names the app and image tag, or the start reason code from [Application live mode](application-live-mode.md) |
+| Plan expired or inputs changed | Plans are bound to the commit, run and inputs, and expire after one day; run the plan again |
+
+## Secret renewal and key rotation
+
+- **Sign-in secret**: the client secret is valid for at most 90 days. Create a new one with the identity
+  script or in the directory, store it in `MANAGEMENT_SIGNIN_SECRET`, run `terraform-app-environment`, then
+  restart the management revision so that the Key Vault reference is read again.
+- **Permit signing key**: the pair that signs and verifies test-conversation start permits is generated by
+  Terraform and the private key lives only in the vault (read by the management app only). To rotate with an
+  overlap, read the runtime's current `CALLER_PERMIT_VERIFICATION_KEYS` value (public keys only), set
+  `app_environment.signing_key.key_id` to a new ID and add the old ID and its public key to
+  `app_environment.signing_key.previous_public_keys` (at most three). Apply: Terraform generates a new pair,
+  management signs with the new key and the runtime accepts both. After the longest permit lifetime has passed,
+  remove the old entry and apply again. The remote state holds the private key, so protect it as described in
+  [Terraform state](terraform-state.md).
+
+## Teardown
+
+Run `terraform-app-environment` and then `terraform-bootstrap` with the `destroy` input and approve each apply.
+The state storage and the directory objects remain. `destroy` is refused for the `state` root.

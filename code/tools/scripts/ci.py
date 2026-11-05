@@ -323,6 +323,16 @@ def check() -> None:
         "--files",
         *files,
     )
+    for script in ("validate_environment.py", "check_terraform_structure.py"):
+        run(
+            "uv",
+            "run",
+            "--locked",
+            "--project",
+            "code/tools",
+            "python",
+            f"code/tools/scripts/{script}",
+        )
     run("uv", "run", "--locked", "--project", "code/tools", "pytest", "code/tools/tests", "-q")
 
 

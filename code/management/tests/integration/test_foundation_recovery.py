@@ -102,7 +102,7 @@ def test_invalid_or_unconfigured_live_mode_fails(runner, child_environment, tmp_
         ["uv", "run", "--locked", "python", "-c", source], child_environment, runner, tmp_path
     )
     assert code != 0
-    assert "ValidationError" in output if mode == "invalid" else "live_mode_unavailable" in output
+    assert "ValidationError" in output if mode == "invalid" else "settings_missing" in output
 
 
 @pytest.mark.parametrize("state", ["missing", "stale"])

@@ -77,6 +77,19 @@ real `terraform validate` or first apply.
   exception. That is an application change, so it is left as a follow-up.
 - **Spike S-4**: confirm `entra_oidc.LoginFlow` can take the secret from a setting and that the redirect
   address derived from the app's default domain matches the registered redirect.
+- **S-4 result (from the existing code)**:
+  - The callback path is `/auth/callback` (`MsalCodeFlow.begin` builds `policy.origin + "/auth/callback"`;
+    `reflex_security.py` and `metrics.py` list the same path). The registered redirect is therefore
+    `https://<management default domain>/auth/callback`. The first plan text said `/v1/security/callback`; the
+    manifest output, the environment check, the data model and this document now use `/auth/callback`.
+  - The confidential client is built by a factory (`application_factory`), so the client secret can come from
+    `CALLER_ENTRA_CLIENT_SECRET` and the origin from `CALLER_MANAGEMENT_ORIGIN` without changing the flow.
+  - **Two differences need a decision before T083** (live composition): `EntraPolicy` rejects an API audience equal to
+    the sign-in client (`distinct_api_audience_required`), while the plan uses one registration for both
+    (`CALLER_API_AUDIENCE` equals `CALLER_ENTRA_CLIENT_ID`); and `MsalCodeFlow.begin` builds the scope as
+    `api://<api_audience>/<manager_scope>`, while the contract names `CALLER_MANAGER_SCOPE` as the full
+    `api://<client id>/.default`. Either the policy and flow accept a single registration, or a second
+    registration is created. The owner decides; the application code is not changed until then.
 
 ## R-05 Permit signing key pair
 
@@ -233,7 +246,7 @@ real `terraform validate` or first apply.
 
 - **Decision**: `code/infra/scripts/identity/Initialize-Identity.ps1`, PowerShell 7 with Azure CLI, `-WhatIf`
   preview. It creates, idempotently: the management registration with redirect URI
-  `https://<management app default domain>/v1/security/callback` (path confirmed in S-4), the service
+  `https://<management app default domain>/auth/callback` (path confirmed in S-4), the service
   principal, the application roles from R-06, the runtime's user-assigned identity and its role assignment, the
   tester role assignment of the deployment identity, a
   client secret valid at most 90 days, and writes only that secret to
