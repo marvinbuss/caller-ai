@@ -9,7 +9,7 @@ How to bring up, verify, change, recover and remove an environment such as `int`
 |-------|--------|
 | Environment files, validator, Terraform roots and modules, delivery script, workflows, environment check | Delivered and tested offline |
 | Image publishing workflow | Delivered; first publication and the public package setting are manual |
-| Identity script | Not delivered yet. Its tasks wait for the maintainers to ratify the constitution update for Principle VIII. Until then the directory objects are created by hand following the table in step 4 |
+| Identity script | Delivered and tested with Pester against a fake Azure CLI; not yet run against a real directory |
 | Application live mode | Settings validation is delivered; the live composition is not. Until it is, the deployed apps stop at start with a fixed reason code (see [Application live mode](application-live-mode.md)) |
 | Functional journey in the check (`--functional`) | Not delivered yet |
 | Live acceptance on `int` | Not run. Results go to [the acceptance record](../acceptance/int-environment.md) |
@@ -62,12 +62,22 @@ are in [Terraform state](terraform-state.md).
 1. Run the `terraform-bootstrap` workflow for the environment, review the private plan and approve the apply.
    Expected: network, one network security group with default rules only, one route table without routes, the
    private DNS zones.
-2. A directory administrator creates, once per environment: the resource group for the runtime identity and the
-   runtime's user-assigned identity; the management app registration with its service principal, the three app
-   roles named in `app_environment.identity.roles`, the redirect address phase described below, the role
-   assignment for the runtime identity, the tester role and the Graph permission `Application.Read.All` for the
-   deployment identity, the assignment of the user group, and a client secret that is valid for at most 90 days.
-   The identity script automates this when it is delivered.
+2. A directory administrator runs the identity script, preview first, then for real:
+
+   ```powershell
+   pwsh code/infra/scripts/identity/Initialize-Identity.ps1 -Environment int -WhatIf
+   pwsh code/infra/scripts/identity/Initialize-Identity.ps1 -Environment int
+   ```
+
+   It needs PowerShell 7, the Azure CLI signed in as a person in the environment's tenant and subscription, the
+   directory role Privileged Role Administrator or Global Administrator, and Owner (or Contributor with User Access
+   Administrator) on the subscription. It creates, idempotently: the resource group for the runtime identity and
+   the runtime's user-assigned identity; the management app registration with its service principal and the three
+   app roles named in `app_environment.identity.roles`; the `runtime` role for the runtime identity; the `tester`
+   role and the read-only Graph permission `Application.Read.All` for the deployment identity; the editor and tester
+   roles for the user group; and a client secret valid for at most 90 days, written only to
+   `code/.local/identity/<env>/management-signin-secret`. Exit codes: 0 success or preview, 1 preflight failure, 2
+   invalid input, 3 a failed step (named). A second run changes nothing.
 3. Copy the registration's client ID, the identity name and the role names into `app_environment.identity`,
    store the client secret once as `MANAGEMENT_SIGNIN_SECRET` in the two `app_environment` GitHub
    environments, and delete any local copy of the secret.
@@ -81,8 +91,8 @@ check fails.
 
 On the first deployment the check is expected to fail only at `signin-redirect-matches`, because the
 management callback address (`https://<management default domain>/auth/callback`) exists only after the apps
-exist. The resources are applied. Register that address as a redirect of the sign-in registration (the identity
-script's `-Phase redirect`), then rerun the check:
+exist. The resources are applied. Register that address with `Initialize-Identity.ps1 -Environment int -Phase redirect`
+(it reads the app address with `az containerapp show`), then rerun the check:
 
 ```powershell
 uv run --project code/tools --locked python code/tools/scripts/check_environment.py --environment int --manifest <manifest.json> --test-alert

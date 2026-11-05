@@ -1,19 +1,18 @@
 <!--
 Sync Impact Report (temporary review material; remove before committing)
-Version change: 2.0.0 -> 2.1.0
-Bump rationale: Add a core testing principle and expand verification guidance without removing
-or redefining existing principles.
-Modified principles: None; principles I through VIII are preserved.
-Added principles:
-- IX. Automated Tests for Functional Correctness
-Added sections:
-- Core principle section IX
-Updated sections:
-- Development Workflow and Quality Gates: nine-principle review and explicit test-result evidence
+Version change: 2.1.0 -> 2.2.0
+Bump rationale: Materially expand Principle VIII to allow reviewed, handover-ready scripts for
+prerequisites and administrative tasks outside Terraform; no principle is removed or redefined.
+Modified principles:
+- VIII. Terraform Infrastructure as Code: new paragraph on administrative scripts outside Terraform
+Added principles: None
+Added sections: None
+Updated sections: None
 Removed sections: None
 Deferred placeholders and follow-up TODOs: None
-Dependent templates, commands, and feature specifications: Unchanged; read this constitution
-at runtime and check compatibility during subsequent planning and review.
+Dependent templates, commands, and feature specifications: Unchanged; they read this constitution
+at runtime. Feature 004 task T001 (ratification of this rule) is satisfied by this amendment once
+it is approved by the maintainers.
 -->
 # Caller AI Constitution
 
@@ -126,6 +125,20 @@ and MUST NOT be committed to source control or exposed in application logs. Secr
 the protections in Principle II. Alternative IaC authoring tools require a constitutional
 amendment rather than an undocumented exception.
 
+Prerequisites and administrative tasks that Terraform cannot or should not perform, such as
+directory objects and role grants that need elevated directory rights, or the one-time creation
+of the remote state storage, MAY be performed outside Terraform by an administrator. Each such
+task MUST be delivered as a version-controlled, reviewed script that shows exactly how it is
+done, so that it can be handed over to the administrators who hold the required rights. The
+script MUST be idempotent, MUST offer a preview mode that changes nothing, MUST state the
+rights, inputs, failure behavior, and recovery steps it needs, and MUST print the identifiers
+that the Terraform configuration consumes. It MUST NOT create or manage infrastructure
+resources that Terraform can manage, MUST follow Principle II for any secret it handles, and
+MUST have automated tests under Principle IX. Each such task MUST be recorded in the
+deployment documentation with its owner. A script that meets these rules is not an alternative
+IaC authoring tool. This keeps deployment identities free of elevated directory rights while
+the administrative steps remain reproducible and auditable.
+
 ### IX. Automated Tests for Functional Correctness
 
 All new or modified executable application behavior MUST include automated code tests in the
@@ -204,4 +217,4 @@ PATCH for non-semantic clarifications and corrections. The initial adoption is v
 Exceptions MUST follow an explicit approval path in the relevant principle. Any other deviation
 requires a constitutional amendment rather than an undocumented waiver.
 
-**Version**: 2.1.0 | **Ratified**: 2026-10-21 | **Last Amended**: 2026-10-22
+**Version**: 2.2.0 | **Ratified**: 2026-10-21 | **Last Amended**: 2026-11-05

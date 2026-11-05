@@ -262,7 +262,7 @@ rotate both secrets after any suspected exposure ([Terraform state](runbooks/ter
 | Item | Status |
 |------|--------|
 | Principle I (Azure first): GitHub's container registry as the image source | The owner approved the exception for public, scanned images. The written assessment is this section and [Image publishing](runbooks/image-publishing.md): no registry resource is deployed, the images hold no secret or environment value, and a pull needs no credential. Recording the owner's approval for making the packages public in the [acceptance record](acceptance/int-environment.md) is part of the first publication |
-| Principle VIII (Terraform infrastructure as code): the identity script administers directory objects | Needs a separate constitution update by the maintainers (the identity script is not merged before it is recorded). Rationale: a deployment identity must not hold directory write permissions, so a short, previewable script run by a directory administrator creates the registration, the roles and the runtime identity. **Not yet recorded** |
+| Principle VIII (Terraform infrastructure as code): the identity script administers directory objects | Ratified in constitution v2.2.0, which allows reviewed, idempotent, previewable and tested scripts for administrative tasks outside Terraform. Rationale: a deployment identity must not hold directory write permissions, so a short script run by a directory administrator creates the registration, the roles and the runtime identity. Recording the maintainers' approval of that amendment is part of merging it |
 | Public exposure of `int` with an open range | Accepted by the owner for `int` only, with the limits above |
 
 ## Conversation and Configuration Trust Boundaries

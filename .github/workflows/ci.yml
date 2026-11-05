@@ -106,3 +106,5 @@ jobs:
         run: uv run --project code/tools --locked python code/tools/scripts/check_terraform_structure.py
       - name: Run fmt, validate, native tests and the Trivy configuration scan for every root and module
         run: uv run --project code/tools --locked python code/tools/scripts/verify_terraform.py check
+      - name: Run the Pester tests of the identity script
+        run: uv run --project code/tools --locked python code/tools/scripts/run_pester.py
