@@ -81,7 +81,7 @@ remains separate from this narrow library-risk exception and from automated regr
 ## Historical Feature 001 Security Evidence
 
 Local startup constructs no live identity, Cosmos, phone, model or business-tool clients.
-Live mode is unavailable rather than falling back to local adapters. Both applications reject
+Live mode is unavailable rather than falling back to local adapters (feature 004 later added a reviewed live mode, see [Application live mode](runbooks/application-live-mode.md)). Both applications reject
 sensitive telemetry attributes and content capture; SDK tracing is off by default. Its explicit
 opt-in emits only fixed-operation in-memory metadata. Provider realtime tracing is rejected
 until approved metadata-only controls exist. No production privacy/legal approval is implied.

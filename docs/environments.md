@@ -60,6 +60,7 @@ sequenceDiagram
     Az-->>Adm: Registration, roles, runtime identity, secret in an ignored local file
     Adm->>GH: Store the secret once as a GitHub environment secret, delete the file
     GH->>GHCR: Build, scan, publish both images, verify anonymous pull
+    Eng->>Eng: Review the nonsecret settings and record their fingerprint
     Eng->>GH: Run app environment, review plan, approve apply
     GH->>Az: Container apps, data store, vault, signing key, secrets via management API
     GH->>Az: Environment check, pass or fail by service
@@ -92,13 +93,13 @@ flowchart LR
         State["State storage, identity-only"]
     end
     Tester -->|"allow-list, sign-in"| MG
-    Tester -->|"allow-list, signed permit"| RT
+    Tester -->|"allow-list, health probes"| RT
     Other -.->|"refused"| MG
     Other -.->|"refused"| RT
     GHCRN -->|"image pull"| RT
     GHCRN -->|"image pull"| MG
     MG -->|"sign-in with client secret"| Entra
-    MG -->|"identity token and role"| RT
+    MG -->|"workload token and role, signed permit"| RT
     RT -->|"identity token and role, configuration"| MG
     RT --> PEC
     MG --> PEC
@@ -127,12 +128,14 @@ sequenceDiagram
     M->>C: Read and write configuration and audit entries
     T->>M: Request a console ticket
     M-->>T: Ticket and signed start permit, private key from the vault
-    T->>R: Text request or speech socket with the permit
+    T->>M: Open the console socket with the ticket
+    M->>R: Text turn or voice socket with the permit and a workload token for the runtime registration
     R->>M: Fetch active configuration with an identity token and role
     R->>AI: Text or realtime session through the private endpoint
     AI-->>R: Reply
     R->>C: Store text conversation history
-    R-->>T: Reply or audio
+    R-->>M: Reply or audio
+    M-->>T: Reply or audio
 ```
 
 The pipeline checks the deployed environment after every `app_environment` apply. The

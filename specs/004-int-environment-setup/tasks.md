@@ -224,7 +224,7 @@ All thirteen modules have `README.md`, `main.tf`, `variables.tf`, `outputs.tf`, 
 - [X] T090 [P] [US5] Extend `code/management/tests/contract/test_runtime_configuration.py` and `code/backend/tests/unit/test_connection_contract.py` so the runtime's identity token carries the configured audience and the `CALLER_RUNTIME_ROLE` role, and a call without the role is refused with one fixed reason (FR-052).
 - [X] T091 [P] [US5] Add `code/tools/tests/test_cosmos_contract.py` (spike S-13) that compares the container names, partition keys and TTL defaults the repositories use with those declared in `code/infra/terraform/modules/data-store/main.tf`, and fix the module if they differ.
 - [X] T092 [P] [US5] Add `code/tools/tests/test_application_settings_contract.py` that compares the `CALLER_*` names and `AZURE_CLIENT_ID` the two applications read with the names set in `code/infra/terraform/app_environment/container_apps.tf` and listed in [application-settings.md](contracts/application-settings.md), and that both secret settings are Key Vault references.
-- [ ] T093 [US5] Run the existing editor and test console browser tests in `code/management/tests/browser/` and update `code/management/tests/editor_app.py` only if the new composition requires it (FR-048).
+- [X] T093 [US5] Run the existing editor and test console browser tests in `code/management/tests/browser/` and update `code/management/tests/editor_app.py` only if the new composition requires it (FR-048).
 - [X] T094 [US5] Create the test-only project `code/e2e/` (`pyproject.toml` depending on both applications by path, `tests/test_live_journey.py`) that composes the runtime and the management app in-process with fake Cosmos, credential and model ports and a fake in-process OIDC provider (discovery document, signing keys and token endpoint issuing tokens with the editor and tester roles), and drives sign-in, publishing a configuration, a test ticket and a text reply through the real HTTP and permit paths (Principle IX); it runs in CI through the job added in T067.
 - [X] T095 [US5] Add tests that no secret, token, key or input value appears in any start error, log event or health response of either application, in `code/backend/tests/integration/test_content_privacy.py` and `code/management/tests/integration/test_audit_privacy.py` (FR-033, FR-047). Also add a correlation test that one conversation's events carry the same correlation identifier in the runtime and management logs (Principle VII), and a test in `code/management/tests/unit/test_security.py` that an expired or invalid sign-in secret fails closed.
 - [X] T096 [US5] Spike S-14: confirm that the management API accepts a bearer token with the tester role issued to the deployment identity through its federated credential, and add a small application change with tests if it only accepts the browser sign-in session.
@@ -253,7 +253,7 @@ Every document links to the relevant official Terraform and Azure guidance (FR-0
 - [X] T106 [P] [US6] Write `docs/runbooks/application-live-mode.md` (D-09): the settings contract, reviewed composition, fixed reason codes, how to change a setting and what each failure means.
 - [X] T107 [US6] Review every module README under `code/infra/terraform/modules/` against D-07 (purpose, inputs, outputs, failure behavior, security assumptions) and fix gaps.
 - [X] T108 [US6] Update `docs/setup.md`, `docs/repository-layout.md`, `docs/containers.md`, `docs/runbooks/README.md` and `docs/library-decisions.md` for the new layout, images, tools and providers, and create `docs/acceptance/int-environment.md` as the record for the live release gates.
-- [ ] T109 [US6] Run `. .\code\.local\feeds.ps1; code\tools\.venv\Scripts\python.exe code\tools\scripts\verify_docs.py` and fix every link or diagram error.
+- [X] T109 [US6] Run `. .\code\.local\feeds.ps1; code\tools\.venv\Scripts\python.exe code\tools\scripts\verify_docs.py` and fix every link or diagram error.
 
 **Checkpoint**: Documentation verified.
 
@@ -284,9 +284,9 @@ Every document links to the relevant official Terraform and Azure guidance (FR-0
 
 - [X] T124 [P] Search the repository for retired terms (`aks`, `acr`, `firewall`, `App Service`, `platform` as a deployment name, `dev`, `test`, `prod` stage names, `terraform-infrastructure`) in `code/`, `docs/`, `.github/` and `README.md`, and remove or rewrite every leftover (FR-015).
 - [X] T125 [P] Run `code/tools/scripts/check_secrets.py` and `code/tools/scripts/check_whitespace.py` and confirm 0 secrets, state or plan files in the repository, environment files and logs (FR-012, SC-008).
-- [ ] T126 Run `. .\code\.local\feeds.ps1; uv run --project code/tools --locked python code/tools/scripts/ci.py check` and fix any failure.
+- [X] T126 Run `. .\code\.local\feeds.ps1; uv run --project code/tools --locked python code/tools/scripts/ci.py check` and fix any failure.
 - [ ] T127 Walk through [quickstart.md](quickstart.md) sections 1 to 9 against the finished tooling and correct any command or expected result that no longer matches.
-- [ ] T128 [P] Confirm the Mermaid diagrams in `docs/environments.md`, `docs/security.md` and the runbooks match the delivered topology, and run `verify_docs.py` once more.
+- [X] T128 [P] Confirm the Mermaid diagrams in `docs/environments.md`, `docs/security.md` and the runbooks match the delivered topology, and run `verify_docs.py` once more.
 
 ---
 

@@ -28,12 +28,16 @@ TARGETS = {
     "backend": Target(
         ROOT / "code/backend/src",
         "caller_runtime",
-        ("caller_runtime.main", "caller_runtime.composition"),
+        ("caller_runtime.main", "caller_runtime.composition", "caller_runtime.entrypoint"),
     ),
     "management": Target(
         ROOT / "code/management",
         "management_app",
-        ("management_app.management_app",),
+        (
+            "management_app.management_app",
+            "management_app.start",
+            "management_app.fingerprint",
+        ),
     ),
 }
 SCRIPT_DIRECTORIES = (ROOT / "code/tools/scripts",)

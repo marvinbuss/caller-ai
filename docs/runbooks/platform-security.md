@@ -21,6 +21,7 @@ wherever the platform supports them.
 flowchart LR
     MI["Management identity"] -->|"Key Vault Secrets User"| Vault["Key Vault"]
     MI -->|"Data Contributor, three containers"| Cosmos["Cosmos DB"]
+    MI -->|"Management app role"| RReg["Runtime registration"]
     RI["Runtime identity"] -->|"Data Contributor, two containers"| Cosmos
     RI -->|"Cognitive Services OpenAI User"| Model["Model account"]
     Dep["Deployment identity"] -->|"Storage Blob Data Contributor"| State["State storage"]
@@ -29,7 +30,7 @@ flowchart LR
 
 | Identity | Holds | Does not hold |
 |----------|-------|----------------|
-| Management | Read of the two vault secrets; data access to `configuration`, `configuration-audit` and `call-audit` | Any model role, any access to `text-conversations` |
+| Management | Read of the two vault secrets; data access to `configuration`, `configuration-audit` and `call-audit`; the `management` application role on the runtime registration | Any model role, any access to `text-conversations` |
 | Runtime | Data access to `call-sessions` and `text-conversations`; the least model role on the account; the `runtime` application role on the management registration | Any vault access; any secret |
 
 Data roles are scoped to single containers, and the data store has no key or connection string in use.
