@@ -54,16 +54,23 @@ the anonymous pull check passes. Copy the `sha-<40 hex>` tags into `app_environm
    ```
    Copy the printed values into `app_environment.identity`. Store the secret in `MANAGEMENT_SIGNIN_SECRET`
    in the two `app_environment` GitHub environments, then delete `code/.local/identity/int/`.
-5. Run the `terraform-app-environment` workflow. Approve the apply. Expected: both apps, data store, vault,
+5. Review and record the settings fingerprint. Put the nonsecret management settings of the planned deployment
+   into a JSON file and run
+   ```powershell
+   uv run --directory code/management --locked python -m management_app.fingerprint --settings settings.json
+   ```
+   Expected: one 64-character value. Record it in `app_environment.application.reviewed_fingerprint` together with
+   `review_reference` (see [Application live mode](../../docs/runbooks/application-live-mode.md)).
+6. Run the `terraform-app-environment` workflow. Approve the apply. Expected: both apps, data store, vault,
    private endpoints, model access, monitoring, permit key pair, both vault secrets; the job runs the
    environment check, including the functional journey from the runner, and fails if it fails (FR-029). On the
    first deployment the check is expected to fail only at `signin-redirect-matches`, because the callback address
-   exists only after the apps do. The resources are applied. Continue with step 6 and rerun the check.
-6. Run the identity script with `-Phase redirect` to register the management callback address, then rerun the
-   check (step 7).
-7. Run the check yourself:
+   exists only after the apps do. The resources are applied. Continue with step 7 and rerun the check.
+7. Run the identity script with `-Phase redirect` to register the management callback address, then rerun the
+   check (step 8).
+8. Run the check yourself (the manifest is the `environment_manifest` output of the `app_environment` root):
    ```powershell
-   uv run --project code/tools --locked python code/tools/scripts/check_environment.py --environment int --test-alert
+   uv run --project code/tools --locked python code/tools/scripts/check_environment.py --environment int --manifest <manifest.json> --test-alert
    ```
    Expected: every check passes (SC-012).
 
@@ -83,8 +90,11 @@ for `bootstrap`.
 
 ## 6. Functional journey (FR-048, SC-015)
 
-The pipeline runs the conversation journey after each `app_environment` apply as the deployment identity (step 3.5).
-To run it yourself, use `check_environment.py --environment int --functional` with a tester token. A person then
+The pipeline runs the conversation journey after each `app_environment` apply as the deployment identity (step 3.6).
+To run it yourself, add `--functional` to the check: it asks the Azure CLI for a token of your signed-in identity for the
+management registration, or reads one from the variable named by `--tester-token-env` (default `CALLER_TESTER_TOKEN`).
+The identity needs the tester role. The journey covers the probes, the sign-in redirect, a configuration read, a text reply
+and a speech session that accepts a generated sample. A person then
 walks the editor in a browser:
 
 1. Open the management app address from the check output. Sign in as a user in the editor group.
