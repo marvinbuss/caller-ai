@@ -10,7 +10,7 @@ How to bring up, verify, change, recover and remove an environment such as `int`
 | Environment files, validator, Terraform roots and modules, delivery script, workflows, environment check | Delivered and tested offline |
 | Image publishing workflow | Delivered; first publication and the public package setting are manual |
 | Identity script | Delivered and tested with Pester against a fake Azure CLI; not yet run against a real directory |
-| Application live mode | Settings validation is delivered; the live composition is not. Until it is, the deployed apps stop at start with a fixed reason code (see [Application live mode](application-live-mode.md)) |
+| Application live mode | Delivered and tested with fake clients: settings validation, live composition of both apps, the reviewed fingerprint and the frontend start address (see [Application live mode](application-live-mode.md)); not yet run against Azure |
 | Functional journey in the check (`--functional`) | Not delivered yet |
 | Live acceptance on `int` | Not run. Results go to [the acceptance record](../acceptance/int-environment.md) |
 

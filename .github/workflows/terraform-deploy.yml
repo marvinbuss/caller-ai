@@ -154,7 +154,7 @@ jobs:
           CHECK_RESULT_PATH: ${{ runner.temp }}/environment-check.json
         run: |
           set +e
-          uv run --project code/tools --locked python code/tools/scripts/check_environment.py --environment "$DEPLOY_ENVIRONMENT" --manifest "$ENVIRONMENT_MANIFEST_PATH" --json "$CHECK_RESULT_PATH"
+          uv run --project code/tools --locked python code/tools/scripts/check_environment.py --environment "$DEPLOY_ENVIRONMENT" --manifest "$ENVIRONMENT_MANIFEST_PATH" --functional --json "$CHECK_RESULT_PATH"
           status=$?
           if [[ -f "$CHECK_RESULT_PATH" ]]; then
             { echo '### Environment check'; echo '```json'; cat "$CHECK_RESULT_PATH"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

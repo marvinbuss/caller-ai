@@ -11,7 +11,8 @@ gives each container a fixed set of settings and the app refuses to start unless
 | Settings contract | Delivered: [application settings](../../specs/004-int-environment-setup/contracts/application-settings.md) |
 | Settings validation with fixed reason codes in both apps | Delivered and tested |
 | Terraform gives each app exactly the contract's settings | Delivered; a test compares the names in the contract, the deployment and the applications |
-| Live composition (credential, data store and model adapters, reviewed composition, management fingerprint) | Not delivered yet. Today a live start that passes validation does not compose a runtime |
+| Live composition of both apps (managed identity and data store clients, reviewed runtime options, workload and sign-in identity, permit keys, management fingerprint authority) | Delivered and tested with fake clients; not yet run against Azure |
+| Frontend address at start (the exported frontend follows `CALLER_PUBLIC_ORIGIN` or `API_URL`) | Delivered; container test in `code/tools/tests/test_management_image.py` |
 
 ## The settings
 
@@ -32,6 +33,27 @@ empty value stops the start with `review_missing`. The management app additional
 `CALLER_REVIEWED_FINGERPRINT`, the fingerprint of the nonsecret settings that were reviewed; a different
 computed fingerprint stops the start with `fingerprint_mismatch`. Review and record both in
 `app_environment.application` before an apply.
+
+### Compute the management fingerprint
+
+The fingerprint covers every nonsecret management setting except the review reference, the reviewed
+fingerprint and what exists only after the apply: the two app origins and what derives from them
+(`CALLER_MANAGEMENT_ORIGIN`, `CALLER_PUBLIC_ORIGIN`, `CALLER_RUNTIME_ENDPOINT`, `CALLER_RUNTIME_AUDIENCE`,
+`CALLER_PERMIT_ISSUER`, `CALLER_PERMIT_AUDIENCE`) and the management identity's `AZURE_CLIENT_ID`. Those are covered
+through the names that fix them. Secrets never enter it. Put the nonsecret `CALLER_*` values of the planned
+deployment into a JSON file (names to values) and run:
+
+```powershell
+uv run --directory code/management --locked python -m management_app.fingerprint --settings settings.json
+```
+
+The tool prints one 64-character value or one reason code and exits 2. Record the value as
+`app_environment.application.reviewed_fingerprint`. Without `--settings` it reads the environment.
+
+Two more checks run at start. `CALLER_PUBLIC_ORIGIN` must equal `CALLER_MANAGEMENT_ORIGIN` (the browser reaches the
+management app on its own origin, and the image points the frontend there at start), and the runtime's identity
+(`CALLER_RUNTIME_CLIENT_ID`) is the only application the management app accepts on the runtime-configuration
+endpoint.
 
 ## Reason codes
 

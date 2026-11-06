@@ -8,7 +8,10 @@ never a secret, a secret reference value or an input value. Exit code 0 only whe
 
 import argparse
 import json
+import math
+import os
 import re
+import struct
 import subprocess
 import sys
 import time
@@ -19,6 +22,7 @@ from typing import Any, Protocol
 
 import httpx
 from ci import ROOT
+from websockets.sync.client import connect as websocket_connect
 
 ENVIRONMENTS = ROOT / "code/infra/environments"
 ALLOWED_SKIP = "public_access_disabled"
@@ -43,7 +47,8 @@ RUNTIME_SETTINGS = (
     "CALLER_MANAGEMENT_AUDIENCE CALLER_TEXT_ENDPOINT CALLER_TEXT_DEPLOYMENT CALLER_LIVE_ENDPOINT "
     "CALLER_LIVE_REGION CALLER_LIVE_VOICE CALLER_APPROVED_HOSTS CALLER_MAX_INPUT_TOKENS "
     "CALLER_MAX_OUTPUT_TOKENS CALLER_AVAILABLE_LIVE_SESSIONS CALLER_MANAGER_ISSUER "
-    "CALLER_MANAGER_AUDIENCE CALLER_PERMIT_VERIFICATION_KEYS CALLER_MAX_CLOCK_SKEW_SECONDS"
+    "CALLER_MANAGER_AUDIENCE CALLER_PERMIT_VERIFICATION_KEYS CALLER_MAX_CLOCK_SKEW_SECONDS "
+    "CALLER_TENANT_ID CALLER_WORKLOAD_AUDIENCE CALLER_WORKLOAD_ROLE CALLER_WORKLOAD_PRINCIPAL_ID"
 ).split()
 MANAGEMENT_SETTINGS = (
     "CALLER_MODE AZURE_CLIENT_ID CALLER_REVIEW_REFERENCE CALLER_REVIEWED_FINGERPRINT "
@@ -51,6 +56,7 @@ MANAGEMENT_SETTINGS = (
     "CALLER_TENANT_ID CALLER_ENTRA_CLIENT_ID CALLER_ENTRA_CLIENT_SECRET CALLER_API_AUDIENCE "
     "CALLER_MANAGER_ROLE CALLER_MANAGER_SCOPE CALLER_TEST_ROLE CALLER_RUNTIME_ROLE "
     "CALLER_MANAGEMENT_ORIGIN CALLER_RUNTIME_ENDPOINT CALLER_RUNTIME_AUDIENCE "
+    "CALLER_RUNTIME_CLIENT_ID "
     "CALLER_PERMIT_ISSUER CALLER_PERMIT_AUDIENCE CALLER_SIGNING_KEY_ID CALLER_SIGNING_KEY_PEM "
     "CALLER_PUBLIC_ORIGIN"
 ).split()
@@ -66,6 +72,8 @@ class Access(Protocol):
     def arm_post(self, path: str, api_version: str, body: dict[str, Any]) -> int: ...
 
     def graph(self, path: str) -> dict[str, Any]: ...
+
+    def token(self, resource: str) -> str: ...
 
 
 class CliAccess:
@@ -98,6 +106,33 @@ class CliAccess:
     def graph(self, path: str) -> dict[str, Any]:
         return json.loads(self._rest("get", f"{GRAPH}{path}") or "{}")
 
+    def token(self, resource: str) -> str:
+        """An access token of the signed-in identity for the resource; never printed."""
+        result = subprocess.run(
+            [
+                "az",
+                "account",
+                "get-access-token",
+                "--resource",
+                resource,
+                "--query",
+                "accessToken",
+                "--output",
+                "tsv",
+                "--only-show-errors",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+        value = result.stdout.strip()
+        if result.returncode != 0 or not value:
+            raise LookupError("token_unavailable")
+        return value
+
 
 @dataclass
 class Check:
@@ -119,6 +154,8 @@ class Context:
     wait_seconds: int = 300
     functional: bool = False
     test_alert: bool = False
+    tester_token: str | None = field(default=None, repr=False)
+    connect: Callable[..., Any] = websocket_connect
     results: list[Check] = field(default_factory=list)
 
 
@@ -503,6 +540,246 @@ def signin_redirect_matches(context: Context) -> Check:
     return passed("signin-redirect-matches", "identity", "redirect address registered")
 
 
+JOURNEY_SECONDS = 15
+CONSOLE_PROTOCOL = "caller.console.v1"
+JOURNEY_PROMPT = "Reply with one short greeting."
+
+
+class JourneyFailure(Exception):
+    """A journey step failed; carries the step and one fixed reason, never a value."""
+
+    def __init__(self, step: str, reason: str) -> None:
+        super().__init__(step)
+        self.step, self.reason = step, reason
+
+
+def journey_request(
+    context: Context, step: str, method: str, url: str, **options: Any
+) -> httpx.Response:
+    assert context.http is not None
+    try:
+        return context.http.request(method, url, follow_redirects=False, **options)
+    except httpx.HTTPError:
+        raise JourneyFailure(step, "unreachable") from None
+
+
+def journey_probes(context: Context, step: str, name: str, mode: str = "live") -> None:
+    host = apps(context)[name]["host"]
+    for route in ("/healthz", "/readyz"):
+        response = journey_request(context, step, "GET", f"https://{host}{route}")
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        if response.status_code != 200 or body.get("mode") != mode:
+            raise JourneyFailure(step, f"probe_{route[1:]}_failed")
+
+
+def journey_redirect(context: Context) -> None:
+    step = "sign-in-redirect"
+    host = apps(context)["management"]["host"]
+    login = journey_request(context, step, "GET", f"https://{host}/auth/login")
+    tenant = context.manifest["identity"]["tenant_id"]
+    target = login.headers.get("location", "")
+    if login.status_code not in {302, 303, 307} or not target.startswith(
+        f"https://login.microsoftonline.com/{tenant}/"
+    ):
+        raise JourneyFailure(step, "no_redirect_to_sign_in")
+    anonymous = journey_request(context, step, "GET", f"https://{host}/v2/configuration")
+    if anonymous.status_code != 401:
+        raise JourneyFailure(step, "anonymous_read_not_refused")
+
+
+def journey_read(context: Context, token: str) -> None:
+    step = "configuration-read"
+    host = apps(context)["management"]["host"]
+    response = journey_request(
+        context,
+        step,
+        "GET",
+        f"https://{host}/v2/configuration",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        agents = response.json().get("agents")
+    except (ValueError, AttributeError):
+        agents = None
+    if response.status_code != 200 or not isinstance(agents, list) or not agents:
+        raise JourneyFailure(step, "read_refused")
+
+
+def journey_receive(socket: Any, step: str, deadline: float, clock: Callable[[], float]) -> Any:
+    """The next control message of the console socket; audio frames are skipped."""
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise JourneyFailure(step, "timeout")
+        try:
+            raw = socket.recv(timeout=remaining)
+        except TimeoutError:
+            raise JourneyFailure(step, "timeout") from None
+        except Exception:
+            raise JourneyFailure(step, "connection_closed") from None
+        if isinstance(raw, bytes):
+            continue
+        try:
+            message = json.loads(raw)
+        except ValueError:
+            raise JourneyFailure(step, "invalid_message") from None
+        if isinstance(message, dict):
+            return message
+        raise JourneyFailure(step, "invalid_message")
+
+
+def journey_session(context: Context, token: str, mode: str, step: str, steps: Any) -> None:
+    """Request a ticket as the application, open the console socket and run the steps."""
+    host = apps(context)["management"]["host"]
+    headers = {"Authorization": f"Bearer {token}"}
+    request_id = f"check-{mode}-{int(context.clock() * 1000) % 10**9}"
+    ticket = journey_request(
+        context,
+        step,
+        "POST",
+        f"https://{host}/v1/console/tickets",
+        headers=headers,
+        json={"mode": mode, "requestId": request_id},
+    )
+    try:
+        body = ticket.json()
+        permit, path = body["permit"], body["socketPath"]
+    except (ValueError, KeyError, TypeError):
+        permit = path = None
+    if ticket.status_code != 200 or not isinstance(permit, str) or not isinstance(path, str):
+        raise JourneyFailure(step, "ticket_refused")
+    try:
+        socket = context.connect(
+            f"wss://{host}{path}",
+            additional_headers=headers,
+            subprotocols=[CONSOLE_PROTOCOL],
+            open_timeout=10,
+            max_size=2**17,
+        )
+    except Exception:
+        raise JourneyFailure(step, "socket_refused") from None
+    deadline = context.clock() + JOURNEY_SECONDS
+    try:
+        socket.send(json.dumps({"type": "authenticate", "permit": permit, "requestId": request_id}))
+        ready = journey_receive(socket, step, deadline, context.clock)
+        if ready.get("type") != "ready" or ready.get("mode") != mode:
+            raise JourneyFailure(step, "session_not_started")
+        steps(socket, ready, deadline)
+    finally:
+        try:
+            socket.close()
+        except Exception:
+            pass
+
+
+def journey_stop(
+    context: Context, socket: Any, step: str, session: str, sequence: int, deadline: float
+) -> None:
+    socket.send(json.dumps({"type": "stop", "sessionId": session, "sequence": sequence}))
+    while True:
+        message = journey_receive(socket, step, deadline, context.clock)
+        if message.get("type") == "ended":
+            if message.get("cleanupStatus") != "complete":
+                raise JourneyFailure(step, "stop_not_confirmed")
+            return
+
+
+def journey_text(context: Context, token: str) -> None:
+    step = "text-conversation"
+
+    def steps(socket: Any, ready: dict[str, Any], deadline: float) -> None:
+        session = str(ready.get("sessionId"))
+        submit = {
+            "type": "text.submit",
+            "sessionId": session,
+            "sequence": 1,
+            "text": JOURNEY_PROMPT,
+        }
+        socket.send(json.dumps(submit))
+        reply = ""
+        while not reply:
+            message = journey_receive(socket, step, deadline, context.clock)
+            if message.get("type") == "error":
+                raise JourneyFailure(step, "model_error")
+            if message.get("type") == "text.completed" and isinstance(message.get("text"), str):
+                reply = message["text"].strip()
+                if not reply:
+                    raise JourneyFailure(step, "empty_reply")
+        journey_stop(context, socket, step, session, 2, deadline)
+
+    journey_session(context, token, "text", step, steps)
+
+
+AUDIO_RATE = 24000
+AUDIO_SAMPLES = 480
+
+
+def audio_sample(generation: int, samples: int) -> bytes:
+    """One generated audio frame: a quiet 440 Hz tone as 16-bit little-endian PCM."""
+    pcm = b"".join(
+        struct.pack("<h", int(2000 * math.sin(2 * math.pi * 440 * index / AUDIO_RATE)))
+        for index in range(samples)
+    )
+    return struct.pack(">BII", 1, generation, 1) + pcm
+
+
+def journey_speech(context: Context, token: str) -> None:
+    step = "speech-session"
+
+    def steps(socket: Any, ready: dict[str, Any], deadline: float) -> None:
+        session = str(ready.get("sessionId"))
+        while True:
+            message = journey_receive(socket, step, deadline, context.clock)
+            if message.get("type") == "error":
+                raise JourneyFailure(step, "session_error")
+            samples = message.get("availableSamples")
+            if message.get("type") == "audio.credit" and type(samples) is int and samples > 0:
+                generation = message.get("generation")
+                if type(generation) is not int:
+                    raise JourneyFailure(step, "invalid_message")
+                break
+        socket.send(audio_sample(generation, min(samples, AUDIO_SAMPLES)))
+        journey_stop(context, socket, step, session, 1, deadline)
+
+    journey_session(context, token, "speech", step, steps)
+
+
+def functional_journey(context: Context) -> Check:
+    """The journey of FR-048 from the runner, as an application holding the tester role."""
+    if not context.functional:
+        return Check("functional-journey", "application", "skipped", "not requested")
+    if not context.manifest["public_access"]["enabled"]:
+        return Check("functional-journey", "application", "skipped", ALLOWED_SKIP)
+    if context.http is None:
+        return failed("functional-journey", "application", "no HTTP client")
+    try:
+        token = context.tester_token
+        if not token:
+            try:
+                token = context.access.token(
+                    f"api://{context.manifest['identity']['management_app_client_id']}"
+                )
+            except LookupError:
+                raise JourneyFailure("tester-token", "token_unavailable") from None
+        journey_probes(context, "runtime-probes", "runtime")
+        journey_probes(context, "management-probes", "management")
+        journey_redirect(context)
+        journey_read(context, token)
+        journey_text(context, token)
+        journey_speech(context, token)
+    except JourneyFailure as error:
+        return failed("functional-journey", "application", f"{error.step}: {error.reason}")
+    return passed(
+        "functional-journey",
+        "application",
+        "probes, sign-in redirect, configuration read, text reply and speech session with "
+        "audio sample confirmed",
+    )
+
+
 def state_isolated(context: Context) -> Check:
     folder = ENVIRONMENTS / context.environment
     keys = []
@@ -560,6 +837,7 @@ CHECKS: tuple[Callable[[Context], Check], ...] = (
     signin_redirect_matches,
     state_isolated,
     alert_test,
+    functional_journey,
 )
 
 
@@ -597,6 +875,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--test-alert", action="store_true")
     parser.add_argument("--functional", action="store_true")
+    parser.add_argument(
+        "--tester-token-env",
+        default="CALLER_TESTER_TOKEN",
+        help="environment variable that holds an operator's tester token (never printed)",
+    )
     parser.add_argument("--json", type=Path)
     arguments = parser.parse_args(argv)
     try:
@@ -608,6 +891,7 @@ def main(argv: list[str] | None = None) -> int:
             http=httpx.Client(timeout=30, follow_redirects=False),
             functional=arguments.functional,
             test_alert=arguments.test_alert,
+            tester_token=os.environ.get(arguments.tester_token_env) or None,
         )
     except (OSError, ValueError):
         print(json.dumps({"result": "fail", "reason": "inputs_unreadable"}))

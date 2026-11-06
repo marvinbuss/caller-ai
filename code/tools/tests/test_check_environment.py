@@ -100,6 +100,13 @@ def app(name, image, settings, secrets=("CALLER_ENTRA_CLIENT_SECRET", "CALLER_SI
 class Fake:
     def __init__(self, world, graph):
         self.world, self.graph_world, self.posts = world, graph, []
+        self.tokens, self.token_failure = [], False
+
+    def token(self, resource):
+        if self.token_failure:
+            raise LookupError("token_unavailable")
+        self.tokens.append(resource)
+        return "synthetic-tester-token"
 
     def arm(self, path, api_version):
         if path not in self.world:
@@ -273,7 +280,9 @@ def test_services_provisioned_reports_missing_and_public_stores(case):
 def test_settings_complete_names_missing_settings_and_plain_secrets(case):
     module, world, _graph, build = case
     env = world[RUNTIME_ID]["properties"]["template"]["containers"][0]["env"]
-    world[RUNTIME_ID]["properties"]["template"]["containers"][0]["env"] = env[:-1]
+    world[RUNTIME_ID]["properties"]["template"]["containers"][0]["env"] = [
+        item for item in env if item["name"] != "CALLER_MAX_CLOCK_SKEW_SECONDS"
+    ]
     management = world[MANAGEMENT_ID]["properties"]["template"]["containers"][0]["env"]
     for item in management:
         if item["name"] == "CALLER_SIGNING_KEY_PEM":
@@ -437,3 +446,237 @@ def test_an_open_range_reports_that_no_source_restriction_applies(case):
         build(manifest=manifest(public=True, cidrs=["0.0.0.0/0"]))
     )
     assert result.status == "pass" and "no source restriction" in result.detail
+
+
+# --- the functional journey (FR-048, FR-053, SC-012, SC-015) ---------------------------------
+
+TENANT = "t"
+TESTER_TOKEN = "synthetic-tester-token"
+
+
+class Console:
+    """A scripted console socket: answers the authenticate, text, stop and speech messages."""
+
+    def __init__(self, mode, behaviour):
+        self.mode, self.behaviour, self.queue, self.sent, self.closed = (
+            mode,
+            behaviour,
+            [],
+            [],
+            False,
+        )
+        self.audio = []
+
+    def send(self, raw):
+        if isinstance(raw, bytes):
+            self.audio.append(raw)
+            return
+        message = json.loads(raw)
+        self.sent.append(message)
+        kind = message["type"]
+        if kind == "authenticate":
+            if self.behaviour != "not-ready":
+                self.queue.append(
+                    {"type": "ready", "sessionId": "console-1", "sequence": 1, "mode": self.mode}
+                )
+                if self.mode == "speech" and self.behaviour != "no-credit":
+                    self.queue.append(
+                        {
+                            "type": "audio.credit",
+                            "sessionId": "console-1",
+                            "sequence": 2,
+                            "generation": 1,
+                            "availableSamples": 960,
+                            "acceptedAudioSequence": 0,
+                        }
+                    )
+        elif kind == "text.submit" and self.mode == "text":
+            if self.behaviour == "model-error":
+                self.queue.append({"type": "error", "code": "upstream_unavailable"})
+            elif self.behaviour == "empty-reply":
+                self.queue.append({"type": "text.completed", "messageId": "m1", "text": " "})
+            elif self.behaviour != "no-reply":
+                self.queue.append({"type": "text.delta", "messageId": "m1", "text": "Hel"})
+                self.queue.append({"type": "text.completed", "messageId": "m1", "text": "Hello"})
+        elif kind == "stop":
+            status = "pending" if self.behaviour == "stop-pending" else "complete"
+            self.queue.append({"type": "ended", "cleanupStatus": status})
+
+    def recv(self, timeout=None):
+        if not self.queue:
+            raise TimeoutError("timed out")
+        return json.dumps(self.queue.pop(0))
+
+    def close(self):
+        self.closed = True
+
+
+def management_http(**overrides):
+    seen = {"calls": []}
+
+    def handler(request):
+        host, path = request.url.host, request.url.path
+        seen["calls"].append((request.method, host, path, request.headers.get("authorization")))
+        authorized = request.headers.get("authorization") == f"Bearer {TESTER_TOKEN}"
+        if path in {"/healthz", "/readyz"}:
+            status = overrides.get(host + path, 200)
+            return httpx.Response(status, json={"mode": "live", "status": "ready"})
+        if path == "/auth/login":
+            location = overrides.get(
+                "login", f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/authorize"
+            )
+            return httpx.Response(
+                overrides.get("login_status", 302), headers={"location": location}
+            )
+        if path == "/v2/configuration":
+            if not authorized:
+                return httpx.Response(overrides.get("anonymous", 401))
+            if "read" in overrides:
+                return httpx.Response(overrides["read"])
+            return httpx.Response(200, json={"agents": [{"agentId": "a"}]})
+        if path == "/v1/console/tickets":
+            if not authorized or "ticket" in overrides:
+                return httpx.Response(overrides.get("ticket", 403))
+            body = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "permit": "signed.permit.value",
+                    "mode": body["mode"],
+                    "requestId": body["requestId"],
+                    "socketPath": "/v1/console/sessions",
+                },
+            )
+        return httpx.Response(404)
+
+    return httpx.Client(transport=httpx.MockTransport(handler)), seen
+
+
+def journey(case, behaviour="ok", http=None, **keywords):
+    module, _world, _graph, build = case
+    client, seen = http or management_http()
+    sockets = []
+
+    def connect(url, **options):
+        assert url == "wss://management.example.test/v1/console/sessions"
+        assert options["additional_headers"] == {"Authorization": f"Bearer {TESTER_TOKEN}"}
+        assert options["subprotocols"] == ["caller.console.v1"]
+        if behaviour == "socket-refused":
+            raise OSError("refused")
+        mode = "speech" if len(sockets) % 2 else "text"
+        sockets.append(Console(mode, behaviour))
+        return sockets[-1]
+
+    keywords.setdefault("manifest", manifest(public=True, cidrs=["0.0.0.0/0"]))
+    context = build(
+        functional=True, http=client, connect=connect, tester_token=TESTER_TOKEN, **keywords
+    )
+    return module.functional_journey(context), context, sockets, seen
+
+
+def test_the_functional_journey_passes_and_stops_both_sessions_cleanly(case):
+    result, _context, sockets, seen = journey(case)
+    assert result.status == "pass", result.detail
+    assert [socket.mode for socket in sockets] == ["text", "speech"]
+    assert all(socket.closed for socket in sockets)
+    sent = [message["type"] for message in sockets[0].sent]
+    assert sent == ["authenticate", "text.submit", "stop"]
+    assert [message["type"] for message in sockets[1].sent] == ["authenticate", "stop"]
+    assert ("GET", "runtime.example.test", "/readyz", None) in seen["calls"]
+
+
+def test_the_journey_is_skipped_unless_asked_for_and_only_closed_access_skips_it(case):
+    module, _world, _graph, build = case
+    assert module.functional_journey(build()).detail == "not requested"
+    closed = build(functional=True, manifest=manifest(public=False))
+    result = module.functional_journey(closed)
+    assert (result.status, result.detail) == ("skipped", "public_access_disabled")
+    report = module.run_checks(closed)
+    assert status(report, "functional-journey") == "skipped" and report["result"] == "pass"
+
+
+def test_the_journey_asks_the_runner_identity_for_a_management_token(case):
+    module, _world, _graph, build = case
+    context = build(
+        functional=True,
+        http=management_http()[0],
+        connect=lambda url, **options: Console("text", "ok"),
+        manifest=manifest(public=True, cidrs=["0.0.0.0/0"]),
+    )
+    context.tester_token = None
+    context.access.tokens.clear()
+    module.functional_journey(context)
+    assert context.access.tokens == [f"api://{CLIENT_ID}"]
+
+
+def test_a_missing_tester_token_fails_with_a_fixed_reason(case):
+    module, _world, _graph, build = case
+    context = build(
+        functional=True,
+        http=management_http()[0],
+        manifest=manifest(public=True, cidrs=["0.0.0.0/0"]),
+    )
+    context.access.token_failure = True
+    result = module.functional_journey(context)
+    assert (result.status, result.detail) == ("fail", "tester-token: token_unavailable")
+
+
+@pytest.mark.parametrize(
+    "overrides,detail",
+    [
+        ({"runtime.example.test/readyz": 503}, "runtime-probes: probe_readyz_failed"),
+        ({"management.example.test/healthz": 500}, "management-probes: probe_healthz_failed"),
+        ({"login_status": 200}, "sign-in-redirect: no_redirect_to_sign_in"),
+        ({"login": "https://evil.example.net/"}, "sign-in-redirect: no_redirect_to_sign_in"),
+        ({"anonymous": 200}, "sign-in-redirect: anonymous_read_not_refused"),
+        ({"read": 403}, "configuration-read: read_refused"),
+        ({"ticket": 403}, "text-conversation: ticket_refused"),
+    ],
+)
+def test_each_failing_step_is_named_with_one_fixed_reason(case, overrides, detail):
+    result, _context, _sockets, _seen = journey(case, http=management_http(**overrides))
+    assert (result.status, result.detail) == ("fail", detail)
+
+
+@pytest.mark.parametrize(
+    "behaviour,detail",
+    [
+        ("socket-refused", "text-conversation: socket_refused"),
+        ("not-ready", "text-conversation: timeout"),
+        ("model-error", "text-conversation: model_error"),
+        ("empty-reply", "text-conversation: empty_reply"),
+        ("no-reply", "text-conversation: timeout"),
+        ("stop-pending", "text-conversation: stop_not_confirmed"),
+    ],
+)
+def test_a_failed_conversation_names_the_step_and_closes_the_socket(case, behaviour, detail):
+    result, _context, sockets, _seen = journey(case, behaviour)
+    assert (result.status, result.detail) == ("fail", detail)
+    assert all(socket.closed for socket in sockets)
+
+
+def test_the_journey_never_prints_the_token_or_the_permit(case):
+    module, _world, _graph, build = case
+    result, context, _sockets, _seen = journey(case)
+    text = json.dumps(module.run_checks(context))
+    assert TESTER_TOKEN not in text and "signed.permit.value" not in text
+    assert TESTER_TOKEN not in repr(context) and TESTER_TOKEN not in result.detail
+
+
+def test_the_speech_session_sends_one_generated_sample_after_credit_and_confirms_stop(case):
+    import struct
+
+    result, _context, sockets, _seen = journey(case)
+    assert result.status == "pass", result.detail
+    audio = sockets[1].audio
+    assert len(audio) == 1 and sockets[0].audio == []
+    protocol, generation, sequence = struct.unpack(">BII", audio[0][:9])
+    assert (protocol, generation, sequence) == (1, 1, 1)
+    payload = audio[0][9:]
+    assert 0 < len(payload) <= 1920 and len(payload) % 2 == 0 and any(payload)
+
+
+def test_a_speech_session_that_never_grants_credit_fails_with_a_fixed_reason(case):
+    result, _context, sockets, _seen = journey(case, "no-credit")
+    assert (result.status, result.detail) == ("fail", "speech-session: timeout")
+    assert sockets[1].audio == [] and all(socket.closed for socket in sockets)

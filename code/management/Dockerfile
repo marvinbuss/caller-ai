@@ -16,9 +16,9 @@ COPY management_app ./management_app
 COPY reflex.lock ./reflex.lock
 COPY assets ./assets
 RUN uv sync --locked --no-dev --no-editable
-RUN uv run --locked --no-dev reflex init --no-agents \
-    && CALLER_FRONTEND_EXPORT=1 uv run --locked --no-dev reflex export --frontend-only --no-zip \
-    && printf '%s' "$PUBLIC_API_URL" > /app/baked-api-url
+RUN uv run --locked --no-dev reflex init --no-agents
+RUN CALLER_FRONTEND_EXPORT=1 uv run --locked --no-dev reflex export --frontend-only --no-zip
+RUN printf '%s' "$PUBLIC_API_URL" > /app/baked-api-url
 
 FROM python:3.12.15-alpine3.23@sha256:3d0ca66b723a0ff2a7a6e424cc2d01443e1b7c75ffcc110145f75d0f4daf6d63
 ARG PUBLIC_API_URL=http://caller-api-origin.invalid

@@ -80,7 +80,8 @@ def event_asset(container: str) -> str:
     script = (
         "import pathlib\n"
         "root = pathlib.Path('/app/.web/build/client')\n"
-        "print(next(str(p.relative_to(root)) for p in root.rglob('*.js') if '/_event' in p.read_text()))\n"
+        "print(next(str(p.relative_to(root)) for p in root.rglob('*.js')\n"
+        "      if '/_event' in p.read_text()))\n"
     )
     return docker("exec", container, "/app/.venv/bin/python", "-c", script)
 
@@ -113,9 +114,12 @@ def test_an_address_that_is_not_a_plain_origin_stops_the_start(image: str) -> No
                 break
             time.sleep(0.5)
         assert docker("inspect", "--format", "{{.State.ExitCode}}", container) == "2"
-        assert "frontend_origin_invalid" in subprocess.run(
-            ["docker", "logs", container], capture_output=True, text=True, check=False
-        ).stderr
+        assert (
+            "frontend_origin_invalid"
+            in subprocess.run(
+                ["docker", "logs", container], capture_output=True, text=True, check=False
+            ).stderr
+        )
     finally:
         docker("rm", "--force", container)
 

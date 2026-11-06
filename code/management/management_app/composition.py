@@ -416,7 +416,11 @@ async def compose_management(
             api.state.management_configuration = True
             api.include_router(
                 configuration_router(
-                    repository=repository, identity=identity, validator=validator, audit=audit
+                    repository=repository,
+                    identity=identity,
+                    validator=validator,
+                    audit=audit,
+                    reader_role=request.tests.test_role if request.tests is not None else None,
                 )
             )
             api.include_router(

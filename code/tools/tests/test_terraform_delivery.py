@@ -655,6 +655,7 @@ def test_the_apply_job_checks_the_environment_and_callers_offer_the_new_inputs()
         "Apply only the reviewed checksum-bound saved plan"
     )
     assert "check_environment.py" in check["run"] and "--manifest" in check["run"]
+    assert "--functional" in check["run"]
     assert "app_environment" in check["if"] and "destroy" in check["if"]
     inputs = reusable["on"]["workflow_call"]["inputs"]
     assert {"expect_no_changes", "destroy"} <= set(inputs)

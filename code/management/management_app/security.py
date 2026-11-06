@@ -109,6 +109,7 @@ class TokenVerifier:
         nonce: str | None,
         application_clients: frozenset[str] | None = None,
         application_role: str | None = None,
+        application_only: bool = False,
     ) -> Principal:
         if not isinstance(token, str) or not 1 <= len(token) <= 16384:
             raise unauthorized()
@@ -180,11 +181,14 @@ class TokenVerifier:
                     claims["nonce"], nonce
                 ):
                     raise ValueError("invalid_nonce")
-            elif application_clients is not None:
+            elif application_clients is not None or application_only:
                 if (
                     claims.get("idtyp") != "app"
                     or claims.get("scp")
-                    or claims.get("azp") not in application_clients
+                    or (
+                        application_clients is not None
+                        and claims.get("azp") not in application_clients
+                    )
                 ):
                     raise ValueError("invalid_application_identity")
             elif (
@@ -205,6 +209,18 @@ class TokenVerifier:
 
     async def verify_access(self, token: str) -> Principal:
         return await self._verify(token, audience=self.policy.api_audience, nonce=None)
+
+    async def verify_tester_application(self, token: str, *, role: str) -> Principal:
+        """An app-only token for the management audience that holds exactly the tester role."""
+        if role == self.policy.manager_role:
+            raise unauthorized()
+        return await self._verify(
+            token,
+            audience=self.policy.api_audience,
+            nonce=None,
+            application_only=True,
+            application_role=role,
+        )
 
     async def verify_identity(self, token: str, *, nonce: str) -> Principal:
         if not nonce:
@@ -546,6 +562,63 @@ class IdentityService:
         return self.browser_session(
             request, mutation=request.method not in {"GET", "HEAD", "OPTIONS"}
         ).principal.actor_id
+
+    @staticmethod
+    def _bearer(request: Request | WebSocket) -> str:
+        authorization = request.headers.getlist("authorization")
+        if len(authorization) != 1 or request.headers.getlist("cookie"):
+            raise unauthorized()
+        scheme, separator, token = authorization[0].partition(" ")
+        if scheme.lower() != "bearer" or not separator or not token or token.strip() != token:
+            raise unauthorized()
+        return token
+
+    async def require_reader(self, request: Request, *, reader_role: str | None) -> str:
+        """A manager, or for a read only, an application that holds the tester role (FR-053)."""
+        try:
+            return await self.require_manager(request)
+        except HTTPException as refused:
+            if (
+                reader_role is None
+                or request.method not in {"GET", "HEAD"}
+                or refused.status_code not in {401, 403}
+                or not request.headers.getlist("authorization")
+            ):
+                raise
+            try:
+                token = self._bearer(request)
+                principal = await self.verifier.verify_tester_application(token, role=reader_role)
+            except HTTPException:
+                raise refused from None
+            return principal.actor_id
+
+    def test_digest(self, request: Request | WebSocket) -> str:
+        """The value a test permit binds: the session cookie, or the application's bearer token."""
+        if request.headers.getlist("authorization"):
+            return hashlib.sha256(b"bearer\0" + self._bearer(request).encode("ascii")).hexdigest()
+        return self.sessions.digest(request.cookies[COOKIE])
+
+    async def require_test_principal(
+        self, request: Request | WebSocket, *, mutation: bool, test_role: str
+    ) -> ServerSession:
+        """A browser session with both roles, or an application token with the tester role."""
+        if not request.headers.getlist("authorization"):
+            return self.require_test_manager(request, mutation=mutation, test_role=test_role)
+        if (
+            request.scope.get("scheme") not in {"https", "wss"}
+            or request.headers.getlist("origin") not in ([], [self.policy.origin])
+            or not isinstance(test_role, str)
+            or not test_role
+        ):
+            raise HTTPException(403, "test_permission_denied")
+        try:
+            token = self._bearer(request)
+            principal = await self.verifier.verify_tester_application(token, role=test_role)
+        except HTTPException as error:
+            raise HTTPException(
+                403 if error.status_code == 403 else 401, "invalid_identity"
+            ) from None
+        return ServerSession(principal, float(principal.expires_at), "")
 
 
 @dataclass(frozen=True, slots=True)

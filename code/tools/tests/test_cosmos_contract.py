@@ -1,4 +1,4 @@
-"""Spike S-13: the containers the repositories use match the data-store module (partition keys, TTL)."""
+"""Spike S-13: the containers the repositories use match the data-store module."""
 
 import re
 from pathlib import Path
@@ -12,7 +12,11 @@ MANAGEMENT = ROOT / "code/management/management_app"
 
 # container -> (partition key path, the source that writes it, the field that holds the key)
 REPOSITORY_KEYS = {
-    "configuration": ("/organizationId", MANAGEMENT / "adapters/configuration_repository.py", "organizationId"),
+    "configuration": (
+        "/organizationId",
+        MANAGEMENT / "adapters/configuration_repository.py",
+        "organizationId",
+    ),
     "configuration-audit": ("/dayBucket", MANAGEMENT / "adapters/audit_repository.py", "dayBucket"),
     "text-conversations": ("/ownerKey", BACKEND / "adapters/text_history_repository.py", None),
     "call-sessions": ("/id", BACKEND / "adapters/admission_repository.py", "id"),

@@ -195,6 +195,14 @@ real `terraform validate` or first apply.
   name; the management identity's `AZURE_CLIENT_ID` by its name; and the generated public key by
   `CALLER_SIGNING_KEY_ID`. All other nonsecret settings (tenant, client IDs, roles, scope, data store endpoint and
   database, retention, signing key ID) enter the fingerprint as values.
+- **Outcome (T080-T086, owner approved the rule)**: implemented in `management_app/live.py`. The runtime's identity
+  client ID is a further nonsecret value that enters the fingerprint (`CALLER_RUNTIME_CLIENT_ID`, the data source of
+  the script-created identity, known before the apply). The management registration is also its API audience
+  (R-04), so the runtime role is distinct from the editor role instead of the audience being distinct, and the
+  scope setting `api://<client ID>/.default` is checked against the API audience. The fingerprint tool is
+  `python -m management_app.fingerprint`.
+- **Token version**: both registrations are set to issue version 2 access tokens (`api.requestedAccessTokenVersion`
+  by the identity script) because the management app verifies the version 2 issuer and `ver` claim.
 - **Capabilities**: tools and MCP are not part of the journey, so the approved capability set is empty (FR-048).
 
 ## R-12 Management frontend build and runtime address
@@ -207,6 +215,12 @@ real `terraform validate` or first apply.
   (they register states and pages, not live services); (b) start the image with two different `API_URL`
   values and see whether the frontend follows it. If it does not, write the value into the frontend's
   environment file in a small start script, with a container test that fails before the change.
+- **Outcome (T087-T088)**: the frontend did not follow `API_URL` at start (the bundle held `ws://localhost:3000/_event`
+  and `routes.json` listed only `index`). The image now exports with `CALLER_FRONTEND_EXPORT=1`, which registers every
+  page through `management_app/frontend_export.py`, bakes the placeholder `http://caller-api-origin.invalid`, and starts
+  through `python -m management_app.start`, which rewrites the placeholder to `API_URL` (or `CALLER_PUBLIC_ORIGIN`),
+  which Terraform sets to the management app's own origin. The container test failed before the change and passes
+  after it.
 - **Constraint**: Reflex must stay the frontend framework (Principle V).
 
 ## R-13 Data store and credentials
@@ -247,6 +261,13 @@ real `terraform validate` or first apply.
 - **Spike S-14**: confirm that the management API accepts a bearer token with the tester role from the
   deployment identity (federated credential), not only the browser sign-in session. If not, add a small
   application change.
+- **Outcome (T096-T098, owner chose the narrow path)**: it did not (the bearer path needed a delegated scope and the
+  editor role, and tickets needed a cookie). `require_reader` and `require_test_principal` now also accept an app-only
+  token that holds the tester role, for `GET /v2/configuration` and the console ticket and socket only. The check
+  signs in through `az account get-access-token --resource api://<management client ID>`, an operator may pass a
+  token in the environment variable named by `--tester-token-env`, and the pipeline passes `--functional`. The journey
+  covers both probes, the sign-in redirect, an anonymous 401, the configuration read, a text reply within 15 seconds and
+  a speech session that accepts a generated sample and confirms stop.
 - **Alternatives considered**: a Container Apps job inside the environment that runs the journey (new service
   and code, deferred); a temporary runner rule outside Terraform (rejected, the open range for `int` makes it
   unnecessary).

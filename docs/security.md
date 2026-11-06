@@ -239,6 +239,7 @@ approvals behind them.
 | Deployment identity abused | OIDC federation limited to this repository, protected environments for plan and apply with required reviewers, and least-privilege roles |
 | The deployment identity holds the tester role | A compromised pipeline identity could use the test console and model sessions. Controls: protected environments, an OIDC subject limited to this repository, the runtime's admission limit on live sessions, and no directory write permission (it holds only the read permission `Application.Read.All`) |
 | Model sessions abused | Allow-list, sign-in, the test-role check and the admission limit |
+| An application token with the tester role | The management app accepts an app-only token (`idtyp=app`, no scope, audience the management registration, tenant, issuer and `ver` checked, the tester role held) only on `GET /v2/configuration` and the console ticket and socket. It never reaches publishing, capability admission or revocation, which stay editor-only. The permit binds a digest of the bearer token, a socket needs the same token and a cookie next to a token is refused. Decision S-14 (the owner chose a narrow tester path); tests in `code/management/tests/integration/test_live_tester_access.py` |
 | Configuration drift or a manual change | `expect_no_changes` plans fail on any difference, and the environment check compares services and settings with the configuration |
 
 ### The two approved secret exceptions
