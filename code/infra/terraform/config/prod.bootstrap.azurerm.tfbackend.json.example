@@ -1,9 +1,0 @@
-{
-  "resource_group_name": "rg-existing-seed-example",
-  "storage_account_name": "existingseedexample",
-  "container_name": "tfstate",
-  "key": "prod/bootstrap.tfstate",
-  "use_azuread_auth": true,
-  "use_oidc": true,
-  "use_cli": false
-}

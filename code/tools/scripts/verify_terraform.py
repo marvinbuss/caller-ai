@@ -16,14 +16,14 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import httpx
 from ci import ROOT
 
 BASE = ROOT / "code/infra/terraform"
-ROOTS = (BASE / "bootstrap", BASE / "modules/platform", BASE / "environments")
+ROOTS = (BASE / "state", BASE / "bootstrap", BASE / "app_environment")
 
 
 def version() -> str:
@@ -131,14 +131,24 @@ def prepare() -> None:
     binary_path = require_toolchain()
     with tempfile.TemporaryDirectory(prefix="caller-tf-prepare-") as temporary:
         values = verification_environment(Path(temporary))
-        for directory in ROOTS:
+        for directory in (*ROOTS, *modules()):
+            lock = ["-lockfile=readonly"] if (directory / ".terraform.lock.hcl").is_file() else []
             execute(
                 binary_path,
-                ["init", "-backend=false", "-input=false", "-lockfile=readonly", "-no-color"],
+                ["init", "-backend=false", "-input=false", *lock, "-no-color"],
                 directory=directory,
                 values=values,
             )
-    print(json.dumps({"result": "terraform_prepared", "version": version(), "roots": len(ROOTS)}))
+    print(
+        json.dumps(
+            {
+                "result": "terraform_prepared",
+                "version": version(),
+                "roots": len(ROOTS),
+                "modules": len(modules()),
+            }
+        )
+    )
 
 
 def native_test_count(output: str) -> int:
@@ -169,101 +179,79 @@ def native_test_count(output: str) -> int:
         raise RuntimeError("terraform_native_tests_incomplete") from None
 
 
-STAGE_BRANCH = (
-    re.compile(r"var\.environment\b"),
-    re.compile(r"(==|!=)\s*\"(dev|test|prod)\""),
-    re.compile(r"\"(dev|test|prod)\"\s*(==|!=)"),
-    re.compile(r"contains\(\s*\[[^\]]*\"(dev|test|prod)\""),
-    re.compile(r"\$\{[^}]*\}[^\"\n]*\.tfstate"),
-)
+def modules(base: Path = BASE) -> tuple[Path, ...]:
+    """Every reusable module directory; discovered, not listed."""
+    return tuple(sorted(path.parent for path in (base / "modules").glob("*/main.tf")))
 
 
-def strip_comments(text: str) -> str:
-    return re.sub(r"(?m)(#|//).*$", "", text)
+def environment_findings() -> list[str]:
+    """Validate every reviewed environment folder (FR-030); returns the finding messages."""
+    from validate_environment import validate
+
+    return [str(finding) for finding in validate().errors]
 
 
-def stage_name_findings(base: Path = BASE) -> list[str]:
-    """Return `.tf` files that branch on a stage name or interpolate the state key."""
-    found = []
-    for path in sorted(base.rglob("*.tf")):
-        if ".terraform" in path.parts:
-            continue
-        text = strip_comments(path.read_text(encoding="utf-8"))
-        if any(pattern.search(text) for pattern in STAGE_BRANCH):
-            found.append(str(path.relative_to(base)))
-    return found
+def scan_configuration(
+    directory: Path = BASE, *, run_docker: Callable[..., str] | None = None
+) -> int:
+    """Run the digest-pinned Trivy configuration scan; HIGH or CRITICAL findings fail (FR-030).
 
+    Returns the number of scanned targets. Accepted findings carry an inline `#trivy:ignore` with
+    a reason beside the resource.
+    """
+    from audit_dependencies import SCANNER
+    from test_images import docker
 
-def text_history_owner_findings(base: Path = BASE) -> list[str]:
-    """Only the runtime identity may own `text-conversations`; management must have no grant."""
-    security = (base / "modules/platform/security.tf").read_text(encoding="utf-8")
-    owners = re.search(r"container_owners\s*=\s*\{(.*?)\n  \}", security, re.S)
-    entries = dict(re.findall(r"([a-z-]+)\s*=\s*\"([a-z]+)\"", owners.group(1))) if owners else {}
-    return [] if entries.get("text-conversations") == "runtime" else ["text-conversations"]
-
-
-def example_pairs(directory: Path) -> list[tuple[str, str]]:
-    """Discover `(stage, stack)` pairs from file names; no stage name is known to the code."""
-    pairs = set()
-    for path in directory.glob("*.tfvars.json.example"):
-        stage, stack, *_ = path.name.split(".")
-        pairs.add((stage, stack))
-    return sorted(pairs)
-
-
-def validate_example_pair(directory: Path, stage: str, stack: str) -> None:
-    """Check one backend/variable example pair against the stack's declared variables."""
-    root = {"bootstrap": BASE / "bootstrap", "platform": BASE / "environments"}[stack]
-    backend = json.loads(
-        (directory / f"{stage}.{stack}.azurerm.tfbackend.json.example").read_text()
+    runner = run_docker or docker
+    output = runner(
+        "run",
+        "--rm",
+        "--volume",
+        f"{directory.resolve()}:/scan:ro",
+        SCANNER,
+        "config",
+        "--quiet",
+        "--severity",
+        "HIGH,CRITICAL",
+        "--skip-dirs",
+        "**/.terraform",
+        "--format",
+        "json",
+        "/scan",
     )
-    values = json.loads((directory / f"{stage}.{stack}.tfvars.json.example").read_text())
-    declared = {}
-    for path in root.glob("variables.tf"):
-        text = path.read_text(encoding="utf-8")
-        for match in re.finditer(r'variable "([a-z_]+)" \{(.*?)\n\}', text, re.S):
-            declared[match.group(1)] = "default" not in match.group(2)
-    required = {name for name, needed in declared.items() if needed}
-    if (
-        not set(values) <= set(declared)
-        or not required <= set(values)
-        or "environment" in values
-        or not re.fullmatch(
-            r"[A-Za-z0-9._-]{1,64}(/[A-Za-z0-9._-]{1,64}){0,3}\.tfstate", str(backend.get("key"))
-        )
-        or backend.get("use_oidc") is not True
-        or backend.get("use_cli") is not False
-        or any("secret" in key.lower() or "password" in key.lower() for key in {*backend, *values})
-    ):
-        raise ValueError(f"invalid_example_pair:{stage}.{stack}")
-
-
-def check_examples(directory: Path = BASE / "config") -> int:
-    pairs = example_pairs(directory)
-    for stage, stack in pairs:
-        validate_example_pair(directory, stage, stack)
-    return len(pairs)
+    try:
+        report = json.loads(output)
+        results = report["Results"]
+        if not isinstance(results, list) or not results:
+            raise ValueError("no_results")
+        if any(entry.get("Misconfigurations") for entry in results):
+            raise ValueError("misconfiguration")
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise RuntimeError("terraform_security_scan_failed") from None
+    return len(results)
 
 
 def check() -> None:
     binary = require_toolchain()
     native_tests = 0
+    directories = (*ROOTS, *modules())
     with tempfile.TemporaryDirectory(prefix="caller-tf-check-") as temporary:
         values = verification_environment(Path(temporary))
         execute(binary, ["fmt", "-check", "-recursive", str(BASE)], directory=ROOT, values=values)
-        if stage_name_findings() or text_history_owner_findings():
-            raise RuntimeError("terraform_static_check_failed")
-        check_examples()
-        for directory in ROOTS:
+        if environment_findings():
+            raise RuntimeError("environment_validation_failed")
+        for directory in directories:
             execute(binary, ["validate", "-no-color"], directory=directory, values=values)
             result = execute(binary, ["test", "-json"], directory=directory, values=values)
             native_tests += native_test_count(result.stdout)
+    scan_configuration()
     print(
         json.dumps(
             {
                 "result": "terraform_verified",
                 "version": version(),
                 "roots": len(ROOTS),
+                "modules": len(modules()),
                 "native_tests": native_tests,
             }
         )

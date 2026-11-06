@@ -7,6 +7,11 @@ Each application and the development tools have independent environments and com
 Do not substitute a shared uv workspace or a WSL-only result for native Windows verification.
 Docker with Linux containers is needed later for actual image verification, not for native tests.
 
+Terraform needs no installation: the tools prepare a pinned, hash-verified Terraform 1.17.0 binary
+(`verify_terraform.py prepare`) and run every Terraform test with mocked providers and no credential. Docker is also
+used for the pinned Trivy configuration scan in `verify_terraform.py check`. Deploying an environment is described
+in [Environment bring-up](runbooks/environment-bring-up.md).
+
 Dependency and browser preparation may use the internet. Once prepared, local application
 verification must require no Azure login, Cosmos emulator, phone number, model endpoint or
 external-service credentials. Do not disable TLS verification to resolve download failures.

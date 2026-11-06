@@ -1,9 +1,0 @@
-{
-  "resource_group_name": "rg-caller-state-dev-example",
-  "storage_account_name": "callerdevstateexample",
-  "container_name": "tfstate",
-  "key": "dev/platform.tfstate",
-  "use_azuread_auth": true,
-  "use_oidc": true,
-  "use_cli": false
-}

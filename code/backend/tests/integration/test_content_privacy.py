@@ -193,3 +193,57 @@ async def test_browser_speech_audio_transcripts_and_provider_bodies_remain_volat
     finally:
         telemetry.close()
         await adapter.close()
+
+
+# --- live mode: no token, key or input value in an error, a log event or a health body ---
+
+PRIVATE_VALUE = "synthetic private value <that> must never appear"
+
+
+def live_values():
+    from tests.integration.test_live_composition import environment
+
+    return environment()
+
+
+@pytest.mark.parametrize("name", [name for name in live_values() if name != "CALLER_MODE"])
+def test_a_bad_live_setting_stops_the_start_with_a_code_and_never_echoes_the_value(
+    monkeypatch, name
+):
+    from caller_runtime.settings import REASON_CODES, Settings, StartupError
+
+    for key in live_values():
+        monkeypatch.delenv(key, raising=False)
+    for key, value in {**live_values(), name: PRIVATE_VALUE}.items():
+        monkeypatch.setenv(key, value)
+    try:
+        Settings().live()
+    except StartupError as error:
+        assert error.code in REASON_CODES and str(error) == error.code
+        assert PRIVATE_VALUE not in repr(error) and error.__cause__ is None
+    else:
+        raise AssertionError("a bad value was accepted")
+
+
+def test_live_health_and_logs_never_hold_a_token_or_a_provider_detail(monkeypatch, caplog):
+    from fastapi.testclient import TestClient
+
+    from caller_runtime.live import build_live_runtime
+    from caller_runtime.main import create_app
+    from caller_runtime.settings import Settings
+    from tests.integration.test_live_composition import Cosmos, Credential, environment
+
+    for key in environment():
+        monkeypatch.delenv(key, raising=False)
+    for key, value in environment().items():
+        monkeypatch.setenv(key, value)
+    settings = Settings()
+    composition = build_live_runtime(settings, credential_factory=Credential, cosmos_factory=Cosmos)
+    composition.dependencies._credential.fail = True
+    with TestClient(create_app(settings, dependencies=composition.dependencies)) as client:
+        texts = [client.get("/healthz").text, client.get("/readyz").text]
+        texts.append(
+            client.get("/v1/unknown", headers={"Authorization": "Bearer " + PRIVATE_VALUE}).text
+        )
+    everything = "\n".join([*texts, caplog.text, repr(settings), repr(settings.live())])
+    assert "synthetic-private-detail" not in everything and PRIVATE_VALUE not in everything

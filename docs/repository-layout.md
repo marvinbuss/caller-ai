@@ -16,11 +16,14 @@ handling or editor; separately authorized synthetic local editing is described i
 | `code/tools/` | Independent development tools and portable verification scripts |
 | `code/contracts/` | Accepted versioned interface schemas, not shared persistence code |
 | `docs/` | Single maintained home for setup, architecture, runbooks, assets and acceptance evidence |
-| `code/infra/terraform/` | Later Terraform-only infrastructure; not needed for local startup |
-| `.github/workflows/` | Required GitHub workflow discovery metadata only |
+| `code/infra/terraform/` | Terraform: three roots (`state`, `bootstrap`, `app_environment`) and thirteen reusable modules, each with a README and tests; not needed for local startup |
+| `code/infra/environments/` | One reviewed folder per environment (`int`, `dev`, `tst`, `prd`) with its variable file and three backend files; see [Environments](environments.md) |
+| `code/infra/scripts/` | Directory-side scripts run by an administrator (the identity script, once it is delivered) |
+| `.github/workflows/` | CI, release, image publishing and the protected Terraform deployment workflows (`terraform-deploy.yml` and one caller per root) |
 | `specs/001-call-center-agents/` | Requirements, design and reviewer-owned checklists |
 | `specs/002-multimodal-agent-management/` | Multimodal feature contracts, design and implementation evidence |
 | `specs/003-codebase-simplification/` | Simplification plan, tasks and decisions (see [library decisions](library-decisions.md)) |
+| `specs/004-int-environment-setup/` | First internal test environment: specification, plan, contracts and tasks |
 
 Workflow helpers and pre-commit configuration belong under `code/`. Neither application may
 read another application's private database. Live management owns its configuration; the

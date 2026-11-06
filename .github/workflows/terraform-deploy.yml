@@ -9,7 +9,19 @@ on:
       root:
         type: string
         required: true
+      slug:
+        description: Hyphenated root name used in protected deployment environment names
+        type: string
+        required: true
       apply_changes:
+        type: boolean
+        default: false
+      expect_no_changes:
+        description: Fail the plan when it contains any change (drift or repeat-run check)
+        type: boolean
+        default: false
+      destroy:
+        description: Plan the removal of the root (bootstrap and app_environment only)
         type: boolean
         default: false
       runner_labels:
@@ -28,7 +40,7 @@ jobs:
     if: github.repository == 'marvinbuss/caller-ai' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
-    environment: ${{ inputs.environment }}-terraform-${{ inputs.root }}-plan
+    environment: ${{ inputs.environment }}-terraform-${{ inputs.slug }}-plan
     permissions:
       contents: read
       actions: read
@@ -40,12 +52,15 @@ jobs:
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
       DEPLOY_ROOT: ${{ inputs.root }}
       PLAN_CONTAINER: ${{ vars.TF_PLAN_CONTAINER }}
-      TF_DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}-terraform-${{ inputs.root }}-plan
+      TF_DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}-terraform-${{ inputs.slug }}-plan
       TF_DELIVERY_OPERATION: plan
+      EXPECT_NO_CHANGES: ${{ inputs.expect_no_changes && 'true' || 'false' }}
+      DESTROY: ${{ inputs.destroy && 'true' || 'false' }}
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TF_VAR_management_signin_secret: ${{ inputs.root == 'app_environment' && secrets.MANAGEMENT_SIGNIN_SECRET || '' }}
     steps:
       - name: Check out exact source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -75,14 +90,18 @@ jobs:
       - name: Plan and store private review artifacts
         id: plan
         shell: bash
-        run: uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation plan --environment "$DEPLOY_ENVIRONMENT" --root "$DEPLOY_ROOT" --plan-container "$PLAN_CONTAINER"
+        run: |
+          flags=()
+          if [[ "$EXPECT_NO_CHANGES" == "true" ]]; then flags+=(--expect-no-changes); fi
+          if [[ "$DESTROY" == "true" ]]; then flags+=(--destroy); fi
+          uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation plan --environment "$DEPLOY_ENVIRONMENT" --root "$DEPLOY_ROOT" --plan-container "$PLAN_CONTAINER" "${flags[@]}"
 
   apply:
     if: inputs.apply_changes && needs.plan.result == 'success' && needs.plan.outputs.changes != '0'
     needs: plan
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 120
-    environment: ${{ inputs.environment }}-terraform-${{ inputs.root }}-apply
+    environment: ${{ inputs.environment }}-terraform-${{ inputs.slug }}-apply
     permissions:
       contents: read
       actions: read
@@ -92,12 +111,13 @@ jobs:
       DEPLOY_ROOT: ${{ inputs.root }}
       PLAN_CONTAINER: ${{ vars.TF_PLAN_CONTAINER }}
       PLAN_SHA256: ${{ needs.plan.outputs.plan_sha256 }}
-      TF_DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}-terraform-${{ inputs.root }}-apply
+      TF_DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}-terraform-${{ inputs.slug }}-apply
       TF_DELIVERY_OPERATION: apply
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TF_VAR_management_signin_secret: ${{ inputs.root == 'app_environment' && secrets.MANAGEMENT_SIGNIN_SECRET || '' }}
     steps:
       - name: Check out exact planned source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -123,4 +143,20 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Apply only the reviewed checksum-bound saved plan
         shell: bash
+        env:
+          ENVIRONMENT_MANIFEST_PATH: ${{ runner.temp }}/environment-manifest.json
         run: uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation apply --environment "$DEPLOY_ENVIRONMENT" --root "$DEPLOY_ROOT" --plan-container "$PLAN_CONTAINER" --expected-plan-sha256 "$PLAN_SHA256"
+      - name: Check the deployed environment
+        if: inputs.root == 'app_environment' && !inputs.destroy
+        shell: bash
+        env:
+          ENVIRONMENT_MANIFEST_PATH: ${{ runner.temp }}/environment-manifest.json
+          CHECK_RESULT_PATH: ${{ runner.temp }}/environment-check.json
+        run: |
+          set +e
+          uv run --project code/tools --locked python code/tools/scripts/check_environment.py --environment "$DEPLOY_ENVIRONMENT" --manifest "$ENVIRONMENT_MANIFEST_PATH" --functional --json "$CHECK_RESULT_PATH"
+          status=$?
+          if [[ -f "$CHECK_RESULT_PATH" ]]; then
+            { echo '### Environment check'; echo '```json'; cat "$CHECK_RESULT_PATH"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"

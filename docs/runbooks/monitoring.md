@@ -3,8 +3,7 @@
 ## Feature 002 Application Alerts
 
 Both services classify bounded metadata-only `test.alert` events locally. This is separate
-from the platform metrics and disabled alert definitions below.
-No cloud collector, hosting rule, action group or default network delivery was added.
+from the environment alerts below, which the deployment configures in the workspace.
 
 | Fixed Reason | Trigger | Accountable Response |
 |--------------|---------|----------------------|
@@ -46,36 +45,42 @@ metadata, queue-full containment and no post-shutdown invocation in both service
 These ports create no collector, endpoint, credential discovery or default worker, and their
 presence does not complete the actual delivery/recipient/recovery gate.
 
-## Platform Metrics Status and Boundaries
+## Environment alerts
 
-T097 has local service-owned OpenTelemetry meters, explicitly injected SDK delta readers,
-actual producer/collection tests and source-pinned mocked Terraform alert contracts.
-It is **not complete**: there is no configured cloud metric
-exporter/collector, verified ingestion mapping, executed Azure query or live notification
-delivery evidence. All ten Terraform alert definitions are deliberately disabled, with query
-validation retained. No environment authentication, real plan/apply, deployment, provider
-connection or notification has been attempted. Do not treat disabled rules as protection.
-
-Each lifespan owns its meter provider and shuts it down. Default collection is in memory,
-with no global provider or implicit network exporter. Explicit reader injection is a trusted
-composition boundary, not an untrusted URL setting. Application live startup remains closed.
-Metrics do not authorize capabilities, allocate ownership or renew leases.
+Each environment deploys its monitoring with the `monitoring` module (see [Platform](platform.md)): a Log Analytics
+workspace that receives the container app logs and metrics, a workspace-based Application Insights component,
+one action group and the alerts below. Every alert carries an owner and an HTTPS runbook link in its description;
+the module rejects an alert without both. The environment file sets the thresholds, the retention, the daily cap
+and the action group's e-mail receivers.
 
 ```mermaid
 flowchart LR
-    Runtime[Runtime HTTP middleware and readiness] --> RuntimeMeter[Runtime bounded aggregate meter]
-    Management[Management HTTP and capability gateway] --> ManagementMeter[Management bounded aggregate meter]
-    RuntimeMeter --> Local[Real OTel in-memory collection tests]
-    ManagementMeter --> Local
-   RuntimeMeter --> RuntimeDelta[Explicit runtime SDK delta reader]
-   ManagementMeter --> ManagementDelta[Explicit management SDK delta reader]
-   RuntimeDelta --> Sink[Injected synthetic SDK exporter tests]
-   ManagementDelta --> Sink
-   RuntimeDelta -. unimplemented qualified Azure exporter .-> Cloud[Private workspace-based AppMetrics]
-   ManagementDelta -. unimplemented qualified Azure exporter .-> Cloud
-    Cloud -. unverified query execution .-> Alerts[Ten disabled alert definitions]
-    Alerts -. unverified delivery .-> Targets[Reviewed existing action groups and on-call owners]
+    Apps["Runtime and management apps"] --> Logs["Console logs and platform metrics"]
+    Logs --> Workspace["Log Analytics workspace"]
+    Workspace --> Query["Log-query alerts"]
+    Apps --> Metrics["Container Apps platform metrics"]
+    Metrics --> Platform["Metric alerts"]
+    Query --> Group["Action group"]
+    Platform --> Group
+    Group --> Owner["Alert owner and runbook"]
 ```
+
+| Alert | Source | Fires when | First response |
+|-------|--------|------------|----------------|
+| `5xx` per app | Platform metric `Requests`, status category 5xx | The total exceeds `alerts.http_5xx_count` | Read the app's recent console logs for the failing route; check the dependency named by the event; do not restart before preserving the evidence |
+| `restarts` per app | Platform metric `RestartCount` | The total exceeds `alerts.restart_count` | Read the start reason code in the logs ([Application live mode](application-live-mode.md)); a loop of `settings_*` codes means a bad deployment, roll back |
+| `replicas` per app | Platform metric `Replicas` | The minimum drops below 1 | The app is not running; the revision is unhealthy or the environment is failing; run the environment check and roll back if needed |
+| `cpu` and `memory` per app | Platform metrics `CpuPercentage`, `MemoryPercentage` | The average exceeds `alerts.cpu_percent` or `alerts.memory_percent` | Check for a stuck session; the apps have one replica, so a sustained value means the container size needs review |
+| `dependency failures` | Log query over the apps' structured events | More than `alerts.dependency_count` events with a failure outcome and the dependency category | Check the named dependency (data store, vault, model account) and the private endpoint state |
+| `latency` | Log query over `latency_ms` in the structured events | More than five events slower than `alerts.latency_ms` | Compare with model latency; the deployment has no measured capacity target ([capacity](../capacity.md)) |
+
+The log-query alerts match the structured event fields the applications write. A change to those fields needs
+a change to the queries.
+
+Alerts evaluate on the platform. Nothing here proves that a notification reached a person: after the first
+deployment the owner fires the check's `alert-test` (`check_environment.py --test-alert`), confirms receipt and
+records it in the [acceptance record](../acceptance/int-environment.md). Until then the alerts are configured, not
+shown to deliver.
 
 ## Metric Contract
 
@@ -138,75 +143,16 @@ storage. Its actual identity, destination, privacy, timeout and cleanup behavior
 and tested separately. Local synthetic exporter acceptance is not authenticated ingestion,
 durable receipt, an action-group acknowledgment or a live monitoring acceptance result.
 
-## Alert Definitions and Required Inputs
+## Operating the alerts
 
-The required `monitoring` object has exactly `runtime` and `management` entries. Each requires
-an opaque accountable `owner`, credential-free published HTTPS `runbook_url`, reviewed existing
-`action_group_id`, error ratio, mean-latency seconds, dependency-failure count, saturation ratio
-and minimum request sample count. `daily_cap_gb` is explicit and bounded per Application Insights
-component. Supported retention is explicit through the existing service retention input.
-No production thresholds, on-call targets, approval evidence or notification credentials are
-invented. The shared JSON is synthetic native-test input only; `example.invalid` is not delivery.
-
-Each service has a private, Entra-only, workspace-based Application Insights component linked
-to the existing private-only Monitor scope, with public ingestion/query disabled and IP masking
-enabled. No keys/connection strings are outputs. Existing private endpoint/DNS topology and
-administrative permissions still require live qualification; broader grants can defeat isolation.
-Do not enable public ingestion/query, key auth, blanket egress or automatic instrumentation
-to bypass a failed check. The declared daily cap is not an absolute cost or privacy guarantee.
-
-| Rule per service | Query statistic over five minutes | Threshold and response |
-|------------------|-----------------------------------|------------------------|
-| Errors | Sum of delta 5xx counts / delta request counts, after minimum samples | Above reviewed `error_ratio`; inspect safe route/status categories, preserve failure evidence |
-| Latency | Sum of duration / total sample count, after minimum samples | Above reviewed `mean_latency_seconds`; inspect bounded dependency budgets, do not claim p95 |
-| Dependencies | Sum of delta dependency-failure counts | Above reviewed `dependency_failures`; inspect fixed failure stage and deadline, do not broaden access |
-| Saturation | Maximum reported bounded ratio | Above reviewed `saturation_ratio`; inspect the reported resource or latest management deadline use, do not delete active pods |
-| Missing | No request-metric rows, including expected health-probe traffic | Above zero; investigate collection failure or stopped service, never interpret silence as healthy |
-
-Definitions evaluate every minute, require two failing evaluations and auto-mitigate. Missing
-telemetry is severity 1; other signals severity 2. They project only numeric `Observed`, add no
-alert dimensions, and carry fixed service/signal plus supplied owner/runbook properties to one
-approved action-group reference. Action groups themselves, contacts, automatic remediation,
-pod deletion and rollout orchestration are not created here. Keep cleanup
-verification and the [private platform boundaries](platform-security.md) in force.
-
-Every query filters `_ResourceId` to its own declared Application Insights component as well
-as the fixed service role. This includes missing-data alerts, so a different component with a
-colliding service label cannot satisfy that signal. Native tests assert the actual resource
-IDs across all ten rules; they do not execute KQL against Azure.
-
-The proposed queries use the documented AppMetrics `AppRoleName`, `Name`, `Sum`, `ItemCount`
-and `Max` columns. They require a reviewed Azure **delta** counter/histogram mapping and correct
-gauge/sample semantics. Feeding cumulative counters into these queries would overcount.
-AppMetrics sum/count supports a weighted mean, not a true histogram p95. Neither SDK collection
-tests nor native HCL assertions execute KQL or establish Azure exporter fidelity. Before activation,
-preserve and qualify the source-resource filters and prove multi-instance aggregation, process
-resets, missing samples, collection lag and minimum-sample behavior. The current local
-coordinator does not establish cluster-wide gauges or per-pod outage detection.
-
-## Qualification and Operator Evidence
-
-Under separately authorized T099/T118 work, the service owner and platform operator must:
-
-1. Approve actual owners, deployed runbooks, thresholds, retention/cost budgets and action-group
-   targets, including the expected probe/metric cadence. Review effective Monitor data/query
-   permissions and shared private DNS ownership.
-2. Select and review the actual Azure metrics-only exporter and collection schedule, composing
-   the tested explicit reader using approved feeds,
-   workload identity, private transport and the allowlisted schema. Exclude automatic traces,
-   logs, content and host/user/session enrichment; test output before enabling network export.
-3. Prove authenticated private ingestion and real AppMetrics names, roles, units, delta sums,
-   sample counts and gauges. Execute each query on synthetic safe inputs and verify recovery,
-   silence, restart and multi-instance behavior, without changing production conversation content.
-4. Wire truthful active-session and time-to-first-audio producers. Measure live speech
-   limits separately; do not substitute local fake-model or HTTP latency.
-5. With explicit operator approval, enable reviewed rules through a code change and test
-   firing, on-call receipt, runbook access and resolution for both services. Record UTC trigger,
-   observed rule/action-group IDs, recipient acknowledgment/delivery latency, recovery and
-   accountable reviewer in the live evidence artifact, without payloads or secrets.
-6. Leave T097 and live/release qualification open for every absent mapping/query/delivery check.
-   An operator may disable a noisy rule only with an accountable incident record and replacement
-   monitoring; the local defaults confer no waiver or production monitoring coverage.
+1. Keep the owner and runbook link of every alert current in the environment file. The action group's receivers
+   are the only notification path; an unmonitored mailbox defeats every alert.
+2. Raise a threshold only with a recorded reason and a review of the plan. Never disable an alert to silence it
+   without an incident record and replacement monitoring.
+3. After a deployment, run the environment check with `--test-alert` and record the receipt.
+4. Application-level events (`cleanup_uncertain`, `dependency_failures`, `latency_high`) are classified inside the
+   services as described at the top of this guide; they reach the workspace through the console logs and the log
+   queries above.
 
 ## Local Verification
 
@@ -217,13 +163,7 @@ uv run --project code/tools --locked --no-sync python code/tools/scripts/verify_
 uv run --project code/tools --locked --no-sync python code/tools/scripts/verify_docs.py
 ```
 
-Actual OTel reader tests inspect recorded points, label rejection, finite values, delta intervals,
-empty collection, exporter errors, sticky loss, cooperative budgets, no worker and final cleanup.
-Real ASGI request/error/readiness tests and injected gateway producer tests exercise the owning code. Native Terraform tests mock both providers; they
-assert private components, both-service rule coverage, thresholds, owners/targets/runbooks,
-disabled/query-validation policy and unsafe/incomplete input rejection. They do not connect
-to a backend or qualify Azure delivery. Full-suite results remain separately reported rather
-than being replaced by these focused commands.
-
-References: [AppMetrics schema](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/appmetrics)
-and [Azure Monitor Private Link](https://learn.microsoft.com/en-us/azure/azure-monitor/fundamentals/private-link-security).
+The metric and reader tests inspect recorded points, label rejection, finite values, delta intervals, exporter
+errors, sticky loss and final cleanup. The module's native Terraform tests mock the provider and assert the
+workspace, the action group, the alert set, the owner and runbook requirement and the rejection of incomplete
+input. They do not connect to Azure or show that a notification is delivered.

@@ -122,6 +122,6 @@ async def test_unqualified_live_startup_never_enters_configuration_scope(activat
             pytest.fail("live_mode_constructed_configuration_scope")
 
     application = create_app(Settings(mode="live"), configuration_activation=ForbiddenActivation())
-    with pytest.raises(RuntimeError, match="live_mode_unavailable"):
+    with pytest.raises(RuntimeError, match="settings_missing"):
         async with application.router.lifespan_context(application):
             pass

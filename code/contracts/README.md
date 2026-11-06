@@ -99,3 +99,10 @@ attempt retains the original work `deadlineAt` through current/reviewed/pinned g
 and the ordered revocation admission. Retryable dependency errors do not replay conversation
 work. The runtime confirms its own owner/generation-bound intent before dispatch and does not
 release uncertain capacity after cancellation, transport failure or ambiguous 5xx outcomes.
+
+## Permit vector
+
+[permit_vector.py](permit_vector.py) is a throwaway test vector for the start permit (feature 004, FR-051):
+two public keys and two signed tokens, with the private keys discarded. The management signer's contract
+test checks that a fresh signature has the same header and claims, and the runtime's contract test checks that
+its verifier accepts both tokens with one to four keys, which proves the overlap during a key rotation.

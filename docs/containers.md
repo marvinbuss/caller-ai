@@ -38,10 +38,15 @@ Granian ASGI server on port 3000, with Reflex compilation skipped and compiled f
 mounting enabled. This avoids the Reflex production CLI's rebuild path. One management
 worker preserves the foundation's memory state; this is not a production scale-out design.
 
-The image build argument `PUBLIC_API_URL` defaults to `http://localhost:3000`. Set it to
-the actual browser-visible origin for another host port or HTTPS ingress. Relative URLs
-fail the pinned framework's prerender step. Runtime environment changes cannot rewrite
-compiled frontend URLs. The automated harness builds for its selected free host port.
+The image build argument `PUBLIC_API_URL` defaults to the placeholder
+`http://caller-api-origin.invalid`, which the export bakes into the frontend. At start the image runs
+`python -m management_app.start`, which rewrites the placeholder (and its socket form) to `API_URL`, or to
+`CALLER_PUBLIC_ORIGIN` when `API_URL` is unset, and then starts the server; one image therefore serves any
+environment (FR-047). Only a plain `http(s)://host[:port]` origin is accepted; anything else stops the start with
+exit code 2. Relative URLs fail the pinned framework's prerender step. The export runs with
+`CALLER_FRONTEND_EXPORT=1`, which registers the editor and test console pages through a build-only stub, so the
+exported frontend contains every page. The automated harness builds for its selected free host port and then
+checks both behaviours.
 
 ```text
 uv run --project code/tools --locked python code/tools/scripts/test_images.py
@@ -74,3 +79,12 @@ Use separate terminals for the two foreground runs. Require actual health/readin
 the real browser shell and event connection, non-root execution, no startup downloads, and
 guaranteed cleanup before accepting either image. Do not publish images or provision Azure
 resources as part of this credential-free foundation.
+
+## Published images
+
+The two images are published by the `images` workflow to GitHub's container registry as
+`ghcr.io/marvinbuss/caller-ai/runtime` and `ghcr.io/marvinbuss/caller-ai/management`, with the immutable tags
+`sha-<40 hex>` and `v<semver>`. They are scanned for secrets and HIGH or CRITICAL vulnerabilities before
+publishing and are pulled without a credential. Nothing environment-specific is built into an image; a deployed
+app receives its settings at start (see [Application live mode](runbooks/application-live-mode.md)). Publishing
+rules are in [Image publishing](runbooks/image-publishing.md).
