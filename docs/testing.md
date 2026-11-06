@@ -32,3 +32,19 @@ runtime, and checks the stored history and the one correlation id in both apps' 
 `ci.py e2e` (a locked environment that installs both apps). To run it beside the other tests without that
 environment, use the management environment: `uv run --directory code/management python -m pytest ../e2e/tests`
 borrows the runtime's source and packages from `code/backend/.venv`.
+
+Where the public package index is unreachable, install the same locked environment through a mirror that
+you set in your own shell (see `code/.local`, which is not committed). The lock is never rewritten: export
+its hash-pinned requirements to a temporary file and install them with hash checking, so the mirror can
+only serve the exact files the lock names. From `code/e2e`:
+
+```powershell
+uv export --frozen --no-header --no-emit-package caller-runtime --no-emit-package caller-management --no-emit-package caller-e2e --output-file $env:TEMP\e2e-requirements.txt
+uv venv --python 3.12 .venv
+uv pip install --python .venv\Scripts\python.exe --require-hashes --no-deps -r $env:TEMP\e2e-requirements.txt
+uv pip install --python .venv\Scripts\python.exe --no-deps ..\backend ..\management
+.\.venv\Scripts\python.exe -m pytest tests -q -p no:cacheprovider
+```
+
+Do not run `uv lock` or `uv sync --locked` with a mirror set: the lock names the public index, so they
+either fail or rewrite it. `ci.py check` rejects a mirror host in any committed file.
