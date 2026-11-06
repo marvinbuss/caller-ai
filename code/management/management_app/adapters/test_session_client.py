@@ -26,7 +26,11 @@ from fastapi import HTTPException, WebSocket
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
-from management_app.adapters.backend_connection import TurnPermits, compose_request
+from management_app.adapters.backend_connection import (
+    TurnPermits,
+    compose_request,
+    correlation_for,
+)
 from management_app.adapters.backend_errors import BACKEND_CLOSE_CODES, PUBLIC_CODES, BackendRefusal
 from management_app.adapters.relay_frames import RelayFrames, RelayLimit, parse_control
 from management_app.adapters.text_relay import ActiveRevision, TextRelay
@@ -517,6 +521,7 @@ class TestSessionClient:
                     token=token.token,
                     signed_permit=signed_permit,
                     request_id=permit.request_id,
+                    correlation_id=correlation_for(permit.request_id),
                 )
                 runtime = await self._factory(
                     request.url,
@@ -548,7 +553,11 @@ class TestSessionClient:
                     await browser.send_text(ready)
                     if self._telemetry is not None:
                         self._telemetry.event(
-                            "test.relay", "success", mode=permit.mode, reason="ready"
+                            "test.relay",
+                            "success",
+                            mode=permit.mode,
+                            reason="ready",
+                            correlation_id=correlation_for(permit.request_id),
                         )
             signed_permit = ""
             token_expires = token.expires_on
@@ -580,7 +589,11 @@ class TestSessionClient:
                 code = 1008
             if self._telemetry is not None and code in {1011, 1013} and reason != "manager_busy":
                 self._telemetry.event(
-                    "test.relay", "failure", mode=permit.mode, reason="unavailable"
+                    "test.relay",
+                    "failure",
+                    mode=permit.mode,
+                    reason="unavailable",
+                    correlation_id=correlation_for(permit.request_id),
                 )
             try:
                 async with asyncio.timeout(1):

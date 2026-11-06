@@ -116,3 +116,18 @@ def test_readiness_reads_only_the_cached_history_probe(healthy: bool) -> None:
         assert response.status_code == (200 if healthy else 503)
         assert response.json()["reason_codes"] == ([] if healthy else ["history_store_unavailable"])
         assert client.get("/healthz").status_code == 200
+
+
+def test_the_request_event_carries_the_correlation_id_the_management_app_sent() -> None:
+    """The management app sends one opaque id per console session; the runtime must log that id."""
+    from caller_runtime.settings import Settings
+
+    application = create_app(Settings())
+    with TestClient(application) as client:
+        sent = "0123456789abcdef0123456789abcdef"  # pragma: allowlist secret
+        response = client.get("/healthz", headers={"X-Correlation-ID": sent})
+        assert response.headers["X-Correlation-ID"] == sent
+        events = [
+            event for event in application.state.telemetry.events if event["event"] == "request"
+        ]
+        assert events and events[-1]["correlation_id"] == sent

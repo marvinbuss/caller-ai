@@ -392,3 +392,38 @@ def test_lost_console_session_ends_the_text_session_before_any_request():
 
     assert not requests and tokens.await_count == 0
     assert browser.closed is not None and browser.closed[0] == 1008
+
+
+def test_one_console_session_sends_one_correlation_id_to_the_runtime_and_shows_it_in_its_own_end():
+    """Principle VII: the runtime records the id the management app sends (its request event)."""
+    import re
+
+    from management_app.adapters.backend_connection import correlation_for
+
+    async def handler(request):
+        return reply()
+
+    browser, requests, _tokens = run_text_session(handler, ["First", "Second"])
+    expected = correlation_for(permit_document()["requestId"])
+    assert re.fullmatch(r"[0-9a-f]{32}", expected)
+    assert {request.headers["x-correlation-id"] for request in requests} == {expected}
+    ended = [value for value in browser.displayed if value["type"] == "ended"]
+    assert [value["correlationId"] for value in ended] == [expected]
+
+
+def test_the_correlation_id_is_deterministic_per_request_and_opaque():
+    from management_app.adapters.backend_connection import compose_request, correlation_for
+
+    assert correlation_for("request-1") == correlation_for("request-1")
+    assert correlation_for("request-1") != correlation_for("request-2")
+    assert "request-1" not in correlation_for("request-1")
+    request = compose_request(
+        "text",
+        origin=ORIGIN,
+        token="t",
+        signed_permit="p",
+        request_id="r",
+        text="x",
+        correlation_id=correlation_for("request-1"),
+    )
+    assert request.headers["X-Correlation-ID"] == correlation_for("request-1")

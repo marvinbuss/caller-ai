@@ -1,7 +1,7 @@
 """The backend verifies the committed permit vector with one to four keys (FR-051)."""
 
 import asyncio
-import json
+import runpy
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from caller_runtime.adapters.identity import TestPermitVerifier
 
-VECTOR = json.loads((Path(__file__).parents[3] / "contracts" / "permit-vector.json").read_text())
+VECTOR = runpy.run_path(str(Path(__file__).parents[3] / "contracts" / "permit_vector.py"))["VECTOR"]
 NOW = datetime(2026, 11, 5, 12, 0, 0, tzinfo=UTC)
 OLD, NEW = "vector-key-old", "vector-key-new"
 

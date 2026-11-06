@@ -30,9 +30,8 @@ def test_the_tool_prints_the_value_the_app_computes(monkeypatch: pytest.MonkeyPa
 
 
 def test_secrets_and_the_reviewed_value_in_the_input_change_nothing() -> None:
-    assert fingerprint_of({**complete(), "CALLER_ENTRA_CLIENT_SECRET": "other"}) == fingerprint_of(
-        reviewable()
-    )
+    changed = {**complete(), "CALLER_ENTRA_CLIENT_SECRET": "other"}  # pragma: allowlist secret
+    assert fingerprint_of(changed) == fingerprint_of(reviewable())
 
 
 def test_main_reads_a_settings_file_and_prints_only_the_fingerprint(

@@ -820,3 +820,38 @@ def test_the_runtime_role_can_never_be_the_manager_role(security) -> None:
             role="Configuration.Manager",
             allowed_client_ids=frozenset({RUNTIME_CLIENT}),
         )
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"error": "invalid_client", "error_description": "AADSTS7000222: synthetic-secret-expired"},
+        {"error": "invalid_client", "error_description": "AADSTS7000215: synthetic-secret-wrong"},
+        {},
+        {"id_token": "x"},
+        {"id_token": "x", "id_token_claims": {}},
+    ],
+)
+def test_an_expired_or_invalid_sign_in_secret_fails_closed_without_detail(result) -> None:
+    """The token exchange answers an error for a bad secret; no session or detail follows."""
+    from management_app.adapters.entra_oidc import MsalCodeFlow
+    from management_app.security import EntraPolicy, LoginFlow
+
+    class Application:
+        def acquire_token_by_auth_code_flow(self, original, response):
+            return result
+
+    policy = EntraPolicy(
+        tenant_id=TENANT,
+        client_id=CLIENT,
+        api_audience=AUDIENCE,
+        origin=ORIGIN,
+        manager_role="Configuration.Manager",
+        manager_scope="Configuration.ReadWrite",
+    )
+    flow = MsalCodeFlow(policy=policy, application_factory=Application)
+    login = LoginFlow(url="u", state="s", private=(Application(), {}))
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(flow.finish(login, {"code": "c"}))
+    assert raised.value.status_code == 401 and raised.value.detail == "invalid_identity_response"
+    assert "AADSTS" not in repr(raised.value) and "synthetic" not in repr(raised.value)
