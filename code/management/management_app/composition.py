@@ -110,6 +110,7 @@ class ManagementTestResources:
     signing_key: RSAPrivateKey = field(repr=False)
     verification_keys: Mapping[str, RSAPublicKey] = field(repr=False)
     credential: WorkloadCredential = field(repr=False)
+    transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
 
 
 class ManagementRequest(BaseModel):
@@ -396,6 +397,7 @@ async def compose_management(
                     telemetry=telemetry,
                     permits=TurnPermits(signer, lambda: datetime.now(UTC)),
                     active_revision=active_revision,
+                    http_transport=resolved.tests.transport,
                 )
             gateway = CapabilityGateway(
                 repository=repository,

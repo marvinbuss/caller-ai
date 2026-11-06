@@ -89,6 +89,8 @@ def build_live_runtime(
     credential_factory: Callable[..., Any] | None = None,
     cosmos_factory: Callable[..., Any] | None = None,
     http: httpx.AsyncClient | None = None,
+    configuration_transport: httpx.AsyncBaseTransport | None = None,
+    text_transport: Any = None,
     utc_now: Callable[[], datetime] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> LiveComposition:
@@ -121,5 +123,7 @@ def build_live_runtime(
         },
         utc_now=utc_now or (lambda: datetime.now(UTC)),
         monotonic=monotonic,
+        configuration_transport=configuration_transport,
+        text_transport=text_transport,
     )
     return LiveComposition(runtime=runtime, dependencies=clients)

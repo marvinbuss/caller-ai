@@ -22,7 +22,10 @@ import httpx2
 from fastapi import APIRouter
 from pydantic import Field, model_validator
 
-from caller_runtime.adapters.admission_repository import TestAdmissionRepository
+from caller_runtime.adapters.admission_repository import (
+    AuthorityUnavailable,
+    TestAdmissionRepository,
+)
 from caller_runtime.adapters.capability_client import ConversationCapabilityClient
 from caller_runtime.adapters.configuration_client import ConfigurationClient
 from caller_runtime.adapters.foundry_text import FoundryTextAdapter
@@ -458,7 +461,13 @@ class ConversationRuntime:
             async with asyncio.timeout_at(deadline):
                 container = await self._container_factory(AUTHORITY_CONTAINER)
                 repository = TestAdmissionRepository(container=container)
-                initial_authority = await repository.read(deadline=deadline)
+                try:
+                    initial_authority = await repository.read(deadline=deadline)
+                except AuthorityUnavailable:
+                    # A fresh store has no authority yet; create-if-absent is safe to repeat.
+                    initial_authority = await repository.initialize(
+                        now=utc(self._utc_now()), deadline=deadline
+                    )
                 self.repository = repository
                 self._credential = await self._credential_factory()
                 if self._credential is None:

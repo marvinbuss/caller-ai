@@ -22,3 +22,13 @@ manager identity, so a test session left in `cleanup pending` holds only that ca
 not fail the cases after it. The speech cases press Mute only when no audio is queued on the console socket, because the console ends a session that is muted with audio still queued.
 
 Markers: `quick` (fast tier) and `browser` (needs prepared Chromium). `--strict-markers` is on.
+
+## In-process end-to-end journey
+
+`code/e2e` composes the runtime and the management app from their live settings in one process, with
+fake stores, a local identity authority and a streamed model. One test publishes a configuration, reads
+it as a tester application, requests a signed ticket, runs a text turn through the console socket and the
+runtime, and checks the stored history and the one correlation id in both apps' events. CI runs it with
+`ci.py e2e` (a locked environment that installs both apps). To run it beside the other tests without that
+environment, use the management environment: `uv run --directory code/management python -m pytest ../e2e/tests`
+borrows the runtime's source and packages from `code/backend/.venv`.

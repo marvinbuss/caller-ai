@@ -154,7 +154,10 @@ def signing_material(live: LiveSettings) -> tuple[RSAPrivateKey, Mapping[str, An
 
 
 def build_resources(
-    live: LiveSettings, clients: AzureClients, http: httpx.AsyncClient
+    live: LiveSettings,
+    clients: AzureClients,
+    http: httpx.AsyncClient,
+    test_transport: httpx.AsyncBaseTransport | None = None,
 ) -> ManagementResourcesFactory:
     key, verification = signing_material(live)
     policy = json.loads(POLICY_FILE.read_text(encoding="utf-8"))
@@ -194,6 +197,7 @@ def build_resources(
                 signing_key=key,
                 verification_keys=dict(verification),
                 credential=clients.credential,
+                transport=test_transport,
             ),
         )
 
@@ -206,6 +210,7 @@ async def build_live_management(
     credential_factory: Callable[..., Any] | None = None,
     cosmos_factory: Callable[..., Any] | None = None,
     http: httpx.AsyncClient | None = None,
+    test_transport: httpx.AsyncBaseTransport | None = None,
 ) -> ManagedApplication:
     """Compose the live management app, or raise `StartupError` with one fixed reason code."""
     from management_app.management_app import create_managed_app
@@ -221,7 +226,7 @@ async def build_live_management(
     clients = AzureClients(live, **factories)
     client = http or httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=2)
     try:
-        resources = build_resources(live, clients, client)
+        resources = build_resources(live, clients, client, test_transport)
         return await create_managed_app(
             settings,
             resources=resources,

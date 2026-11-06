@@ -108,3 +108,28 @@ jobs:
         run: uv run --project code/tools --locked python code/tools/scripts/verify_terraform.py check
       - name: Run the Pester tests of the identity script
         run: uv run --project code/tools --locked python code/tools/scripts/run_pester.py
+
+  e2e:
+    name: In-process end-to-end journey
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          version: "0.13.4"
+          enable-cache: true
+          cache-dependency-glob: "code/*/uv.lock"
+      - name: Set up pinned frontend and documentation runtime
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24.22.0"
+          package-manager-cache: false
+      - name: Prepare locked environments
+        run: uv run --project code/tools --locked python code/tools/scripts/ci.py prepare
+      - name: Run the journey of both live applications with fake ports
+        run: uv run --project code/tools --locked python code/tools/scripts/ci.py e2e

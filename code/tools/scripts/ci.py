@@ -237,6 +237,7 @@ def prepare() -> None:
             if project != "tools":
                 arguments.extend(("--group", "dev"))
             run(*arguments)
+        run("uv", "sync", "--locked", "--project", "code/e2e")
     run(
         "uv",
         "run",
@@ -280,7 +281,7 @@ def collect_editor_diagnostic() -> None:
 
 
 def check() -> None:
-    for project in ("backend", "management", "tools"):
+    for project in ("backend", "management", "tools", "e2e"):
         run("uv", "lock", "--check", "--offline", "--project", f"code/{project}")
     result = subprocess.run(
         [
@@ -339,7 +340,7 @@ def check() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("prepare", "check", "frontend", "test", "quick", "diagnostics")
+        "command", choices=("prepare", "check", "frontend", "test", "e2e", "quick", "diagnostics")
     )
     arguments = parser.parse_args()
     if arguments.command == "prepare":
@@ -362,6 +363,19 @@ def main() -> None:
             )
     elif arguments.command == "diagnostics":
         collect_editor_diagnostic()
+    elif arguments.command == "e2e":
+        run(
+            "uv",
+            "run",
+            "--directory",
+            "code/e2e",
+            "--locked",
+            "python",
+            "-m",
+            "pytest",
+            "-q",
+            "--tb=short",
+        )
     elif arguments.command == "frontend":
         run(
             "uv",
