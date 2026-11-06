@@ -41,6 +41,8 @@ output "environment_manifest" {
     identity = {
       tenant_id                = var.environment.tenant_id
       management_app_client_id = var.app_environment.identity.management_app_client_id
+      runtime_app_client_id    = var.app_environment.identity.runtime_app_client_id
+      management_principal_id  = module.management_identity.principal_id
       runtime_identity_name    = var.app_environment.identity.runtime_identity_name
       runtime_principal_id     = data.azurerm_user_assigned_identity.runtime.principal_id
       roles                    = var.app_environment.identity.roles

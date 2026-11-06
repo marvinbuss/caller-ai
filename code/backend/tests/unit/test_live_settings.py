@@ -40,6 +40,10 @@ def complete() -> dict[str, str]:
         "CALLER_MANAGER_AUDIENCE": "https://runtime.example.azurecontainerapps.io",
         "CALLER_PERMIT_VERIFICATION_KEYS": json.dumps({"key-1": KEY_PEM}),
         "CALLER_MAX_CLOCK_SKEW_SECONDS": "1",
+        "CALLER_TENANT_ID": "00000000-0000-4000-8000-000000000002",
+        "CALLER_WORKLOAD_AUDIENCE": "00000000-0000-4000-8000-000000000008",
+        "CALLER_WORKLOAD_ROLE": "Management.Caller",
+        "CALLER_WORKLOAD_PRINCIPAL_ID": "00000000-0000-4000-8000-000000000031",
     }
 
 
@@ -120,6 +124,13 @@ def test_an_empty_review_reference_is_review_missing(monkeypatch: pytest.MonkeyP
         ("CALLER_PERMIT_VERIFICATION_KEYS", json.dumps({f"k{n}": KEY_PEM for n in range(5)})),
         ("CALLER_MAX_CLOCK_SKEW_SECONDS", "2"),
         ("CALLER_MAX_CLOCK_SKEW_SECONDS", "-1"),
+        ("CALLER_TENANT_ID", "tenant"),
+        ("CALLER_WORKLOAD_AUDIENCE", "https://runtime.example"),
+        ("CALLER_WORKLOAD_ROLE", "bad role"),
+        ("CALLER_WORKLOAD_PRINCIPAL_ID", "principal"),
+        ("CALLER_MAX_INPUT_TOKENS", "100"),
+        ("CALLER_MAX_OUTPUT_TOKENS", "5000"),
+        ("CALLER_TEXT_HISTORY_TTL_SECONDS", "2592001"),
     ],
 )
 def test_each_invalid_setting_stops_the_start_without_echoing_the_value(

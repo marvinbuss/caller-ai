@@ -77,6 +77,12 @@ real `terraform validate` or first apply.
   exception. That is an application change, so it is left as a follow-up.
 - **Spike S-4**: confirm `entra_oidc.LoginFlow` can take the secret from a setting and that the redirect
   address derived from the app's default domain matches the registered redirect.
+- **Decision FR-052 (owner, 2026-11-05): separate runtime registration.** The runtime has its own app registration, whose
+  client ID is the audience of the management app's workload token. The identity script creates it with the app role
+  `management`; once the app environment exists, the script's second phase assigns that role to the management
+  identity. The runtime verifies tenant, audience, caller principal and role (settings `CALLER_TENANT_ID`,
+  `CALLER_WORKLOAD_AUDIENCE`, `CALLER_WORKLOAD_ROLE`, `CALLER_WORKLOAD_PRINCIPAL_ID`); `CALLER_RUNTIME_AUDIENCE` of the
+  management app is that client ID.
 - **S-4 result (from the existing code)**:
   - The callback path is `/auth/callback` (`MsalCodeFlow.begin` builds `policy.origin + "/auth/callback"`;
     `reflex_security.py` and `metrics.py` list the same path). The registered redirect is therefore

@@ -183,7 +183,7 @@ class Settings(BaseSettings):
             management_origin=_match(ORIGIN, self.management_origin),
             public_origin=_match(ORIGIN, self.public_origin),
             runtime_endpoint=_match(ORIGIN, self.runtime_endpoint),
-            runtime_audience=_match(ORIGIN, self.runtime_audience),
+            runtime_audience=_match(GUID, self.runtime_audience),
             permit_issuer=_match(ORIGIN, self.permit_issuer),
             permit_audience=_match(ORIGIN, self.permit_audience),
             signing_key_id=_match(KEY_ID, self.signing_key_id),

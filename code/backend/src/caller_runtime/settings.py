@@ -66,6 +66,10 @@ class LiveSettings:
     manager_audience: str
     permit_verification_keys: dict[str, str]
     max_clock_skew_seconds: int
+    tenant_id: str
+    workload_audience: str
+    workload_role: str
+    workload_principal_id: str
 
 
 def _text(value: str | None) -> str:
@@ -147,6 +151,10 @@ class Settings(BaseSettings):
     manager_audience: str | None = None
     permit_verification_keys: str | None = None
     max_clock_skew_seconds: str | None = None
+    tenant_id: str | None = None
+    workload_audience: str | None = None
+    workload_role: str | None = None
+    workload_principal_id: str | None = None
 
     @model_validator(mode="after")
     def validate_privacy(self) -> Self:
@@ -175,7 +183,7 @@ class Settings(BaseSettings):
             review_reference=reference,
             cosmos_endpoint=_match(ORIGIN, self.cosmos_endpoint),
             cosmos_database=_match(DATABASE, self.cosmos_database),
-            text_history_ttl_seconds=_number(self.text_history_ttl_seconds, 1, 31_536_000),
+            text_history_ttl_seconds=_number(self.text_history_ttl_seconds, 1, 2_592_000),
             management_endpoint=_match(ORIGIN, self.management_endpoint),
             management_audience=_match(GUID, self.management_audience),
             text_endpoint=_match(ORIGIN, self.text_endpoint),
@@ -184,13 +192,17 @@ class Settings(BaseSettings):
             live_region=region,
             live_voice=_match(NAME, self.live_voice),
             approved_hosts=hosts,
-            max_input_tokens=_number(self.max_input_tokens, 1, 1_000_000),
-            max_output_tokens=_number(self.max_output_tokens, 1, 1_000_000),
+            max_input_tokens=_number(self.max_input_tokens, 1024, 131_072),
+            max_output_tokens=_number(self.max_output_tokens, 1, 4096),
             available_live_sessions=_number(self.available_live_sessions, 5, 10_000),
             manager_issuer=_match(ORIGIN, self.manager_issuer),
             manager_audience=_match(ORIGIN, self.manager_audience),
             permit_verification_keys=_keys(self.permit_verification_keys),
             max_clock_skew_seconds=_number(self.max_clock_skew_seconds, 0, 1),
+            tenant_id=_match(GUID, self.tenant_id),
+            workload_audience=_match(GUID, self.workload_audience),
+            workload_role=_match(NAME, self.workload_role),
+            workload_principal_id=_match(GUID, self.workload_principal_id),
         )
 
     def validate_startup(self) -> None:

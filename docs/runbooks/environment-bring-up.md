@@ -79,7 +79,9 @@ are in [Terraform state](terraform-state.md).
    directory role Privileged Role Administrator or Global Administrator, and Owner (or Contributor with User Access
    Administrator) on the subscription. It creates, idempotently: the resource group for the runtime identity and
    the runtime's user-assigned identity; the management app registration with its service principal and the three
-   app roles named in `app_environment.identity.roles`; the `runtime` role for the runtime identity; the `tester`
+   app roles `editor`, `tester` and `runtime` named in `app_environment.identity.roles`; the runtime app
+   registration with the app role `management` (the audience of the management app's workload token, FR-052); the
+   `runtime` role for the runtime identity; the `tester`
    role and the read-only Graph permission `Application.Read.All` for the deployment identity; the editor and tester
    roles for the user group; and a client secret valid for at most 90 days, written only to
    `code/.local/identity/<env>/management-signin-secret`. Exit codes: 0 success or preview, 1 preflight failure, 2
@@ -88,7 +90,7 @@ are in [Terraform state](terraform-state.md).
 
    | Result | Where it goes | Notes |
    |--------|---------------|-------|
-   | `management_app_client_id` (printed) | `app_environment.identity.management_app_client_id` in `code/infra/environments/<env>/<env>.tfvars.json` | Not a secret; commit it with the reviewed environment files after `validate_environment.py` passes |
+   | `management_app_client_id` and `runtime_app_client_id` (printed) | `app_environment.identity.management_app_client_id` and `app_environment.identity.runtime_app_client_id` in `code/infra/environments/<env>/<env>.tfvars.json` | Not secrets; commit them with the reviewed environment files after `validate_environment.py` passes |
    | `tenant_id`, `runtime_identity_name`, `roles.*` (printed) | Already inputs in the same file (`environment.tenant_id`, `app_environment.identity`); compare them with the printed values | The script reads them, so they should match; a difference means the file was edited after the run |
    | Client secret (file `code/.local/identity/<env>/management-signin-secret`) | The secret `MANAGEMENT_SIGNIN_SECRET` in the GitHub environments `<env>-terraform-app-environment-plan` and `<env>-terraform-app-environment-apply` | Paste it once from the file, then delete `code/.local/identity/<env>/`. The folder is ignored by git and the file has owner-only access. It is created only when no valid secret exists, and it is never printed |
 
@@ -104,8 +106,9 @@ check fails.
 
 On the first deployment the check is expected to fail only at `signin-redirect-matches`, because the
 management callback address (`https://<management default domain>/auth/callback`) exists only after the apps
-exist. The resources are applied. Register that address with `Initialize-Identity.ps1 -Environment int -Phase redirect`
-(it reads the app address with `az containerapp show`), then rerun the check:
+exist. The resources are applied. Run `Initialize-Identity.ps1 -Environment int -Phase redirect`. It reads the app address with
+`az containerapp show`, registers the callback address, and assigns the `management` role of the runtime registration
+to the management identity (which Terraform has created by now). Then rerun the check:
 
 ```powershell
 uv run --project code/tools --locked python code/tools/scripts/check_environment.py --environment int --manifest <manifest.json> --test-alert

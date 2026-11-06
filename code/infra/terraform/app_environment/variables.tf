@@ -87,11 +87,13 @@ variable "app_environment" {
     identity = object({
       resource_group_name      = string
       management_app_client_id = string
+      runtime_app_client_id    = string
       runtime_identity_name    = string
       roles = object({
-        editor  = string
-        tester  = string
-        runtime = string
+        editor     = string
+        tester     = string
+        runtime    = string
+        management = string
       })
       user_group_id = string
     })
@@ -182,6 +184,14 @@ variable "app_environment" {
       alltrue([for k in keys(var.app_environment.signing_key.previous_public_keys) : can(regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", k))])
     )
     error_message = "app_environment.signing_key.previous_public_keys must hold at most three entries with valid key IDs that differ from key_id."
+  }
+
+  validation {
+    condition = (
+      can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.app_environment.identity.runtime_app_client_id)) &&
+      var.app_environment.identity.runtime_app_client_id != var.app_environment.identity.management_app_client_id
+    )
+    error_message = "app_environment.identity.runtime_app_client_id must be a GUID that differs from management_app_client_id."
   }
 
   validation {

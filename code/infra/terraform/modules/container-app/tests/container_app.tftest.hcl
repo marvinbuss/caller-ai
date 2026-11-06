@@ -86,7 +86,7 @@ run "secrets_are_key_vault_references_only" {
   command = plan
 
   variables {
-    secret_references = { CALLER_ENTRA_CLIENT_SECRET = "https://kv-test.vault.azure.net/secrets/management-signin-secret" }  # pragma: allowlist secret
+    secret_references = { CALLER_ENTRA_CLIENT_SECRET = "https://kv-test.vault.azure.net/secrets/management-signin-secret" } # pragma: allowlist secret
   }
 
   assert {

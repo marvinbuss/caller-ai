@@ -318,3 +318,17 @@ def test_success_output_lists_environments(capsys, monkeypatch):
 
 def test_unused_copy_import_is_available():
     assert copy.deepcopy({"a": 1}) == {"a": 1}
+
+
+def test_the_runtime_registration_must_differ_from_the_management_registration(base):
+    mutate(
+        base,
+        "app_environment.identity.runtime_app_client_id",
+        read(base)["app_environment"]["identity"]["management_app_client_id"],
+    )
+    assert ("app_environment.identity.runtime_app_client_id", "must_differ") in problems(base)
+
+
+def test_the_management_role_name_is_required(base):
+    mutate(base, "app_environment.identity.roles.management", "")
+    assert ("app_environment.identity.roles.management", "missing") in problems(base)

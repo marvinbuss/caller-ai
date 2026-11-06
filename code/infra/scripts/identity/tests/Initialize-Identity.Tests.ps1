@@ -38,6 +38,7 @@ BeforeAll {
     }
 
     function Save-Document($Case) { $Case.Document | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $Case.Tfvars -Encoding utf8 }
+    function Get-App($Case, [string] $Name) { (Get-State $Case).apps | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1 }
     function Get-State($Case) { Get-Content -LiteralPath $Case.State -Raw | ConvertFrom-Json -AsHashtable -Depth 30 }
     function Set-State($Case, [scriptblock] $Change) {
         $state = Get-State $Case
@@ -47,6 +48,10 @@ BeforeAll {
     function Get-Log($Case) { , @(Get-Content -LiteralPath $Case.Log) }
     function Get-Mutations($Case) { , @((Get-Content -LiteralPath $Case.Log) | Where-Object { $_ -match $script:Mutations }) }
     function Clear-Log($Case) { Clear-Content -LiteralPath $Case.Log }
+
+    function Add-ManagementIdentity($Case) {
+        Set-State $Case { param($s) $s.identities['id-ca-caller-int-management'] = @{ name = 'id-ca-caller-int-management'; principalId = 'management-principal'; clientId = 'management-client' } }
+    }
 
     function Invoke-Identity($Case, [string[]] $Extra = @()) {
         $env:FAKE_AZ_STATE = $Case.State
@@ -79,10 +84,15 @@ Describe 'Initialize-Identity registration phase' {
         $state = Get-State $script:Case
         $state.resourceGroups | Should -Contain 'rg-caller-int-identity'
         $state.identities.Keys | Should -Contain 'id-caller-int-runtime'
-        $state.apps.Count | Should -Be 1
-        @($state.apps[0].appRoles | ForEach-Object { $_.value }) | Should -Be @('Configuration.Manager', 'Configuration.Tester', 'Runtime.Caller')
-        $state.servicePrincipals.Keys | Should -Contain $state.apps[0].appId
-        $result.Output | Should -Match "management_app_client_id = $($state.apps[0].appId)"
+        $state.apps.Count | Should -Be 2
+        $management = Get-App $script:Case 'caller-int-management'
+        $runtimeApp = Get-App $script:Case 'caller-int-runtime'
+        @($management.appRoles | ForEach-Object { $_.value }) | Should -Be @('Configuration.Manager', 'Configuration.Tester', 'Runtime.Caller')
+        @($runtimeApp.appRoles | ForEach-Object { $_.value }) | Should -Be @('Management.Caller')
+        $state.servicePrincipals.Keys | Should -Contain $management.appId
+        $state.servicePrincipals.Keys | Should -Contain $runtimeApp.appId
+        $result.Output | Should -Match "management_app_client_id = $($management.appId)"
+        $result.Output | Should -Match "runtime_app_client_id\s+= $($runtimeApp.appId)"
         $result.Output | Should -Match 'runtime_identity_name\s+= id-caller-int-runtime'
     }
 
@@ -96,16 +106,17 @@ Describe 'Initialize-Identity registration phase' {
     }
 
     It 'reads the role names from the variable file' {
-        $script:Case.Document.app_environment.identity.roles = @{ editor = 'Org.Editor'; tester = 'Org.Tester'; runtime = 'Org.Runtime' }
+        $script:Case.Document.app_environment.identity.roles = @{ editor = 'Org.Editor'; tester = 'Org.Tester'; runtime = 'Org.Runtime'; management = 'Org.Management' }
         Save-Document $script:Case
         (Invoke-Identity $script:Case).ExitCode | Should -Be 0
-        @((Get-State $script:Case).apps[0].appRoles | ForEach-Object { $_.value }) | Should -Be @('Org.Editor', 'Org.Tester', 'Org.Runtime')
+        @((Get-App $script:Case 'caller-int-management').appRoles | ForEach-Object { $_.value }) | Should -Be @('Org.Editor', 'Org.Tester', 'Org.Runtime')
+        @((Get-App $script:Case 'caller-int-runtime').appRoles | ForEach-Object { $_.value }) | Should -Be @('Org.Management')
     }
 
     It 'assigns the runtime, tester, Graph and group roles' {
         (Invoke-Identity $script:Case).ExitCode | Should -Be 0
         $state = Get-State $script:Case
-        $app = $state.apps[0]
+        $app = Get-App $script:Case 'caller-int-management'
         $sp = $state.servicePrincipals[$app.appId]
         $role = @{}
         foreach ($item in $app.appRoles) { $role[$item.value] = $item.id }
@@ -189,7 +200,7 @@ Describe 'Initialize-Identity registration phase' {
         Set-State $script:Case { param($s) $s.failOn = 'app-create' }
         $result = Invoke-Identity $script:Case
         $result.ExitCode | Should -Be 3
-        $result.Output | Should -Match 'Step failed: management app registration'
+        $result.Output | Should -Match 'Step failed: runtime app registration'
     }
 }
 
@@ -205,26 +216,46 @@ Describe 'Initialize-Identity redirect phase' {
 
     It 'reads the address with az containerapp show and registers the callback address' {
         (Invoke-Identity $script:Case).ExitCode | Should -Be 0
+        Add-ManagementIdentity $script:Case
         Clear-Log $script:Case
         $result = Invoke-Identity $script:Case @('-Phase', 'redirect')
         $result.ExitCode | Should -Be 0
         (Get-Log $script:Case) -match 'containerapp show --name ca-caller-int-management' | Should -Not -BeNullOrEmpty
-        (Get-State $script:Case).apps[0].web.redirectUris | Should -Contain 'https://management.example.azurecontainerapps.io/auth/callback'
+        (Get-App $script:Case 'caller-int-management').web.redirectUris | Should -Contain 'https://management.example.azurecontainerapps.io/auth/callback'
     }
 
     It 'previews without changing the registration and is a no-op the second time' {
         (Invoke-Identity $script:Case).ExitCode | Should -Be 0
+        Add-ManagementIdentity $script:Case
         Clear-Log $script:Case
         (Invoke-Identity $script:Case @('-Phase', 'redirect', '-WhatIf')).ExitCode | Should -Be 0
-        (Get-State $script:Case).apps[0].web.redirectUris | Should -BeNullOrEmpty
+        (Get-App $script:Case 'caller-int-management').web.redirectUris | Should -BeNullOrEmpty
         (Invoke-Identity $script:Case @('-Phase', 'redirect')).ExitCode | Should -Be 0
         Clear-Log $script:Case
         (Invoke-Identity $script:Case @('-Phase', 'redirect')).ExitCode | Should -Be 0
         (Get-Mutations $script:Case).Count | Should -Be 0
     }
 
+    It 'assigns the management role of the runtime registration to the management identity' {
+        (Invoke-Identity $script:Case).ExitCode | Should -Be 0
+        Add-ManagementIdentity $script:Case
+        (Invoke-Identity $script:Case @('-Phase', 'redirect')).ExitCode | Should -Be 0
+        $state = Get-State $script:Case
+        $runtimeApp = Get-App $script:Case 'caller-int-runtime'
+        $sp = $state.servicePrincipals[$runtimeApp.appId]
+        ($state.assignments | Where-Object { $_.resourceId -eq $sp.id -and $_.principalId -eq 'management-principal' -and $_.appRoleId -eq $runtimeApp.appRoles[0].id }) | Should -Not -BeNullOrEmpty
+    }
+
+    It 'stops when the management identity does not exist yet' {
+        (Invoke-Identity $script:Case).ExitCode | Should -Be 0
+        $result = Invoke-Identity $script:Case @('-Phase', 'redirect')
+        $result.ExitCode | Should -Be 1
+        $result.Output | Should -Match 'Deploy the app environment first'
+    }
+
     It 'names the failed step when the app has no address' {
         (Invoke-Identity $script:Case).ExitCode | Should -Be 0
+        Add-ManagementIdentity $script:Case
         Set-State $script:Case { param($s) $s.containerApps = @{} }
         $result = Invoke-Identity $script:Case @('-Phase', 'redirect')
         $result.ExitCode | Should -Be 3

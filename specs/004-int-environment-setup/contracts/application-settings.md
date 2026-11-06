@@ -35,6 +35,10 @@ them at start and never echo a value in an error.
 | `CALLER_MANAGER_ISSUER`, `CALLER_MANAGER_AUDIENCE` | no | Issuer and audience of the start permits. |
 | `CALLER_PERMIT_VERIFICATION_KEYS` | no | JSON map from key ID to public key PEM, one to four entries (the public half of the generated pair). |
 | `CALLER_MAX_CLOCK_SKEW_SECONDS` | no | Permit clock skew bound, 0 to 1. |
+| `CALLER_TENANT_ID` | no | Tenant that issues the workload tokens the runtime accepts. |
+| `CALLER_WORKLOAD_AUDIENCE` | no | Client ID of the runtime's own app registration: the required audience of a workload token (FR-052). |
+| `CALLER_WORKLOAD_ROLE` | no | Application role on the runtime registration that a caller must hold (`identity.roles.management`). |
+| `CALLER_WORKLOAD_PRINCIPAL_ID` | no | Object ID of the management app's managed identity: the only caller accepted (FR-052). |
 
 Runtime probes: startup and readiness `GET /readyz`, liveness `GET /healthz`, port 8000.
 
@@ -51,7 +55,7 @@ Runtime probes: startup and readiness `GET /readyz`, liveness `GET /healthz`, po
 | `CALLER_ENTRA_CLIENT_SECRET` | **yes** | Key Vault reference to `management-signin-secret` (FR-041, FR-046). |
 | `CALLER_API_AUDIENCE`, `CALLER_MANAGER_ROLE`, `CALLER_MANAGER_SCOPE`, `CALLER_TEST_ROLE`, `CALLER_RUNTIME_ROLE` | no | Audience, editor role, scope, tester role and the runtime's role name. |
 | `CALLER_MANAGEMENT_ORIGIN` | no | The management app's own HTTPS origin, for redirects and origin checks. |
-| `CALLER_RUNTIME_ENDPOINT`, `CALLER_RUNTIME_AUDIENCE` | no | HTTPS origin and audience of the runtime, which the browser also uses for the console. |
+| `CALLER_RUNTIME_ENDPOINT`, `CALLER_RUNTIME_AUDIENCE` | no | HTTPS origin of the runtime, which the browser also uses for the console, and the client ID of the runtime's app registration (the audience of the token the management app presents to the runtime). |
 | `CALLER_PERMIT_ISSUER`, `CALLER_PERMIT_AUDIENCE`, `CALLER_SIGNING_KEY_ID` | no | Permit issuer, audience and key ID (equals `signing_key.key_id`). |
 | `CALLER_SIGNING_KEY_PEM` | **yes** | Key Vault reference to `permit-private-key` (FR-051). |
 | `CALLER_PUBLIC_ORIGIN` | no | The address the frontend uses to reach the backend, resolved at start (spike S-12). |
@@ -72,7 +76,9 @@ Management probes: startup and readiness `GET /readyz`, liveness `GET /healthz`,
 | `CALLER_MANAGER_SCOPE` | `api://<management registration client ID>/.default`. |
 | `CALLER_MANAGER_ROLE`, `CALLER_TEST_ROLE`, `CALLER_RUNTIME_ROLE` | `identity.roles.editor`, `identity.roles.tester`, `identity.roles.runtime`. |
 | `CALLER_PERMIT_ISSUER`, `CALLER_MANAGER_ISSUER` | The management app's origin. |
-| `CALLER_PERMIT_AUDIENCE`, `CALLER_MANAGER_AUDIENCE`, `CALLER_RUNTIME_AUDIENCE` | The runtime app's origin. |
+| `CALLER_PERMIT_AUDIENCE`, `CALLER_MANAGER_AUDIENCE` | The runtime app's origin. |
+| `CALLER_TENANT_ID` (runtime), `CALLER_WORKLOAD_*` | `environment.tenant_id`, `identity.runtime_app_client_id`, `identity.roles.management` and the principal ID of the management identity. |
+| `CALLER_RUNTIME_AUDIENCE` | `identity.runtime_app_client_id`. |
 | `CALLER_APPROVED_HOSTS` | The management host, the text endpoint host and the live endpoint host. |
 
 The derivation rules are confirmed by spikes S-4, S-11 and S-14 in [research.md](../research.md). A rule that a spike

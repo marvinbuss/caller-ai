@@ -247,12 +247,16 @@ def check_app_environment(data: dict[str, Any], report: Report, file: str) -> No
         get(data, f"{prefix}.cpu", report, file, kinds=(int, float))
         get(data, f"{prefix}.memory", report, file)
     get(data, "app_environment.identity.resource_group_name", report, file)
-    for field in ("management_app_client_id", "user_group_id"):
+    for field in ("management_app_client_id", "runtime_app_client_id", "user_group_id"):
         value = get(data, f"app_environment.identity.{field}", report, file)
         if value is not None and not GUID.fullmatch(value):
             report.error(file, f"app_environment.identity.{field}", "invalid_format")
+    management = get(data, "app_environment.identity.management_app_client_id", report, file)
+    runtime = get(data, "app_environment.identity.runtime_app_client_id", report, file)
+    if management is not None and management == runtime:
+        report.error(file, "app_environment.identity.runtime_app_client_id", "must_differ")
     get(data, "app_environment.identity.runtime_identity_name", report, file)
-    for role in ("editor", "tester", "runtime"):
+    for role in ("editor", "tester", "runtime", "management"):
         value = get(data, f"app_environment.identity.roles.{role}", report, file)
         if value is not None and not value.strip():
             report.error(file, f"app_environment.identity.roles.{role}", "missing")

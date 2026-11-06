@@ -49,6 +49,10 @@ module "runtime_app" {
     CALLER_MANAGER_AUDIENCE         = local.runtime_origin
     CALLER_PERMIT_VERIFICATION_KEYS = jsonencode(merge(var.app_environment.signing_key.previous_public_keys, { (module.permit_key.key_id) = module.permit_key.public_key_pem }))
     CALLER_MAX_CLOCK_SKEW_SECONDS   = "1"
+    CALLER_TENANT_ID                = var.environment.tenant_id
+    CALLER_WORKLOAD_AUDIENCE        = var.app_environment.identity.runtime_app_client_id
+    CALLER_WORKLOAD_ROLE            = var.app_environment.identity.roles.management
+    CALLER_WORKLOAD_PRINCIPAL_ID    = module.management_identity.principal_id
   }
 
   depends_on = [module.secret_store, module.data_store, module.model_access]
@@ -89,7 +93,7 @@ module "management_app" {
     CALLER_MANAGEMENT_ORIGIN       = local.management_origin
     CALLER_PUBLIC_ORIGIN           = local.runtime_origin
     CALLER_RUNTIME_ENDPOINT        = local.runtime_origin
-    CALLER_RUNTIME_AUDIENCE        = local.runtime_origin
+    CALLER_RUNTIME_AUDIENCE        = var.app_environment.identity.runtime_app_client_id
     CALLER_PERMIT_ISSUER           = local.management_origin
     CALLER_PERMIT_AUDIENCE         = local.runtime_origin
     CALLER_SIGNING_KEY_ID          = module.permit_key.key_id

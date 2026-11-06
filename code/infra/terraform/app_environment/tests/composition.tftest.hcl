@@ -56,7 +56,7 @@ override_data {
 }
 
 variables {
-  management_signin_secret = "super-secret-signin-value"  # pragma: allowlist secret
+  management_signin_secret = "super-secret-signin-value" # pragma: allowlist secret
 
   environment = {
     name            = "int"
@@ -89,8 +89,9 @@ variables {
     identity = {
       resource_group_name      = "rg-caller-int-identity"
       management_app_client_id = "00000000-0000-4000-8000-000000000005"
+      runtime_app_client_id    = "00000000-0000-4000-8000-000000000008"
       runtime_identity_name    = "id-caller-int-runtime"
-      roles                    = { editor = "Configuration.Manager", tester = "Configuration.Tester", runtime = "Runtime.Caller" }
+      roles                    = { editor = "Configuration.Manager", tester = "Configuration.Tester", runtime = "Runtime.Caller", management = "Management.Caller" }
       user_group_id            = "00000000-0000-4000-8000-000000000007"
     }
     model = {
@@ -176,6 +177,16 @@ run "settings_match_the_application_contract" {
   assert {
     condition     = module.management_app.settings["CALLER_MANAGER_SCOPE"] == "api://00000000-0000-4000-8000-000000000005/.default" && module.management_app.settings["CALLER_API_AUDIENCE"] == "00000000-0000-4000-8000-000000000005"
     error_message = "Audience and scope derive from the management registration."
+  }
+
+  assert {
+    condition     = module.runtime_app.settings["CALLER_WORKLOAD_AUDIENCE"] == "00000000-0000-4000-8000-000000000008" && module.runtime_app.settings["CALLER_WORKLOAD_ROLE"] == "Management.Caller" && module.runtime_app.settings["CALLER_TENANT_ID"] == "00000000-0000-4000-8000-000000000001"
+    error_message = "The runtime verifies the management workload token against its own registration and the management role."
+  }
+
+  assert {
+    condition     = module.management_app.settings["CALLER_RUNTIME_AUDIENCE"] == "00000000-0000-4000-8000-000000000008"
+    error_message = "The management app requests tokens for the runtime registration."
   }
 }
 
@@ -304,8 +315,9 @@ run "invalid_live_region_is_rejected_naming_the_setting" {
       identity = {
         resource_group_name      = "rg-caller-int-identity"
         management_app_client_id = "00000000-0000-4000-8000-000000000005"
+        runtime_app_client_id    = "00000000-0000-4000-8000-000000000008"
         runtime_identity_name    = "id-caller-int-runtime"
-        roles                    = { editor = "Configuration.Manager", tester = "Configuration.Tester", runtime = "Runtime.Caller" }
+        roles                    = { editor = "Configuration.Manager", tester = "Configuration.Tester", runtime = "Runtime.Caller", management = "Management.Caller" }
         user_group_id            = "00000000-0000-4000-8000-000000000007"
       }
       model = {

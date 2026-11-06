@@ -371,8 +371,10 @@ def model_access(context: Context) -> Check:
     return passed("model-access", "model", "deployments present and role held")
 
 
-def service_principal(context: Context) -> dict[str, Any] | None:
-    client_id = context.manifest["identity"]["management_app_client_id"]
+def service_principal(
+    context: Context, key: str = "management_app_client_id"
+) -> dict[str, Any] | None:
+    client_id = context.manifest["identity"][key]
     try:
         found = context.access.graph(
             f"/servicePrincipals?$filter=appId eq '{client_id}'&$select=id,appRoles"
@@ -391,11 +393,17 @@ def registration_and_roles_exist(context: Context) -> Check:
             "identity.management_app_client_id: no sign-in registration found",
         )
     values = {role.get("value") for role in principal.get("appRoles", [])}
+    roles = context.manifest["identity"]["roles"]
     missing = sorted(
         f"identity.roles.{key}"
-        for key, name in context.manifest["identity"]["roles"].items()
-        if name not in values
+        for key in ("editor", "tester", "runtime")
+        if roles[key] not in values
     )
+    runtime = service_principal(context, "runtime_app_client_id")
+    if runtime is None:
+        missing.append("identity.runtime_app_client_id")
+    elif roles["management"] not in {role.get("value") for role in runtime.get("appRoles", [])}:
+        missing.append("identity.roles.management")
     if missing:
         return failed("registration-and-roles-exist", "identity", "missing: " + ", ".join(missing))
     return passed("registration-and-roles-exist", "identity", "registration and roles exist")
@@ -424,6 +432,31 @@ def runtime_role_assigned(context: Context) -> Check:
         if item.get("principalId", "").lower() == runtime and item.get("appRoleId") == role["id"]:
             return passed("runtime-role-assigned", "identity", "runtime role assigned")
     return failed("runtime-role-assigned", "identity", "the runtime identity lacks the role")
+
+
+def management_role_assigned(context: Context) -> Check:
+    runtime = service_principal(context, "runtime_app_client_id")
+    if runtime is None:
+        return failed("management-role-assigned", "identity", "no runtime registration found")
+    role = next(
+        (
+            item
+            for item in runtime.get("appRoles", [])
+            if item.get("value") == context.manifest["identity"]["roles"]["management"]
+        ),
+        None,
+    )
+    if role is None:
+        return failed("management-role-assigned", "identity", "the management role is not defined")
+    try:
+        assigned = context.access.graph(f"/servicePrincipals/{runtime['id']}/appRoleAssignedTo")
+    except LookupError:
+        return failed("management-role-assigned", "identity", "assignments cannot be read")
+    principal = context.manifest["identity"]["management_principal_id"].lower()
+    for item in assigned.get("value", []):
+        if item.get("principalId", "").lower() == principal and item.get("appRoleId") == role["id"]:
+            return passed("management-role-assigned", "identity", "management role assigned")
+    return failed("management-role-assigned", "identity", "the management identity lacks the role")
 
 
 def secrets_present(context: Context) -> Check:
@@ -521,6 +554,7 @@ CHECKS: tuple[Callable[[Context], Check], ...] = (
     private_endpoints_approved,
     model_access,
     runtime_role_assigned,
+    management_role_assigned,
     registration_and_roles_exist,
     secrets_present,
     signin_redirect_matches,

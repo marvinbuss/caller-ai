@@ -104,6 +104,7 @@ function Read-Inputs {
             Editor        = $identity.roles.editor
             Tester        = $identity.roles.tester
             Runtime       = $identity.roles.runtime
+            Management    = $identity.roles.management
             UserGroup     = $identity.user_group_id
             ManagementApp = $document.app_environment.container_apps.management.app_name
             AppsGroup     = $document.app_environment.resource_group_name
@@ -113,13 +114,13 @@ function Read-Inputs {
     foreach ($name in 'Subscription', 'Tenant', 'DeploymentApp', 'UserGroup') {
         if (-not (Test-Guid $inputs[$name])) { Stop-Script 2 "Invalid input: $name must be a GUID (app_environment.identity.user_group_id is required)." }
     }
-    foreach ($name in 'IdentityGroup', 'RuntimeName', 'Location', 'Editor', 'Tester', 'Runtime', 'ManagementApp', 'AppsGroup') {
+    foreach ($name in 'IdentityGroup', 'RuntimeName', 'Location', 'Editor', 'Tester', 'Runtime', 'Management', 'ManagementApp', 'AppsGroup') {
         if ([string]::IsNullOrWhiteSpace($inputs[$name]) -or $inputs[$name] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,89}$') {
             Stop-Script 2 "Invalid input: $name is missing or malformed."
         }
     }
-    if (@($inputs.Editor, $inputs.Tester, $inputs.Runtime | Select-Object -Unique).Count -ne 3) {
-        Stop-Script 2 'Invalid input: the three role names must differ.'
+    if (@($inputs.Editor, $inputs.Tester, $inputs.Runtime, $inputs.Management | Select-Object -Unique).Count -ne 4) {
+        Stop-Script 2 'Invalid input: the four role names must differ.'
     }
     return $inputs
 }
@@ -203,6 +204,53 @@ function Find-Registration {
     return @($found | Where-Object { $_.displayName -eq $DisplayName }) | Select-Object -First 1
 }
 
+function Initialize-RuntimeRegistration {
+    # The runtime's own registration is the audience of the management app's workload token (FR-052).
+    param($Inputs)
+    $appName = "caller-$Environment-runtime"
+    $script:runtimeApp = Find-Registration -DisplayName $appName
+    if ($script:runtimeApp) { Write-Host "Unchanged: app registration $appName" }
+    else {
+        Write-Change "create the app registration $appName"
+        if (-not $script:Preview) {
+            $script:runtimeApp = Invoke-Az -Arguments @('ad', 'app', 'create', '--display-name', $appName,
+                '--sign-in-audience', 'AzureADMyOrg', '--output', 'json')
+        }
+    }
+    $app = $script:runtimeApp
+    if ($app -and -not ($app.identifierUris -contains "api://$($app.appId)")) {
+        Write-Change "set the application ID URI of $appName"
+        if (-not $script:Preview) {
+            Invoke-Az -Arguments @('ad', 'app', 'update', '--id', $app.appId, '--identifier-uris', "api://$($app.appId)") -Raw | Out-Null
+        }
+    }
+    $sp = $null
+    if ($app) { $sp = Invoke-Az -Arguments @('ad', 'sp', 'show', '--id', $app.appId, '--output', 'json') -AllowFailure }
+    if (-not $sp) {
+        Write-Change "create the service principal of $appName"
+        if (-not $script:Preview) { $sp = Invoke-Az -Arguments @('ad', 'sp', 'create', '--id', $app.appId, '--output', 'json') }
+    }
+    $has = $false
+    if ($app) {
+        $fresh = Invoke-Az -Arguments @('ad', 'app', 'show', '--id', $app.appId, '--output', 'json')
+        $has = [bool] (@($fresh.appRoles) | Where-Object { $_.value -eq $Inputs.Management })
+        $merged = @($fresh.appRoles)
+    }
+    if ($has) { Write-Host "Unchanged: application role $($Inputs.Management)"; return }
+    Write-Change "define the application role $($Inputs.Management) on $appName"
+    if ($script:Preview) { return }
+    $merged += [ordered]@{
+        allowedMemberTypes = @('Application'); description = 'Calls from the management app to the runtime'
+        displayName = $Inputs.Management; id = [guid]::NewGuid().ToString(); isEnabled = $true; value = $Inputs.Management
+    }
+    $file = Join-Path ([System.IO.Path]::GetTempPath()) ("caller-roles-" + [guid]::NewGuid().ToString('N') + '.json')
+    try {
+        ConvertTo-Json -InputObject $merged -Depth 10 | Set-Content -LiteralPath $file -Encoding utf8NoBOM
+        Invoke-Az -Arguments @('ad', 'app', 'update', '--id', $app.appId, '--app-roles', "@$file") -Raw | Out-Null
+    }
+    finally { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+}
+
 function Invoke-Registration {
     param($Inputs, $Found)
     $appName = "caller-$Environment-management"
@@ -219,6 +267,8 @@ function Invoke-Registration {
     }
 
     $runtime = $null
+    Invoke-Step 'runtime app registration' { Initialize-RuntimeRegistration -Inputs $Inputs }
+
     Invoke-Step 'runtime user-assigned identity' {
         $script:runtimeIdentity = Invoke-Az -Arguments @('identity', 'show', '--name', $Inputs.RuntimeName,
             '--resource-group', $Inputs.IdentityGroup, '--subscription', $Inputs.Subscription, '--output', 'json') -AllowFailure
@@ -351,10 +401,13 @@ function Invoke-Registration {
     Write-Host 'Values for app_environment.identity in the variable file:'
     Write-Host "  tenant_id                = $($Inputs.Tenant)"
     Write-Host "  management_app_client_id = $clientId"
+    $runtimeClient = if ($script:runtimeApp) { $script:runtimeApp.appId } else { '<created on apply>' }
+    Write-Host "  runtime_app_client_id    = $runtimeClient"
     Write-Host "  runtime_identity_name    = $($Inputs.RuntimeName)"
     Write-Host "  roles.editor             = $($Inputs.Editor)"
     Write-Host "  roles.tester             = $($Inputs.Tester)"
     Write-Host "  roles.runtime            = $($Inputs.Runtime)"
+    Write-Host "  roles.management         = $($Inputs.Management)"
 }
 
 function Invoke-Redirect {
@@ -381,6 +434,19 @@ function Invoke-Redirect {
         }
     }
     Write-Host "Redirect address: $uri"
+
+    Invoke-Step 'management role of the management identity' {
+        $runtimeApp = Find-Registration -DisplayName "caller-$Environment-runtime"
+        if (-not $runtimeApp) { Stop-Script 1 'Preflight failed: the runtime app registration does not exist. Run the registration phase first.' }
+        $identity = Invoke-Az -Arguments @('identity', 'show', '--name', "id-$($Inputs.ManagementApp)", '--resource-group', $Inputs.AppsGroup,
+            '--subscription', $Inputs.Subscription, '--output', 'json') -AllowFailure
+        if (-not $identity) { Stop-Script 1 'Preflight failed: the management identity does not exist yet. Deploy the app environment first.' }
+        $runtimeSp = Invoke-Az -Arguments @('ad', 'sp', 'show', '--id', $runtimeApp.appId, '--output', 'json')
+        $fresh = Invoke-Az -Arguments @('ad', 'app', 'show', '--id', $runtimeApp.appId, '--output', 'json')
+        $role = @($fresh.appRoles) | Where-Object { $_.value -eq $Inputs.Management } | Select-Object -First 1
+        Set-RoleAssignment -ResourceId $runtimeSp.id -PrincipalId $identity.principalId -RoleId $role.id `
+            -Description "the $($Inputs.Management) role to the management identity"
+    }
 }
 
 $inputs = Read-Inputs

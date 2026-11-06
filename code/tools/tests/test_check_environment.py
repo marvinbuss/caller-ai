@@ -26,6 +26,8 @@ STATE_ACCOUNT_ID = (
     "/providers/Microsoft.Storage/storageAccounts/statestore"
 )
 CLIENT_ID = "00000000-0000-4000-8000-000000000005"
+RUNTIME_CLIENT_ID = "00000000-0000-4000-8000-000000000008"
+MANAGEMENT_PRINCIPAL = "00000000-0000-4000-8000-0000000000bb"
 SENTINEL = "synthetic-secret-value-never-printed"
 
 
@@ -60,9 +62,16 @@ def manifest(public=False, cidrs=None):
         "identity": {
             "tenant_id": "t",
             "management_app_client_id": CLIENT_ID,
+            "runtime_app_client_id": RUNTIME_CLIENT_ID,
+            "management_principal_id": MANAGEMENT_PRINCIPAL,
             "runtime_identity_name": "id-runtime",
             "runtime_principal_id": RUNTIME_PRINCIPAL,
-            "roles": {"editor": "Editor", "tester": "Tester", "runtime": "Runtime"},
+            "roles": {
+                "editor": "Editor",
+                "tester": "Tester",
+                "runtime": "Runtime",
+                "management": "Management",
+            },
         },
         "redirect_uri": "https://management.example.test/auth/callback",
         "vault_secret_names": ["management-signin-secret", "permit-private-key"],
@@ -162,7 +171,7 @@ def good_world(module):
             }
         }
     graph = {
-        "/servicePrincipals?": {
+        f"/servicePrincipals?$filter=appId eq '{CLIENT_ID}'": {
             "value": [
                 {
                     "id": "sp-id",
@@ -174,8 +183,14 @@ def good_world(module):
                 }
             ]
         },
+        f"/servicePrincipals?$filter=appId eq '{RUNTIME_CLIENT_ID}'": {
+            "value": [{"id": "runtime-sp-id", "appRoles": [{"id": "m1", "value": "Management"}]}]
+        },
         "/servicePrincipals/sp-id/appRoleAssignedTo": {
             "value": [{"principalId": RUNTIME_PRINCIPAL, "appRoleId": "r3"}]
+        },
+        "/servicePrincipals/runtime-sp-id/appRoleAssignedTo": {
+            "value": [{"principalId": MANAGEMENT_PRINCIPAL, "appRoleId": "m1"}]
         },
         "/applications?": {
             "value": [{"web": {"redirectUris": ["https://management.example.test/auth/callback"]}}]
@@ -334,12 +349,26 @@ def test_registration_roles_and_the_runtime_assignment_are_read_through_graph(ca
     module, _world, graph, build = case
     assert module.registration_and_roles_exist(build()).status == "pass"
     assert module.runtime_role_assigned(build()).status == "pass"
-    graph["/servicePrincipals?"]["value"][0]["appRoles"].pop()
+    management = f"/servicePrincipals?$filter=appId eq '{CLIENT_ID}'"
+    runtime = f"/servicePrincipals?$filter=appId eq '{RUNTIME_CLIENT_ID}'"
+    graph[management]["value"][0]["appRoles"].pop()
     result = module.registration_and_roles_exist(build())
     assert result.status == "fail" and "identity.roles.runtime" in result.detail
-    graph["/servicePrincipals?"]["value"] = []
+    graph[runtime]["value"][0]["appRoles"] = []
+    assert "identity.roles.management" in module.registration_and_roles_exist(build()).detail
+    graph[runtime]["value"] = []
+    assert "identity.runtime_app_client_id" in module.registration_and_roles_exist(build()).detail
+    graph[management]["value"] = []
     result = module.registration_and_roles_exist(build())
     assert "identity.management_app_client_id" in result.detail
+
+
+def test_the_management_identity_must_hold_the_management_role_on_the_runtime_registration(case):
+    module, _world, graph, build = case
+    assert module.management_role_assigned(build()).status == "pass"
+    graph["/servicePrincipals/runtime-sp-id/appRoleAssignedTo"]["value"] = []
+    result = module.management_role_assigned(build())
+    assert result.status == "fail" and "lacks the role" in result.detail
 
 
 def test_secrets_present_checks_names_and_expiry_without_values(case):
