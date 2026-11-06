@@ -31,6 +31,7 @@ ORIGIN = re.compile(r"https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5
 LABEL = r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 HOST = re.compile(rf"{LABEL}(\.{LABEL})+")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 DATABASE = re.compile(r"[A-Za-z0-9_-]{1,255}")
 KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 PUBLIC_KEY = re.compile(r"-----BEGIN PUBLIC KEY-----\s+[A-Za-z0-9+/=\s]+-----END PUBLIC KEY-----")
@@ -170,7 +171,7 @@ class Settings(BaseSettings):
         reference = (self.review_reference or "").strip()
         if not reference:
             raise StartupError("review_missing")
-        if len(reference) > 128 or not reference.isprintable():
+        if IDENTIFIER.fullmatch(reference) is None:
             raise StartupError("settings_invalid")
         hosts = tuple(item.strip() for item in _text(self.approved_hosts).split(","))
         if not 1 <= len(hosts) <= 8 or any(HOST.fullmatch(host) is None for host in hosts):
@@ -187,7 +188,7 @@ class Settings(BaseSettings):
             management_endpoint=_match(ORIGIN, self.management_endpoint),
             management_audience=_match(GUID, self.management_audience),
             text_endpoint=_match(ORIGIN, self.text_endpoint),
-            text_deployment=_match(NAME, self.text_deployment),
+            text_deployment=_match(IDENTIFIER, self.text_deployment),
             live_endpoint=_match(ORIGIN, self.live_endpoint),
             live_region=region,
             live_voice=_match(NAME, self.live_voice),
