@@ -41,8 +41,8 @@ run "containers_and_partition_keys_match_the_repositories" {
   }
 
   assert {
-    condition     = azurerm_cosmosdb_sql_container.this["configuration"].default_ttl == null && azurerm_cosmosdb_sql_container.this["text-conversations"].default_ttl == -1 && azurerm_cosmosdb_sql_container.this["call-audit"].default_ttl == 86400
-    error_message = "TTLs must follow the configuration (none for configuration, item TTL for text history)."
+    condition     = azurerm_cosmosdb_sql_container.this["configuration"].default_ttl == -1 && azurerm_cosmosdb_sql_container.this["text-conversations"].default_ttl == -1 && azurerm_cosmosdb_sql_container.this["call-audit"].default_ttl == 86400
+    error_message = "TTLs must follow the repositories (item TTL on, no default expiry, for configuration and text history)."
   }
 }
 

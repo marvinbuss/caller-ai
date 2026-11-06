@@ -58,16 +58,17 @@ def test_the_client_secret_stays_inside_the_factory_the_composition_supplies() -
     assert SECRET not in repr(login) and SECRET not in repr(flow) and SECRET not in str(calls)
 
 
-def test_the_policy_rejects_a_sign_in_client_equal_to_the_api_audience() -> None:
-    """Recorded in research R-04: the single-registration plan needs an owner decision (S-4)."""
-    import pytest
-
-    with pytest.raises(ValueError):
-        EntraPolicy(
-            tenant_id=TENANT,
-            client_id=CLIENT,
-            api_audience=CLIENT,
-            origin=ORIGIN,
-            manager_role="Caller.Editor",
-            manager_scope="manage",
-        )
+def test_one_registration_serves_sign_in_and_the_api_with_the_default_scope() -> None:
+    """Recorded in research R-04: one registration for sign-in; its API audience is its own ID."""
+    calls: list[dict[str, Any]] = []
+    single = EntraPolicy(
+        tenant_id=TENANT,
+        client_id=CLIENT,
+        api_audience=CLIENT,
+        origin=ORIGIN,
+        manager_role="Caller.Editor",
+        manager_scope=".default",
+    )
+    flow = MsalCodeFlow(policy=single, application_factory=lambda: Application(calls))
+    asyncio.run(flow.begin("fixture-state"))
+    assert calls[0]["scopes"] == [f"api://{CLIENT}/.default"]

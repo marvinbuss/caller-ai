@@ -204,6 +204,18 @@ function Find-Registration {
     return @($found | Where-Object { $_.displayName -eq $DisplayName }) | Select-Object -First 1
 }
 
+function Set-AccessTokenVersion {
+    # Both registrations issue version 2 access tokens, which the apps verify (issuer and `ver` claim).
+    param($App, [string] $Name)
+    if (-not $App) { return }
+    $current = Invoke-Az -Arguments @('ad', 'app', 'show', '--id', $App.appId, '--output', 'json')
+    if ($current.api -and $current.api.requestedAccessTokenVersion -eq 2) { Write-Host "Unchanged: access token version of $Name"; return }
+    Write-Change "set the access token version 2 of $Name"
+    if (-not $script:Preview) {
+        Invoke-Az -Arguments @('ad', 'app', 'update', '--id', $App.appId, '--set', 'api.requestedAccessTokenVersion=2') -Raw | Out-Null
+    }
+}
+
 function Initialize-RuntimeRegistration {
     # The runtime's own registration is the audience of the management app's workload token (FR-052).
     param($Inputs)
@@ -224,6 +236,7 @@ function Initialize-RuntimeRegistration {
             Invoke-Az -Arguments @('ad', 'app', 'update', '--id', $app.appId, '--identifier-uris', "api://$($app.appId)") -Raw | Out-Null
         }
     }
+    Set-AccessTokenVersion -App $app -Name $appName
     $sp = $null
     if ($app) { $sp = Invoke-Az -Arguments @('ad', 'sp', 'show', '--id', $app.appId, '--output', 'json') -AllowFailure }
     if (-not $sp) {
@@ -302,6 +315,8 @@ function Invoke-Registration {
             }
         }
     }
+
+    Invoke-Step 'management access token version' { Set-AccessTokenVersion -App $app -Name $appName }
 
     $sp = $null
     Invoke-Step 'management service principal' {

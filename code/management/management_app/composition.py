@@ -132,10 +132,10 @@ class ManagementRequest(BaseModel):
         UUID(self.runtime_audience)
         for client in self.runtime_clients:
             UUID(client)
-        if self.configuration_ref == self.audit_ref or self.runtime_audience in {
-            self.policy.client_id,
-            self.policy.api_audience,
-        }:
+        if (
+            self.configuration_ref == self.audit_ref
+            or self.runtime_role == self.policy.manager_role
+        ):
             raise ValueError("distinct_management_resources_required")
         if self.tests is not None and (
             self.tests.test_role == self.policy.manager_role

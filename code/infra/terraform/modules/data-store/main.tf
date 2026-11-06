@@ -1,6 +1,6 @@
 locals {
   containers = {
-    "configuration"       = { partition_key = "/organizationId", ttl = null }
+    "configuration"       = { partition_key = "/organizationId", ttl = -1 }
     "configuration-audit" = { partition_key = "/dayBucket", ttl = var.configuration_audit_ttl }
     "call-sessions"       = { partition_key = "/id", ttl = var.call_session_ttl }
     "call-audit"          = { partition_key = "/dayBucket", ttl = var.call_audit_ttl }

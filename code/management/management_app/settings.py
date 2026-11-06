@@ -32,7 +32,8 @@ REASON_CODES = (
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 ORIGIN = re.compile(r"https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?/?")
 ROLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-DATABASE = re.compile(r"[A-Za-z0-9_-]{1,255}")
+IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+DATABASE = IDENTIFIER
 KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 SCOPE = re.compile(r"api://[0-9a-fA-F-]{36}/\.default")
 FINGERPRINT = re.compile(r"[0-9a-f]{64}")
@@ -69,6 +70,7 @@ class LiveSettings:
     public_origin: str
     runtime_endpoint: str
     runtime_audience: str
+    runtime_client_id: str
     permit_issuer: str
     permit_audience: str
     signing_key_id: str
@@ -141,6 +143,7 @@ class Settings(BaseSettings):
     public_origin: str | None = None
     runtime_endpoint: str | None = None
     runtime_audience: str | None = None
+    runtime_client_id: str | None = None
     permit_issuer: str | None = None
     permit_audience: str | None = None
     signing_key_id: str | None = None
@@ -152,27 +155,38 @@ class Settings(BaseSettings):
             raise ValueError("trace_content_forbidden")
         return self
 
-    def live(self) -> LiveSettings:
-        """Validate every live setting; raises `StartupError` with one fixed reason code."""
+    def live(self, *, reviewable: bool = False) -> LiveSettings:
+        """Validate every live setting; raises `StartupError` with one fixed reason code.
+
+        `reviewable` skips what a reviewer cannot hold before the apply (the review reference, the
+        reviewed fingerprint and the two secrets) so the fingerprint tool can run on the rest.
+        """
         client = _match(GUID, self.azure_client_id)
         reference = (self.review_reference or "").strip()
-        if not reference:
-            raise StartupError("review_missing")
-        if len(reference) > 128 or not reference.isprintable():
+        reviewed = (self.reviewed_fingerprint or "").strip()
+        origins = {_match(ORIGIN, self.management_origin).rstrip("/")}
+        origins.add(_match(ORIGIN, self.public_origin).rstrip("/"))
+        if len(origins) != 1:
             raise StartupError("settings_invalid")
-        reviewed = _text(self.reviewed_fingerprint)
-        if FINGERPRINT.fullmatch(reviewed) is None:
-            raise StartupError("settings_invalid")
-        pem = _secret(self.signing_key_pem)
-        if len(pem) > 8192 or PRIVATE_KEY.fullmatch(pem) is None:
-            raise StartupError("key_invalid")
+        pem = ""
+        if not reviewable:
+            if not reference:
+                raise StartupError("review_missing")
+            if IDENTIFIER.fullmatch(reference) is None:
+                raise StartupError("settings_invalid")
+            reviewed = _text(reviewed)
+            if FINGERPRINT.fullmatch(reviewed) is None:
+                raise StartupError("settings_invalid")
+            pem = _secret(self.signing_key_pem)
+            if len(pem) > 8192 or PRIVATE_KEY.fullmatch(pem) is None:
+                raise StartupError("key_invalid")
         return LiveSettings(
             azure_client_id=client,
             review_reference=reference,
             reviewed_fingerprint=reviewed,
             cosmos_endpoint=_match(ORIGIN, self.cosmos_endpoint),
             cosmos_database=_match(DATABASE, self.cosmos_database),
-            audit_retention_seconds=_number(self.audit_retention_seconds, 1, 315_360_000),
+            audit_retention_seconds=_number(self.audit_retention_seconds, 3600, 315_360_000),
             tenant_id=_match(GUID, self.tenant_id),
             entra_client_id=_match(GUID, self.entra_client_id),
             api_audience=_match(GUID, self.api_audience),
@@ -184,10 +198,11 @@ class Settings(BaseSettings):
             public_origin=_match(ORIGIN, self.public_origin),
             runtime_endpoint=_match(ORIGIN, self.runtime_endpoint),
             runtime_audience=_match(GUID, self.runtime_audience),
+            runtime_client_id=_match(GUID, self.runtime_client_id),
             permit_issuer=_match(ORIGIN, self.permit_issuer),
             permit_audience=_match(ORIGIN, self.permit_audience),
             signing_key_id=_match(KEY_ID, self.signing_key_id),
-            entra_client_secret=_secret(self.entra_client_secret),
+            entra_client_secret="" if reviewable else _secret(self.entra_client_secret),
             signing_key_pem=pem,
         )
 

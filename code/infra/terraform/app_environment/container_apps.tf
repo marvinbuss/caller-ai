@@ -91,9 +91,10 @@ module "management_app" {
     CALLER_TEST_ROLE               = var.app_environment.identity.roles.tester
     CALLER_RUNTIME_ROLE            = var.app_environment.identity.roles.runtime
     CALLER_MANAGEMENT_ORIGIN       = local.management_origin
-    CALLER_PUBLIC_ORIGIN           = local.runtime_origin
+    CALLER_PUBLIC_ORIGIN           = local.management_origin
     CALLER_RUNTIME_ENDPOINT        = local.runtime_origin
     CALLER_RUNTIME_AUDIENCE        = var.app_environment.identity.runtime_app_client_id
+    CALLER_RUNTIME_CLIENT_ID       = data.azurerm_user_assigned_identity.runtime.client_id
     CALLER_PERMIT_ISSUER           = local.management_origin
     CALLER_PERMIT_AUDIENCE         = local.runtime_origin
     CALLER_SIGNING_KEY_ID          = module.permit_key.key_id

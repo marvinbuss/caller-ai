@@ -43,7 +43,7 @@ switch -Regex ($command) {
     }
     '^ad app create' {
         if ($state.failOn -eq 'app-create') { Fail }
-        $app = @{ id = New-Id; appId = New-Id; displayName = (Get-Option '--display-name'); appRoles = @(); identifierUris = @(); web = @{ redirectUris = @() }; credentials = @() }
+        $app = @{ id = New-Id; appId = New-Id; displayName = (Get-Option '--display-name'); appRoles = @(); identifierUris = @(); api = @{ requestedAccessTokenVersion = $null }; web = @{ redirectUris = @() }; credentials = @() }
         $state.apps += $app; Save-State; Out-Json $app; exit 0
     }
     '^ad app show' {
@@ -55,6 +55,7 @@ switch -Regex ($command) {
         if (-not $app) { Fail }
         $roles = Get-Option '--app-roles'
         if ($roles) { $app.appRoles = @(Get-Content -LiteralPath $roles.TrimStart('@') -Raw | ConvertFrom-Json -AsHashtable -Depth 20) }
+        if ((Get-Option '--set') -eq 'api.requestedAccessTokenVersion=2') { $app.api = @{ requestedAccessTokenVersion = 2 } }
         $uris = Get-Option '--identifier-uris'
         if ($uris) { $app.identifierUris = @($uris) }
         $index = [array]::IndexOf($arguments, '--web-redirect-uris')

@@ -56,9 +56,10 @@ Runtime probes: startup and readiness `GET /readyz`, liveness `GET /healthz`, po
 | `CALLER_API_AUDIENCE`, `CALLER_MANAGER_ROLE`, `CALLER_MANAGER_SCOPE`, `CALLER_TEST_ROLE`, `CALLER_RUNTIME_ROLE` | no | Audience, editor role, scope, tester role and the runtime's role name. |
 | `CALLER_MANAGEMENT_ORIGIN` | no | The management app's own HTTPS origin, for redirects and origin checks. |
 | `CALLER_RUNTIME_ENDPOINT`, `CALLER_RUNTIME_AUDIENCE` | no | HTTPS origin of the runtime, which the browser also uses for the console, and the client ID of the runtime's app registration (the audience of the token the management app presents to the runtime). |
+| `CALLER_RUNTIME_CLIENT_ID` | no | Client ID of the runtime's managed identity: the only application accepted as caller of the management runtime-configuration endpoint (the `azp` of its token). |
 | `CALLER_PERMIT_ISSUER`, `CALLER_PERMIT_AUDIENCE`, `CALLER_SIGNING_KEY_ID` | no | Permit issuer, audience and key ID (equals `signing_key.key_id`). |
 | `CALLER_SIGNING_KEY_PEM` | **yes** | Key Vault reference to `permit-private-key` (FR-051). |
-| `CALLER_PUBLIC_ORIGIN` | no | The address the frontend uses to reach the backend, resolved at start (spike S-12). |
+| `CALLER_PUBLIC_ORIGIN` | no | The address the browser reaches the management app on (its own origin). The image rewrites the frontend's baked backend address to this value at start, or to `API_URL` when that is set (spike S-12). |
 
 Management probes: startup and readiness `GET /readyz`, liveness `GET /healthz`, port 3000.
 
@@ -79,6 +80,7 @@ Management probes: startup and readiness `GET /readyz`, liveness `GET /healthz`,
 | `CALLER_PERMIT_AUDIENCE`, `CALLER_MANAGER_AUDIENCE` | The runtime app's origin. |
 | `CALLER_TENANT_ID` (runtime), `CALLER_WORKLOAD_*` | `environment.tenant_id`, `identity.runtime_app_client_id`, `identity.roles.management` and the principal ID of the management identity. |
 | `CALLER_RUNTIME_AUDIENCE` | `identity.runtime_app_client_id`. |
+| `CALLER_RUNTIME_CLIENT_ID` | The client ID of the script-created runtime identity (the same data source that gives the runtime its `AZURE_CLIENT_ID`). |
 | `CALLER_APPROVED_HOSTS` | The management host, the text endpoint host and the live endpoint host. |
 
 The derivation rules are confirmed by spikes S-4, S-11 and S-14 in [research.md](../research.md). A rule that a spike

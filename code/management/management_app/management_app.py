@@ -7,6 +7,7 @@ states in a context that is forked while the app is built, so the editor pages a
 imported before that fork; moving those imports later breaks the frontend export.
 """
 
+import os
 from contextlib import AbstractContextManager, nullcontext
 from typing import TYPE_CHECKING, cast
 
@@ -210,4 +211,21 @@ def editor_asgi(application: rx.App, *, additional_paths: frozenset[str] = froze
     return ProtectedReflexBoundary(asgi, additional_paths=additional_paths)
 
 
-app = create_app()
+def create_app_from_environment() -> ASGIApp:
+    """Container entrypoint: local mode is the health-only shell, live mode composes at start."""
+    settings = Settings()
+    if settings.mode != "live":
+        return app()
+    from management_app.live import LiveManagementApplication
+
+    return LiveManagementApplication(settings)
+
+
+def export_app() -> rx.App:
+    """The frontend export registers every page through a build-only stub (research R-12)."""
+    from management_app.frontend_export import export_editor
+
+    return create_app(editor=export_editor())
+
+
+app = export_app() if os.environ.get("CALLER_FRONTEND_EXPORT") == "1" else create_app()

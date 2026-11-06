@@ -34,11 +34,12 @@ def complete() -> dict[str, str]:
         "CALLER_MANAGEMENT_ORIGIN": "https://management.example.azurecontainerapps.io",
         "CALLER_RUNTIME_ENDPOINT": "https://runtime.example.azurecontainerapps.io",
         "CALLER_RUNTIME_AUDIENCE": "00000000-0000-4000-8000-000000000008",
+        "CALLER_RUNTIME_CLIENT_ID": "00000000-0000-4000-8000-000000000020",
         "CALLER_PERMIT_ISSUER": "https://management.example.azurecontainerapps.io",
         "CALLER_PERMIT_AUDIENCE": "https://runtime.example.azurecontainerapps.io",
         "CALLER_SIGNING_KEY_ID": "key-1",
         "CALLER_SIGNING_KEY_PEM": PRIVATE_PEM,
-        "CALLER_PUBLIC_ORIGIN": "https://runtime.example.azurecontainerapps.io",
+        "CALLER_PUBLIC_ORIGIN": "https://management.example.azurecontainerapps.io",
     }
 
 
@@ -157,3 +158,12 @@ def test_the_reason_codes_are_the_fixed_contract_set() -> None:
         "store_unavailable",
         "key_invalid",
     }
+
+
+def test_a_public_origin_that_is_not_the_management_origin_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    other = {**complete(), "CALLER_PUBLIC_ORIGIN": "https://elsewhere.example.net"}
+    with pytest.raises(StartupError) as raised:
+        load(monkeypatch, other).live()
+    assert raised.value.code == "settings_invalid"

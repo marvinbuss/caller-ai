@@ -163,6 +163,34 @@ def verify_browser(url: str) -> None:
         stop([process])
 
 
+def verify_start_address(image: str) -> None:
+    """Spike S-12: the exported frontend follows `API_URL` at start and ships every page."""
+    values = environment()
+    values["CALLER_IMAGE_TESTS"] = "1"
+    values["CALLER_MANAGEMENT_IMAGE"] = image
+    command = [
+        "uv",
+        "run",
+        "--directory",
+        "code/tools",
+        "--locked",
+        "pytest",
+        "tests/test_management_image.py",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+    ]
+    process = psutil.Popen(command, cwd=ROOT, env=values)
+    try:
+        code = process.wait(timeout=300)
+        if code != 0:
+            raise subprocess.CalledProcessError(code, command)
+    except (subprocess.TimeoutExpired, psutil.TimeoutExpired):
+        raise RuntimeError("image_start_address_deadline_exceeded") from None
+    finally:
+        stop([process])
+
+
 def main() -> None:
     if docker("info", "--format", "{{.OSType}}") != "linux":
         raise RuntimeError("linux_container_engine_required")
@@ -209,12 +237,14 @@ def main() -> None:
                         raise RuntimeError("image_health_latency_exceeded")
             client.get(urls["management"] + "/").raise_for_status()
         verify_browser(urls["management"])
+        verify_start_address(management)
         print(
             json.dumps(
                 {
                     "result": "actual_image_smoke_passed",
                     "engine": "linux",
                     "offline_startup": True,
+                    "frontend_follows_start_address": True,
                     "browser_widths": [360, 768, 1440],
                 }
             )

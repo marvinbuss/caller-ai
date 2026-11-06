@@ -781,3 +781,42 @@ def test_identity_components_must_share_one_explicit_policy(security) -> None:
     different = identity.policy.model_copy(update={"tenant_id": str(uuid4())})
     with pytest.raises(ValueError, match="^identity_policy_mismatch$"):
         IdentityService(policy=different, verifier=identity.verifier, sessions=identity.sessions)
+
+
+@pytest.mark.parametrize("role,status", [("Caller.Runtime", 200), ("Configuration.Manager", 403)])
+def test_the_runtime_may_use_the_single_registration_audience_with_its_own_role(
+    security, signing_key, role, status
+) -> None:
+    """One registration (R-04): the runtime token's audience is the management API audience."""
+    from management_app.security import RuntimeIdentity
+
+    identity, _keys = security
+    runtime = RuntimeIdentity(
+        verifier=identity.verifier,
+        audience=AUDIENCE,
+        role="Caller.Runtime",
+        allowed_client_ids=frozenset({RUNTIME_CLIENT}),
+    )
+    token = signed(signing_key, roles=[role], scp=None, idtyp="app", azp=RUNTIME_CLIENT)
+    application = FastAPI()
+
+    @application.post("/execute")
+    async def execute(request: Request):
+        return {"actor": await runtime.require_runtime(request)}
+
+    with TestClient(application, base_url=ORIGIN) as client:
+        response = client.post("/execute", headers={"Authorization": "Bearer " + token})
+    assert response.status_code == status
+
+
+def test_the_runtime_role_can_never_be_the_manager_role(security) -> None:
+    from management_app.security import RuntimeIdentity
+
+    identity, _keys = security
+    with pytest.raises(ValueError, match="distinct_runtime_identity_required"):
+        RuntimeIdentity(
+            verifier=identity.verifier,
+            audience=AUDIENCE,
+            role="Configuration.Manager",
+            allowed_client_ids=frozenset({RUNTIME_CLIENT}),
+        )

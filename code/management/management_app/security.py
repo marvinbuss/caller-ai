@@ -72,11 +72,9 @@ class EntraPolicy(BaseModel):
             or (parts.port is not None and not 1 <= parts.port <= 65535)
         ):
             raise ValueError("https_management_origin_required")
-        if self.api_audience == self.client_id:
-            raise ValueError("distinct_api_audience_required")
-        if not all(
-            re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]{0,127}", value)
-            for value in (self.manager_role, self.manager_scope)
+        if not (
+            re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]{0,127}", self.manager_role)
+            and re.fullmatch(r"[A-Za-z.][A-Za-z0-9_.]{0,127}", self.manager_scope)
         ):
             raise ValueError("invalid_permission_configuration")
         return self
@@ -229,7 +227,7 @@ class RuntimeIdentity:
         clients = frozenset(str(UUID(value)) for value in allowed_client_ids)
         if (
             not clients
-            or audience in {verifier.policy.client_id, verifier.policy.api_audience}
+            or role == verifier.policy.manager_role
             or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]{0,127}", role)
         ):
             raise ValueError("distinct_runtime_identity_required")
