@@ -95,6 +95,7 @@ switch -Regex ($command) {
             if (-not $app) { Fail }
             $body = Read-Body
             if ($body.api) { $app.api = $body.api }
+            if ($body.optionalClaims) { $app.optionalClaims = $body.optionalClaims }
             Save-State; exit 0
         }
         if ($url -match '/servicePrincipals/([^/]+)/appRoleAssignedTo') {

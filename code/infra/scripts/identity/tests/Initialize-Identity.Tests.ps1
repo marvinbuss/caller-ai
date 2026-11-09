@@ -91,6 +91,7 @@ Describe 'Initialize-Identity registration phase' {
         @($runtimeApp.appRoles | ForEach-Object { $_.value }) | Should -Be @('Management.Caller')
         $management.api.requestedAccessTokenVersion | Should -Be 2
         $runtimeApp.api.requestedAccessTokenVersion | Should -Be 2
+        @($management.optionalClaims.accessToken | ForEach-Object { $_.name }) | Should -Contain 'idtyp'
         $state.servicePrincipals.Keys | Should -Contain $management.appId
         $state.servicePrincipals.Keys | Should -Contain $runtimeApp.appId
         $result.Output | Should -Match "management_app_client_id = $($management.appId)"

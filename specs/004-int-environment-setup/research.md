@@ -203,6 +203,9 @@ real `terraform validate` or first apply.
   `python -m management_app.fingerprint`.
 - **Token version**: both registrations are set to issue version 2 access tokens (`api.requestedAccessTokenVersion`
   by the identity script) because the management app verifies the version 2 issuer and `ver` claim.
+- **App-only claim**: the management registration requests the optional access token claim `idtyp`, because the
+  management app accepts the runtime's and the tester's app-only tokens only with `idtyp=app`, and Entra adds
+  the claim only on request.
 - **Capabilities**: tools and MCP are not part of the journey, so the approved capability set is empty (FR-048).
 
 ## R-12 Management frontend build and runtime address

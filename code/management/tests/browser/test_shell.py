@@ -17,6 +17,11 @@ def test_responsive_connected_shell(page: Page, shell_url: str, width: int) -> N
     page.goto(shell_url, wait_until="networkidle")
     expect(page.get_by_role("heading", name="Caller AI", exact=True)).to_be_visible()
     expect(page.get_by_role("main")).to_be_visible()
+    # The exported start page serves both modes, so it must not claim one.
+    assert page.get_by_text("Local", exact=True).count() == 0
+    expect(page.get_by_role("link", name="Open configuration")).to_have_attribute(
+        "href", "/configuration/"
+    )
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     heading = page.get_by_role("heading", name="Caller AI", exact=True).bounding_box()
     banner = page.get_by_role("banner").bounding_box()
