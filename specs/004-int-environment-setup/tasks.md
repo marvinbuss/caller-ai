@@ -265,7 +265,7 @@ Every document links to the relevant official Terraform and Azure guidance (FR-0
 
 - [ ] T110 Replace the placeholder values in `code/infra/environments/int/int.tfvars.json` and the three backend files with the owner's real values, then run `validate_environment.py` (plan open item 3), including `identity.user_group_id`, the model deployments and the region.
 - [X] T111 Create the state storage with `terraform_delivery.py --operation state-create --environment int --confirm-apply`, and record that the state migrated and the local copy was removed (FR-006, FR-007).
-- [ ] T112 Run the `terraform-bootstrap` workflow and approve the apply; record the outputs and confirm only default NSG rules and no routes (SC-014).
+- [X] T112 Run the `terraform-bootstrap` workflow and approve the apply; record the outputs and confirm only default NSG rules and no routes (SC-014).
 - [ ] T113 After the owner's confirmation that application code becomes public (plan open item 2) is recorded in `docs/acceptance/int-environment.md`, merge to `main`, let `images.yml` publish both images, make both packages public, rerun until `anonymous-pull` passes, and copy the `sha-<40 hex>` tags into `code/infra/environments/int/int.tfvars.json` (FR-036 to FR-038).
 - [ ] T114 Run `Initialize-Identity.ps1 -Environment int -WhatIf` and then without it as a directory administrator, copy the printed values into `app_environment.identity`, store the secret as `MANAGEMENT_SIGNIN_SECRET` in both `app_environment` GitHub environments and delete `code/.local/identity/int/` (FR-046).
 - [ ] T115 Compute the settings fingerprint with the T086 tool, review the non-secret settings and record `CALLER_REVIEWED_FINGERPRINT` and the review reference in `code/infra/environments/int/int.tfvars.json`.

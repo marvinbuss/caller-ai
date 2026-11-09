@@ -6,9 +6,9 @@ not been run says so. Nothing here is claimed from an offline test.
 
 ## Current decision
 
-**Pending, not accepted.** The offline checks pass. The live gates below have not been run: no subscription,
-state storage, directory object, image publication or deployment exists for `int` yet, and several pieces the gates
-need are not delivered (see the status table in the bring-up runbook).
+**Pending, not accepted.** The offline checks pass. Bring-up of `int` is in progress: the state storage, the
+bootstrap network and the published images exist; the app environment and the remaining gates below have not been
+run.
 
 ## Offline results
 
@@ -26,11 +26,11 @@ Fill in the date, version tags, result and any deviation as each gate is run.
 
 | Gate | Date | Image tags | Result | Deviation |
 |------|------|------------|--------|-----------|
-| Real values in the environment files, validated | Not run | | | |
-| State storage created and migrated (`state-create`) | Not run | | | |
-| Bootstrap applied; only default security rules and no routes | Not run | | | |
-| Package visibility and the owner's approval to publish the application code | Not run | | | |
-| Identity objects created and the secret stored once | Not run | | | |
+| Real values in the environment files, validated | 2026-11-09 | `sha-9c78b00c6637fd6697fa215c28b282bc467b2f8f` | Partly: identity, state, network, model and image values set and `validate_environment.py` passes; `application.voice`, `reviewed_fingerprint` and the monitoring contacts are still placeholders | |
+| State storage created and migrated (`state-create`) | 2026-11-09 | | Passed: `callerintstate0001` created with shared keys off, state migrated to `int/state.tfstate`, local copy removed | Run from a workstation after two fixes to `state-create` (Windows `az.cmd`, local backend override) |
+| Bootstrap applied; only default security rules and no routes | 2026-11-09 | | Passed: run 42632204371; `nsg-vnet-caller-int` has 0 custom rules, `rt-vnet-caller-int` has 0 routes | First run failed until the callers passed the environment secrets to the reusable workflow |
+| Package visibility and the owner's approval to publish the application code | 2026-11-09 | `sha-9c78b00c6637fd6697fa215c28b282bc467b2f8f` | Images published and pulled without credentials (run 42632174721); the owner's approval is still to be recorded here | |
+| Identity objects created and the secret stored once | 2026-11-09 | | Partly: registrations, roles, runtime identity and role assignments created; secret stored in the `int` environment; rotation of the secret pending | Script fixes for Graph writes on Windows and the access token version |
 | App environment applied; first check fails only at `signin-redirect-matches` | Not run | | | |
 | Redirect registered; every check passes | Not run | | | |
 | Zero planned changes on a repeat run (`expect_no_changes`) for `app_environment` and `bootstrap` | Not run | | | |
