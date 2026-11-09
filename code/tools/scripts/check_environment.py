@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -28,8 +29,11 @@ ENVIRONMENTS = ROOT / "code/infra/environments"
 ALLOWED_SKIP = "public_access_disabled"
 GRAPH = "https://graph.microsoft.com/v1.0"
 ARM = "https://management.azure.com"
+# On Windows the Azure CLI is `az.cmd`, which a bare `az` does not start.
+AZ = shutil.which("az") or "az"
 API_VERSIONS = {
-    "microsoft.app/managedenvironments": "2024-03-01",
+    # 2025-07-01 is the first stable version that returns publicNetworkAccess.
+    "microsoft.app/managedenvironments": "2025-07-01",
     "microsoft.app/containerapps": "2024-03-01",
     "microsoft.documentdb/databaseaccounts": "2024-05-15",
     "microsoft.keyvault/vaults": "2023-07-01",
@@ -78,7 +82,7 @@ class Access(Protocol):
 
 class CliAccess:
     def _rest(self, method: str, url: str, body: dict[str, Any] | None = None) -> str:
-        command = ["az", "rest", "--method", method, "--url", url, "--only-show-errors"]
+        command = [AZ, "rest", "--method", method, "--url", url, "--only-show-errors"]
         if body is not None:
             command += ["--body", json.dumps(body), "--headers", "Content-Type=application/json"]
         result = subprocess.run(
@@ -110,7 +114,7 @@ class CliAccess:
         """An access token of the signed-in identity for the resource; never printed."""
         result = subprocess.run(
             [
-                "az",
+                AZ,
                 "account",
                 "get-access-token",
                 "--resource",

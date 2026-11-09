@@ -38,7 +38,7 @@ def environment() -> dict[str, str]:
         "CALLER_MANAGEMENT_ENDPOINT": f"https://{MANAGEMENT}",
         "CALLER_MANAGEMENT_AUDIENCE": "00000000-0000-4000-8000-000000000005",
         "CALLER_TEXT_ENDPOINT": "https://model.openai.azure.com",
-        "CALLER_TEXT_DEPLOYMENT": "gpt-text",
+        "CALLER_TEXT_DEPLOYMENT": "gpt-6.1-text",
         "CALLER_LIVE_ENDPOINT": "https://model.services.ai.azure.com",
         "CALLER_LIVE_REGION": "swedencentral",
         "CALLER_LIVE_VOICE": "alloy",
@@ -115,7 +115,7 @@ def test_a_complete_settings_set_builds_the_reviewed_runtime(monkeypatch) -> Non
         "model.openai.azure.com",
         "model.services.ai.azure.com",
     }
-    assert options.text_deployment == "gpt-text" and options.available_live_sessions == 20
+    assert options.text_deployment == "gpt-6.1-text" and options.available_live_sessions == 20
     assert options.max_clock_skew_seconds == 1 and options.text_history_ttl_seconds == 86400
     assert runtime.owner_id == settings.instance_id
     assert set(runtime._permits._keys) == {"key-1"}

@@ -153,6 +153,14 @@ jobs:
         env:
           ENVIRONMENT_MANIFEST_PATH: ${{ runner.temp }}/environment-manifest.json
         run: uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation apply --environment "$DEPLOY_ENVIRONMENT" --root "$DEPLOY_ROOT" --plan-container "$PLAN_CONTAINER" --expected-plan-sha256 "$PLAN_SHA256"
+      # The first sign-in's OIDC assertion expires during a long apply; Graph and app tokens need a fresh one.
+      - name: Authenticate to Azure again for the environment check
+        if: inputs.root == 'app_environment' && !inputs.destroy
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Check the deployed environment
         if: inputs.root == 'app_environment' && !inputs.destroy
         shell: bash

@@ -32,6 +32,8 @@ LABEL = r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 HOST = re.compile(rf"{LABEL}(\.{LABEL})+")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+# Azure model deployment names may contain dots, as in `gpt-6.1-sol`.
+DEPLOYMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 DATABASE = re.compile(r"[A-Za-z0-9_-]{1,255}")
 KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 PUBLIC_KEY = re.compile(r"-----BEGIN PUBLIC KEY-----\s+[A-Za-z0-9+/=\s]+-----END PUBLIC KEY-----")
@@ -188,7 +190,7 @@ class Settings(BaseSettings):
             management_endpoint=_match(ORIGIN, self.management_endpoint),
             management_audience=_match(GUID, self.management_audience),
             text_endpoint=_match(ORIGIN, self.text_endpoint),
-            text_deployment=_match(IDENTIFIER, self.text_deployment),
+            text_deployment=_match(DEPLOYMENT, self.text_deployment),
             live_endpoint=_match(ORIGIN, self.live_endpoint),
             live_region=region,
             live_voice=_match(NAME, self.live_voice),

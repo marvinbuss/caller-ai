@@ -118,6 +118,21 @@ def test_close_releases_both_clients_once(clients: AzureClients) -> None:
     assert clients._cosmos.closed == 1 and clients._credential.closed == 1
 
 
+def test_the_real_clients_construct_with_their_async_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name, value in complete().items():
+        monkeypatch.setenv(name, value)
+    live = Settings().live()
+
+    async def construct() -> None:
+        clients = AzureClients(live)
+        await clients.container("call-sessions")
+        await clients.close()
+
+    asyncio.run(construct())
+
+
 def test_no_shared_key_or_connection_string_exists_in_the_module() -> None:
     source = Path(module.__file__).read_text(encoding="utf-8").lower()
     for forbidden in (
