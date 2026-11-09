@@ -499,6 +499,20 @@ def test_reusable_workflows_keep_plan_apply_and_bootstrap_protected():
         assert caller["jobs"]["deploy"]["with"]["root"] == stack
         assert "slug" not in caller["jobs"]["deploy"]["with"]
         assert "inherit" not in json.dumps(caller)
+        # A reusable workflow sees an environment secret only when the caller passes it by name.
+        passed = caller["jobs"]["deploy"].get("secrets", {})
+        expected = {"AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"}
+        if stack == "app_environment":
+            expected.add("MANAGEMENT_SIGNIN_SECRET")
+        assert set(passed) == expected
+        assert all(passed[key] == "${{ secrets." + key + " }}" for key in expected)
+    declared = workflow["on"]["workflow_call"]["secrets"]
+    assert {key for key, value in declared.items() if value.get("required") == "true"} == {
+        "AZURE_CLIENT_ID",
+        "AZURE_TENANT_ID",
+        "AZURE_SUBSCRIPTION_ID",
+    }
+    assert declared["MANAGEMENT_SIGNIN_SECRET"]["required"] == "false"
 
 
 def _state_values(variables):
