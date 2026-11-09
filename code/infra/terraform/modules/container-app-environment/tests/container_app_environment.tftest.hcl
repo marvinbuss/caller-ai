@@ -20,6 +20,11 @@ run "private_by_default_with_consumption_profile" {
     condition     = length([for p in azurerm_container_app_environment.this.workload_profile : p if p.workload_profile_type == "Consumption" && p.name == "Consumption"]) == 1
     error_message = "The Consumption workload profile must be declared at creation."
   }
+
+  assert {
+    condition     = azurerm_container_app_environment.this.logs_destination == "log-analytics" && azurerm_container_app_environment.this.log_analytics_workspace_id == var.log_analytics_workspace_id
+    error_message = "Console logs must go to the Log Analytics workspace that the log alerts query."
+  }
 }
 
 run "environment_is_external_so_the_flag_toggles_in_place" {
