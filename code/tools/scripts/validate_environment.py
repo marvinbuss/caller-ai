@@ -36,6 +36,8 @@ SECRET_KEY_ALLOWED = {
 SECRET_VALUE = re.compile(
     r"-----BEGIN|AccountKey=|SharedAccessSignature|eyJ[A-Za-z0-9_-]{10,}\.|[A-Za-z0-9+/=]{40,}"
 )
+REVIEWED_FINGERPRINT = "app_environment.application.reviewed_fingerprint"
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 LOCATION = re.compile(r"[a-z0-9]{3,30}")
 FOUNDRY_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}[a-z0-9]")
 DEPLOYMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
@@ -141,7 +143,11 @@ def scan_secrets(value: Any, path: str, report: Report, file: str) -> None:
         for index, child in enumerate(value):
             scan_secrets(child, f"{path}[{index}]", report, file)
     elif isinstance(value, str) and ".image." not in f".{path}." and SECRET_VALUE.search(value):
-        if not (GUID.fullmatch(value) or value.startswith("/subscriptions/")):
+        if not (
+            GUID.fullmatch(value)
+            or value.startswith("/subscriptions/")
+            or (path == REVIEWED_FINGERPRINT and SHA256_HEX.fullmatch(value))
+        ):
             report.error(file, path, "secret_like_value")
 
 
