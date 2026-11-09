@@ -335,6 +335,20 @@ function Invoke-Registration {
 
     Invoke-Step 'management access token version' { Set-AccessTokenVersion -App $app -Name $appName }
 
+    # The management app accepts app-only tokens (runtime, tester) only with idtyp=app, which Entra adds on request.
+    Invoke-Step 'management app-only token claim' {
+        if (-not $app) { return }
+        $current = Invoke-Az -Arguments @('ad', 'app', 'show', '--id', $app.appId, '--output', 'json')
+        $claims = if ($current.optionalClaims) { $current.optionalClaims } else { [pscustomobject]@{} }
+        $access = @($claims.accessToken | Where-Object { $_ })
+        if ($access | Where-Object { $_.name -eq 'idtyp' }) { Write-Host "Unchanged: access token claim idtyp of $appName"; return }
+        Write-Change "request the access token claim idtyp on $appName"
+        if (-not $script:Preview) {
+            $claims | Add-Member -NotePropertyName accessToken -NotePropertyValue @($access + @{ name = 'idtyp'; essential = $false }) -Force
+            Invoke-GraphWrite -Method 'patch' -Url "https://graph.microsoft.com/v1.0/applications/$($current.id)" -Body @{ optionalClaims = $claims }
+        }
+    }
+
     $sp = $null
     Invoke-Step 'management service principal' {
         if ($app) { $script:sp = Invoke-Az -Arguments @('ad', 'sp', 'show', '--id', $app.appId, '--output', 'json') -AllowFailure }

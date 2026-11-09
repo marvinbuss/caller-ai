@@ -50,7 +50,6 @@ def index() -> rx.Component:
                     rx.icon("headset", size=22, color="#197767"),
                     rx.text("CALLER / CONTROL", size="2", weight="bold"),
                     rx.spacer(),
-                    rx.badge("Local", color_scheme="teal", variant="soft"),
                     align="center",
                     width="100%",
                     max_width="960px",
@@ -82,24 +81,20 @@ def index() -> rx.Component:
                     width="100%",
                     margin_bottom="20px",
                 ),
-                rx.grid(
-                    *[
-                        rx.box(
-                            rx.text(label, size="2", color="#58615c", margin_bottom="8px"),
-                            rx.text(value, size="3", weight="medium"),
-                            padding="20px 0",
-                            border_top="1px solid #dce1df",
-                            min_width="0",
-                        )
-                        for label, value in [
-                            ("Application", "Management"),
-                            ("Operating mode", "Local"),
-                            ("Live calls", "Unavailable"),
-                            ("Configuration", "Unavailable"),
-                        ]
-                    ],
-                    columns=rx.breakpoints(initial="1", sm="2", md="4"),
-                    spacing="6",
+                rx.box(
+                    rx.text(
+                        "Agents, communities and the test console are edited in the configuration. "
+                        "Signing in with an organization account that holds the editor or tester "
+                        "role is required.",
+                        size="3",
+                        color="#58615c",
+                        margin_bottom="16px",
+                    ),
+                    rx.link(
+                        "Open configuration", href="/configuration/", size="3", weight="medium"
+                    ),
+                    padding="20px 0",
+                    border_top="1px solid #dce1df",
                     width="100%",
                 ),
                 rx.hstack(
