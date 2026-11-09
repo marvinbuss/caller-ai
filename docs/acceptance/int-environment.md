@@ -14,7 +14,7 @@ run.
 
 | Check | Result |
 |-------|--------|
-| Environment files | `validate_environment.py` passes for `int` with the expected `open_range` warning (placeholder values) |
+| Environment files | `validate_environment.py` passes for `int` with the expected `open_range` warning (public access open to `0.0.0.0/0`) |
 | Terraform | `verify_terraform.py check`: formatting, validation and native tests for three roots and thirteen modules, and the pinned Trivy configuration scan |
 | Layout | `check_terraform_structure.py` reports a valid structure |
 | Delivery, check and image tooling | Offline tests with fake registries, fake Azure responses and a fake Terraform runner pass |
@@ -26,11 +26,12 @@ Fill in the date, version tags, result and any deviation as each gate is run.
 
 | Gate | Date | Image tags | Result | Deviation |
 |------|------|------------|--------|-----------|
-| Real values in the environment files, validated | 2026-11-09 | `sha-9c78b00c6637fd6697fa215c28b282bc467b2f8f` | Partly: identity, state, network, model and image values set and `validate_environment.py` passes; `application.voice`, `reviewed_fingerprint` and the monitoring contacts are still placeholders | |
+| Real values in the environment files, validated | 2026-11-09 | `sha-9c78b00c6637fd6697fa215c28b282bc467b2f8f` | Passed: no placeholders remain; `validate_environment.py` passes with the expected `open_range` warning (`0.0.0.0/0`) | The validator flagged the 64-hex reviewed fingerprint as secret-like; it now accepts a SHA-256 digest in that one setting |
 | State storage created and migrated (`state-create`) | 2026-11-09 | | Passed: `callerintstate0001` created with shared keys off, state migrated to `int/state.tfstate`, local copy removed | Run from a workstation after two fixes to `state-create` (Windows `az.cmd`, local backend override) |
 | Bootstrap applied; only default security rules and no routes | 2026-11-09 | | Passed: run 42632204371; `nsg-vnet-caller-int` has 0 custom rules, `rt-vnet-caller-int` has 0 routes | First run failed until the callers passed the environment secrets to the reusable workflow |
-| Package visibility and the owner's approval to publish the application code | 2026-11-09 | `sha-9c78b00c6637fd6697fa215c28b282bc467b2f8f` | Images published and pulled without credentials (run 42632174721); the owner's approval is still to be recorded here | |
-| Identity objects created and the secret stored once | 2026-11-09 | | Partly: registrations, roles, runtime identity and role assignments created; secret stored in the `int` environment; rotation of the secret pending | Script fixes for Graph writes on Windows and the access token version |
+| Package visibility and the owner's approval to publish the application code | 2026-11-09 | `sha-9c78b00c6637fd6697fa215c28b282bc467b2f8f` | Passed: the owner (marvinbuss) approved publishing the application code on 2026-11-09; images published and pulled without credentials (run 42632174721) | |
+| Identity objects created and the secret stored once | 2026-11-09 | | Passed: registrations, roles, runtime identity and role assignments created; the sign-in secret was rotated after an exposure, stored once as `MANAGEMENT_SIGNIN_SECRET` in the `int` environment, and `code/.local/identity/int/` deleted | Script fixes for Graph writes on Windows and the access token version |
+| Settings fingerprint reviewed and recorded | 2026-11-09 | | Passed: fingerprint of the management app's planned non-secret settings recorded as `reviewed_fingerprint` with review reference `int-live-review-1` | `CALLER_COSMOS_ENDPOINT` assumed in the `https://<name>.documents.azure.com:443/` form; recompute if the first start reports `fingerprint_mismatch` |
 | App environment applied; first check fails only at `signin-redirect-matches` | Not run | | | |
 | Redirect registered; every check passes | Not run | | | |
 | Zero planned changes on a repeat run (`expect_no_changes`) for `app_environment` and `bootstrap` | Not run | | | |

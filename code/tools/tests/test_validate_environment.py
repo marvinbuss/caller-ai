@@ -267,6 +267,13 @@ def test_secret_like_values_are_rejected(base, value):
     assert ("app_environment.application.voice", "secret_like_value") in problems(base)
 
 
+def test_reviewed_fingerprint_digest_is_not_a_secret(base):
+    mutate(base, "app_environment.application.reviewed_fingerprint", "0f" * 32)
+    assert problems(base) == set()
+    mutate(base, "app_environment.application.voice", "0f" * 32)
+    assert ("app_environment.application.voice", "secret_like_value") in problems(base)
+
+
 def test_messages_never_contain_the_offending_value(base):
     secret = "-----BEGIN PRIVATE KEY-----"  # pragma: allowlist secret
     mutate(base, "app_environment.application.voice", secret)
