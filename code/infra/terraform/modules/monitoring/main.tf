@@ -122,7 +122,9 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "this" {
   severity             = 2
   evaluation_frequency = "PT5M"
   window_duration      = "PT15M"
-  tags                 = var.tags
+  # ContainerAppConsoleLogs_CL is created on the first log ingestion, after the apps exist.
+  skip_query_validation = true
+  tags                  = var.tags
 
   criteria {
     query                   = each.value.query
