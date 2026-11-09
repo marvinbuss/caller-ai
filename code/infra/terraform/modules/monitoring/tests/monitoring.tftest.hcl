@@ -60,6 +60,11 @@ run "log_query_alerts_cover_dependency_failures_and_latency" {
     condition     = toset(keys(azurerm_monitor_scheduled_query_rules_alert_v2.this)) == toset(["dependency-failures", "latency"])
     error_message = "Dependency failure and latency alerts are required (Principle VII)."
   }
+
+  assert {
+    condition     = alltrue([for a in azurerm_monitor_scheduled_query_rules_alert_v2.this : a.skip_query_validation])
+    error_message = "Log alerts must not require the console log table, which exists only after the first logs arrive."
+  }
 }
 
 run "every_alert_carries_the_owner_and_runbook" {
