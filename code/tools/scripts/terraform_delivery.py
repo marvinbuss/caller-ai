@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -34,6 +35,8 @@ ROOTS = {
     "app_environment": BASE / "app_environment",
 }
 SIGNIN_SECRET_VARIABLE = "TF_VAR_management_signin_secret"  # pragma: allowlist secret
+# Terraform cannot plan a root whose azurerm backend is uninitialized, so creation uses local state.
+LOCAL_BACKEND_OVERRIDE = "state_create_override.tf"
 
 
 def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -321,8 +324,10 @@ def run_command(
     command: list[str], *, directory: Path, values: dict[str, str], timeout: int
 ) -> subprocess.CompletedProcess[str]:
     """Capture potentially sensitive tool output; callers emit only fixed metadata."""
+    # subprocess cannot start az.cmd on Windows by its bare name, so resolve it on PATH first.
+    executable = shutil.which(command[0], path=values.get("PATH")) or command[0]
     result = subprocess.run(
-        command,
+        [executable, *command[1:]],
         cwd=directory,
         env=values,
         stdin=subprocess.DEVNULL,
@@ -700,24 +705,29 @@ def state_create(
             variable_file = directory / "variables.tfvars.json"
             variable_file.write_text(json.dumps(inputs.variables), encoding="utf-8")
             plan = directory / "state.tfplan"
-            command([binary, "init", "-backend=false", "-input=false", "-no-color"])
-            command(
-                [
-                    binary,
-                    "plan",
-                    "-input=false",
-                    "-no-color",
-                    "-detailed-exitcode",
-                    "-var-file=" + str(variable_file),
-                    "-out=" + str(plan),
-                ],
-                timeout=1800,
-                codes=(0, 2),
-            )
-            changes = plan_changes(json.loads(command([binary, "show", "-json", str(plan)])))
-            if not confirm_apply:
-                return {"result": "terraform_state_planned", "changes": changes}
-            command([binary, "apply", "-input=false", "-no-color", str(plan)], timeout=3600)
+            override = inputs.root / LOCAL_BACKEND_OVERRIDE
+            try:
+                override.write_text('terraform {\n  backend "local" {}\n}\n', encoding="utf-8")
+                command([binary, "init", "-reconfigure", "-input=false", "-no-color"])
+                command(
+                    [
+                        binary,
+                        "plan",
+                        "-input=false",
+                        "-no-color",
+                        "-detailed-exitcode",
+                        "-var-file=" + str(variable_file),
+                        "-out=" + str(plan),
+                    ],
+                    timeout=1800,
+                    codes=(0, 2),
+                )
+                changes = plan_changes(json.loads(command([binary, "show", "-json", str(plan)])))
+                if not confirm_apply:
+                    return {"result": "terraform_state_planned", "changes": changes}
+                command([binary, "apply", "-input=false", "-no-color", str(plan)], timeout=3600)
+            finally:
+                override.unlink(missing_ok=True)
             migration = [
                 binary,
                 "init",

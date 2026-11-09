@@ -41,6 +41,23 @@ def test_delivery_inputs_bind_environment_backend_and_plan_storage(delivery_case
     assert len(inputs.fingerprint) == 64
 
 
+def test_commands_resolve_the_executable_on_path(delivery_case, monkeypatch, tmp_path):
+    import subprocess
+
+    module, _directory, _backend, _variables = delivery_case
+    # On Windows the Azure CLI is az.cmd, which subprocess cannot start by its bare name.
+    seen = []
+    monkeypatch.setattr(module.shutil, "which", lambda name, **_: "C:/tools/az.cmd")
+
+    def run(command, **_):
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    module.run_command(["az", "account", "show"], directory=tmp_path, values={}, timeout=5)
+    assert seen == [["C:/tools/az.cmd", "account", "show"]]
+
+
 @pytest.mark.parametrize("environment,stack", [("../prod", "app_environment"), ("dev", "destroy")])
 def test_delivery_rejects_untrusted_environment_or_root(delivery_case, environment, stack):
     module, directory, _backend, _variables = delivery_case
@@ -511,10 +528,15 @@ def state_case(delivery_case, monkeypatch):
     module, directory, _backend, variables = delivery_case
     inputs = module.load_inputs("dev", "state", "tfplans", directory=directory)
     monkeypatch.setattr(module, "require_toolchain", lambda: Path("terraform"))
-    log = {"commands": [], "blob": False, "migrate_failures": 0, "migrated": False}
+    log = {"commands": [], "blob": False, "migrate_failures": 0, "migrated": False, "override": []}
 
     def execute(command, *, directory, values, timeout):
         log["commands"].append(command)
+        if command[0] == "terraform":
+            override = inputs.root / module.LOCAL_BACKEND_OVERRIDE
+            log["override"].append(
+                (command[1], override.exists() and 'backend "local"' in override.read_text())
+            )
         output, code = "", 0
         if command[:4] == ["az", "storage", "blob", "exists"]:
             output = json.dumps({"exists": log["blob"]})
@@ -541,6 +563,21 @@ def test_state_create_plans_only_without_the_confirmation(state_case):
     report = module.state_create(inputs, values=values, runner=execute)
     assert report["result"] == "terraform_state_planned"
     assert not any(c[1] == "apply" for c in log["commands"] if c[0] == "terraform")
+    assert not (inputs.root / module.LOCAL_BACKEND_OVERRIDE).exists()
+
+
+def test_state_create_uses_a_local_backend_until_the_migration(state_case):
+    # Terraform refuses to plan a root with an uninitialized azurerm backend block.
+    module, inputs, values, log, execute = state_case
+    module.state_create(
+        inputs, confirm_apply=True, values=values, runner=execute, sleep=lambda seconds: None
+    )
+    first_init = next(c for c in log["commands"] if c[1] == "init")
+    assert "-backend=false" not in first_init
+    assert all(present for step, present in log["override"] if step in ("plan", "apply"))
+    migration = [present for step, present in log["override"] if step == "init"][-1]
+    assert migration is False
+    assert not (inputs.root / module.LOCAL_BACKEND_OVERRIDE).exists()
 
 
 def test_state_create_applies_migrates_and_removes_local_state(state_case):
@@ -591,6 +628,7 @@ def test_state_create_keeps_local_state_when_migration_fails(state_case):
                 attempts=3,
             )
         assert (inputs.root / "terraform.tfstate").exists()
+        assert not (inputs.root / module.LOCAL_BACKEND_OVERRIDE).exists()
     finally:
         (inputs.root / "terraform.tfstate").unlink(missing_ok=True)
 
