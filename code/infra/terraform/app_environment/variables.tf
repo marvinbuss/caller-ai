@@ -99,9 +99,21 @@ variable "app_environment" {
     })
 
     model = object({
-      account_id      = string
-      text_deployment = string
-      live_deployment = string
+      account_name = string
+      text = object({
+        deployment = string
+        model      = string
+        version    = string
+        sku        = string
+        capacity   = number
+      })
+      live = object({
+        deployment = string
+        model      = string
+        version    = string
+        sku        = string
+        capacity   = number
+      })
     })
 
     data_store = object({
@@ -160,11 +172,6 @@ variable "app_environment" {
       (app.image.tag == null) != (app.image.digest == null)
     ])
     error_message = "app_environment.container_apps image must set exactly one of tag and digest."
-  }
-
-  validation {
-    condition     = var.app_environment.model.text_deployment != var.app_environment.model.live_deployment
-    error_message = "app_environment.model.live_deployment must differ from text_deployment."
   }
 
   validation {

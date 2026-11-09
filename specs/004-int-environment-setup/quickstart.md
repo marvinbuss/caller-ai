@@ -10,7 +10,7 @@ end to end. Commands run from the repository root in PowerShell 7. Interfaces ar
 |---|---|
 | Azure | Tenant, one subscription for `int`, an account allowed to create resource groups, role assignments and a deployment identity with OIDC federation to this repository's environments. |
 | Directory rights | An administrator able to create app registrations, roles and role assignments and to consent to Graph application permissions (Privileged Role Administrator or Global Administrator) for the identity script (FR-040, FR-053), and a group that will hold the editor and tester roles (`identity.user_group_id`). |
-| Model | An existing account with a text deployment and a realtime deployment, in an allowed region (FR-039). |
+| Model | Model quota in the subscription for the text model and `gpt-live-1` under the deployment type in `app_environment.model`, in an allowed region. The app environment deployment creates the Foundry account and both deployments (FR-039). |
 | GitHub | Environments `int-terraform-<root>-plan|apply` with required reviewers on `apply`, and variables set per [tooling-and-workflows.md](contracts/tooling-and-workflows.md). |
 | Local | Terraform 1.17.0, Python through `uv`, PowerShell 7, Azure CLI, Trivy. |
 | Open items | The owner answers the items at the end of [plan.md](plan.md) before step 3. |

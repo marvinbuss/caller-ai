@@ -110,10 +110,52 @@ def test_open_range_warns_but_passes(base):
             "invalid_format",
         ),
         (
-            "app_environment.model.live_deployment",
-            "replace-text-deployment",
-            "app_environment.model.live_deployment",
+            "app_environment.model.text.deployment",
+            "gpt-live-1",
+            "app_environment.model.text.deployment",
+            "must_differ",
+        ),
+        (
+            "app_environment.model.live.deployment",
+            "realtime",
+            "app_environment.model.live.deployment",
             "invalid_format",
+        ),
+        (
+            "app_environment.model.live.model",
+            "gpt-realtime",
+            "app_environment.model.live.model",
+            "invalid_format",
+        ),
+        (
+            "app_environment.model.account_name",
+            "Bad_Name",
+            "app_environment.model.account_name",
+            "invalid_format",
+        ),
+        (
+            "app_environment.model.text.sku",
+            "Premium",
+            "app_environment.model.text.sku",
+            "invalid_format",
+        ),
+        (
+            "app_environment.model.live.capacity",
+            0,
+            "app_environment.model.live.capacity",
+            "invalid_format",
+        ),
+        (
+            "app_environment.model.text.version",
+            "",
+            "app_environment.model.text.version",
+            "missing",
+        ),
+        (
+            "app_environment.model.account_id",
+            "/subscriptions/x",
+            "app_environment.model.account_id",
+            "unknown_key",
         ),
         (
             "app_environment.identity.user_group_id",
@@ -271,6 +313,7 @@ def test_second_environment_with_only_names_changed_is_valid(base):
     data["state"]["storage_account_name"] = "callerdevstate0001"
     data["app_environment"]["data_store"]["name"] = "cosmos-caller-dev"
     data["app_environment"]["secret_store"]["name"] = "kv-caller-dev"
+    data["app_environment"]["model"]["account_name"] = "aif-caller-dev"
     write(base, data, "dev")
     for deployment in validator.DEPLOYMENTS:
         path = base / "dev" / f"{deployment}.azurerm.tfbackend.json"
@@ -293,6 +336,7 @@ def test_other_environment_problems_are_reported_only_for_itself(base):
     data["environment"]["subscription_id"] = "00000000-0000-4000-8000-0000000000bb"
     data["app_environment"]["data_store"]["name"] = "cosmos-caller-dev"
     data["app_environment"]["secret_store"]["name"] = "kv-caller-dev"
+    data["app_environment"]["model"]["account_name"] = "aif-caller-dev"
     del data["state"]
     write(base, data, "dev")
     assert problems(base, "int") == set()

@@ -1,9 +1,13 @@
 module "model_access" {
   source = "../modules/model-access"
 
-  account_id           = var.app_environment.model.account_id
-  text_deployment      = var.app_environment.model.text_deployment
-  live_deployment      = var.app_environment.model.live_deployment
+  # The account sits in the Live region; its private endpoint sits in the environment's network.
+  name                 = var.app_environment.model.account_name
+  resource_group_name  = azurerm_resource_group.apps.name
+  location             = var.app_environment.application.live_region
+  tags                 = local.tags
+  text                 = var.app_environment.model.text
+  live                 = var.app_environment.model.live
   runtime_principal_id = data.azurerm_user_assigned_identity.runtime.principal_id
 }
 
@@ -14,7 +18,7 @@ module "model_endpoint" {
   resource_group_name = azurerm_resource_group.apps.name
   location            = var.environment.location
   subnet_id           = local.network.private_endpoint_subnet_id
-  target_resource_id  = var.app_environment.model.account_id
+  target_resource_id  = module.model_access.account_id
   subresource_names   = ["account"]
   tags                = local.tags
 

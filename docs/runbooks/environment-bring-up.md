@@ -20,7 +20,7 @@ How to bring up, verify, change, recover and remove an environment such as `int`
 |------|--------|
 | Azure | A tenant, one subscription for the environment, an account allowed to create resource groups and role assignments, and a deployment identity with OIDC federation to this repository's GitHub environments |
 | Directory rights | A directory administrator for the identity objects (app registrations, roles, role assignments, and consent for the Graph read permission `Application.Read.All`; Privileged Role Administrator or Global Administrator), and a group that will hold the editor and tester roles (`identity.user_group_id`) |
-| Model | An existing account with a text deployment and a realtime deployment in an allowed region |
+| Model | Quota in the subscription for the text model and `gpt-live-1` under the deployment types in `app_environment.model`, in an allowed region. Terraform creates the Foundry account and both deployments |
 | GitHub | Environments `<env>-terraform-state-plan`, `-apply`, `<env>-terraform-bootstrap-plan`, `-apply`, `<env>-terraform-app-environment-plan`, `-apply`, with required reviewers on every `apply` environment; secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` in each; the variable `TF_PLAN_CONTAINER` (`tfplans`); `MANAGEMENT_SIGNIN_SECRET` in the two `app_environment` environments |
 | Local | Terraform 1.17.0 (the pinned binary prepared by the tools), Python through `uv`, PowerShell 7, Azure CLI, Docker for the security scan |
 

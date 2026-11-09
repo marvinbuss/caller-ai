@@ -8,7 +8,8 @@
 
 Stand up the first real environment, `int`, from one variable file and three backend files, and make
 it useful: a signed-in tester can use the management application's configuration editor and test
-console (text and speech) against the runtime and an existing AI model. This replaces the earlier
+console (text and speech) against the runtime and a Foundry account with two model deployments that the
+environment creates. This replaces the earlier
 design (AKS, Azure Firewall, a bootstrap that creates the state storage, `dev`/`test`/`prod`
 examples) and an earlier version of this plan (App Service, egress allow-list, `platform` root).
 
@@ -62,7 +63,7 @@ Key design decisions (details in [research.md](research.md)):
 
 **Language/Version**: Terraform 1.17.0 (pinned in `.terraform-version`); Python 3.12 for the applications and `code/tools`; PowerShell 7 with Azure CLI for the identity script; GitHub Actions YAML.
 
-**Primary Dependencies**: `hashicorp/azurerm` 5.11.0, `Azure/azapi` (exact version pinned at implementation, used only for Key Vault secret writes and for read-only data sources that `azurerm` lacks, such as the model deployments), `hashicorp/tls` (exact version pinned at implementation, used only for the permit key pair). `azuread` is not used (FR-042). Applications already depend on `azure-cosmos`, `azure-identity`, `msal`, `openai-agents`, `reflex` 0.10.0, `fastapi`. Trivy for image and Terraform scans. Pester 5 for the script tests.
+**Primary Dependencies**: `hashicorp/azurerm` 5.11.0, `Azure/azapi` (exact version pinned at implementation, used only for Key Vault secret writes and for read-only data sources that `azurerm` lacks), `hashicorp/tls` (exact version pinned at implementation, used only for the permit key pair). `azuread` is not used (FR-042). Applications already depend on `azure-cosmos`, `azure-identity`, `msal`, `openai-agents`, `reflex` 0.10.0, `fastapi`. Trivy for image and Terraform scans. Pester 5 for the script tests.
 
 **Storage**: Terraform state and plans in an Azure Storage account created by the state deployment; Cosmos DB for NoSQL (serverless) with the containers the repositories already expect; Key Vault for the two approved secrets.
 
@@ -86,7 +87,7 @@ Governing document: [.specify/memory/constitution.md](../../.specify/memory/cons
 
 | Principle | Status | Evidence and plan |
 |---|---|---|
-| I. Azure-First Platform | PASS with one approved exception | Hosting, identity, network, storage, monitoring and delivery use Azure services. The exception is GitHub's container registry as image source, approved by the owner. FR-038 requires the written assessment (D-05). Model availability is checked by the existing-model check (FR-039). |
+| I. Azure-First Platform | PASS with one approved exception | Hosting, identity, network, storage, monitoring and delivery use Azure services. The exception is GitHub's container registry as image source, approved by the owner. FR-038 requires the written assessment (D-05). Model availability is proved by the apply of both model deployments and confirmed by the environment check (FR-039). |
 | II. Security-First Engineering | PASS with two approved exceptions | Managed identities everywhere, no shared keys on Cosmos or state, vault private, applications check tokens and roles. The two approved secrets are the sign-in client secret (FR-046) and the permit private key (FR-051), both ending up in the protected state. Any tenant user may sign in (FR-019), but editing and testing need roles that the script assigns to the owner's group. `int` sets an open allow-list range so GitHub-hosted runners can reach it, so sign-in, the role check and the permit are the access control. Threats are listed below. |
 | III. Documentation as a Deliverable | PASS (planned) | D-01 to D-09 below with Mermaid diagrams here, in `docs/environments.md` and in `docs/security.md`. |
 | IV. Bounded Microservices | PASS | Runtime and management stay separate deployables, with separate images, identities and apps. No new service boundary. They talk through their existing documented endpoints (FR-052). |
@@ -248,10 +249,10 @@ flowchart LR
                 PEC["Cosmos DB"]
                 PEK["Key Vault"]
                 PEM["Monitoring link scope"]
-                PEA["Model account endpoint"]
+                PEA["Foundry account endpoint"]
             end
         end
-        Model["Existing AI model account"]
+        Model["Foundry account, text and gpt-live-1 deployments"]
         Entra["Entra ID"]
         State["State storage, identity-only"]
     end
@@ -372,4 +373,4 @@ No new violations. Gate remains PASS.
 |---|---|---|
 | 1 | The maintainers ratify in a constitution update that Principle VIII governs infrastructure resources and that the identity script administers directory objects. | FR-043. The script tasks wait for it. |
 | 2 | Confirm that application code becomes public through the images (private repository). | FR-038. |
-| 3 | Provide the real region, subscription, deployment identity, model account and a text and a realtime deployment for `int`, and the group for `app_environment.identity.user_group_id`. | First bring-up. |
+| 3 | Provide the real region, subscription, deployment identity, Foundry account name, the text model and the model quota for both deployments in `int`, and the group for `app_environment.identity.user_group_id`. | First bring-up. |

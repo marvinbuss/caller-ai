@@ -6,13 +6,6 @@ mock_provider "azurerm" {
       principal_id = "00000000-0000-4000-8000-000000000021"
     }
   }
-
-  mock_data "azurerm_cognitive_account" {
-    defaults = {
-      id       = "/subscriptions/00000000-0000-4000-8000-000000000006/resourceGroups/rg-model/providers/Microsoft.CognitiveServices/accounts/replace-model"
-      endpoint = "https://replace-model.cognitiveservices.azure.com/"
-    }
-  }
 }
 
 mock_provider "azapi" {}
@@ -45,13 +38,6 @@ override_data {
   target = data.azurerm_resources.runtime_identity
   values = {
     resources = [{ name = "id-caller-int-runtime", id = "x", type = "Microsoft.ManagedIdentity/userAssignedIdentities", location = "swedencentral", tags = {} }]
-  }
-}
-
-override_data {
-  target = module.model_access.data.azapi_resource_list.deployments
-  values = {
-    output = { names = ["replace-text-deployment", "replace-live-deployment"] }
   }
 }
 
@@ -95,9 +81,9 @@ variables {
       user_group_id            = "00000000-0000-4000-8000-000000000007"
     }
     model = {
-      account_id      = "/subscriptions/00000000-0000-4000-8000-000000000006/resourceGroups/rg-model/providers/Microsoft.CognitiveServices/accounts/replace-model"
-      text_deployment = "replace-text-deployment"
-      live_deployment = "replace-live-deployment"
+      account_name = "aif-caller-int"
+      text         = { deployment = "gpt-6.1-sol", model = "gpt-6.1-sol", version = "2026-09-29", sku = "GlobalStandard", capacity = 50 }
+      live         = { deployment = "gpt-live-1", model = "gpt-live-1", version = "2026-09-10", sku = "GlobalStandard", capacity = 10 }
     }
     data_store = {
       name                    = "cosmos-caller-int"
@@ -165,8 +151,18 @@ run "settings_match_the_application_contract" {
   }
 
   assert {
-    condition     = module.runtime_app.settings["CALLER_TEXT_DEPLOYMENT"] == "replace-text-deployment" && module.runtime_app.settings["CALLER_LIVE_REGION"] == "swedencentral" && module.runtime_app.settings["CALLER_AVAILABLE_LIVE_SESSIONS"] == "5"
+    condition     = module.runtime_app.settings["CALLER_TEXT_DEPLOYMENT"] == "gpt-6.1-sol" && module.runtime_app.settings["CALLER_LIVE_REGION"] == "swedencentral" && module.runtime_app.settings["CALLER_AVAILABLE_LIVE_SESSIONS"] == "5"
     error_message = "Runtime model settings must follow the variable file."
+  }
+
+  assert {
+    condition     = module.runtime_app.settings["CALLER_TEXT_ENDPOINT"] == "https://aif-caller-int.openai.azure.com" && module.runtime_app.settings["CALLER_LIVE_ENDPOINT"] == "https://aif-caller-int.services.ai.azure.com"
+    error_message = "The model endpoints follow the created Foundry account's name."
+  }
+
+  assert {
+    condition     = module.model_access.name == "aif-caller-int" && module.model_access.live_deployment == "gpt-live-1"
+    error_message = "The environment creates the Foundry account and the realtime deployment (FR-039)."
   }
 
   assert {
@@ -321,9 +317,9 @@ run "invalid_live_region_is_rejected_naming_the_setting" {
         user_group_id            = "00000000-0000-4000-8000-000000000007"
       }
       model = {
-        account_id      = "/subscriptions/00000000-0000-4000-8000-000000000006/resourceGroups/rg-model/providers/Microsoft.CognitiveServices/accounts/replace-model"
-        text_deployment = "replace-text-deployment"
-        live_deployment = "replace-live-deployment"
+        account_name = "aif-caller-int"
+        text         = { deployment = "gpt-6.1-sol", model = "gpt-6.1-sol", version = "2026-09-29", sku = "GlobalStandard", capacity = 50 }
+        live         = { deployment = "gpt-live-1", model = "gpt-live-1", version = "2026-09-10", sku = "GlobalStandard", capacity = 10 }
       }
       data_store = {
         name                    = "cosmos-caller-int"

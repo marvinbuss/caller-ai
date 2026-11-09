@@ -27,7 +27,7 @@ them at start and never echo a value in an error.
 | `CALLER_TEXT_HISTORY_TTL_SECONDS` | no | Item time-to-live for text history, from the variable file. |
 | `CALLER_MANAGEMENT_ENDPOINT` | no | HTTPS origin of the management app. |
 | `CALLER_MANAGEMENT_AUDIENCE` | no | Audience GUID for the identity token sent to management (the management registration's client ID). |
-| `CALLER_TEXT_ENDPOINT`, `CALLER_TEXT_DEPLOYMENT` | no | Model account text endpoint and the text deployment name. |
+| `CALLER_TEXT_ENDPOINT`, `CALLER_TEXT_DEPLOYMENT` | no | Foundry account text endpoint and the text deployment name. |
 | `CALLER_LIVE_ENDPOINT`, `CALLER_LIVE_REGION`, `CALLER_LIVE_VOICE` | no | Realtime endpoint, region (one of `canadacentral`, `centralus`, `eastus2`, `swedencentral`) and voice. |
 | `CALLER_APPROVED_HOSTS` | no | Comma-separated host names the transports may call (at most 8): the management app, the text and realtime endpoints. |
 | `CALLER_MAX_INPUT_TOKENS`, `CALLER_MAX_OUTPUT_TOKENS` | no | Token limits. |
@@ -69,7 +69,7 @@ Management probes: startup and readiness `GET /readyz`, liveness `GET /healthz`,
 |---|---|
 | Both apps' origins | `https://<app name>.<environment default domain>`, computed inside the deployment so no value is copied by hand. |
 | `AZURE_CLIENT_ID` | Output of the identity module (management) and the data source of the script-created runtime identity. |
-| Cosmos and model endpoints | The data store module output and the model account data source. |
+| Cosmos and model endpoints | The data store module output and the Foundry account that the `model-access` module creates. |
 | Public key | The `permit-key` module output. |
 | Key Vault references | The `key-vault-secret` module outputs (versionless secret IDs). |
 | `CALLER_TENANT_ID`, `CALLER_ENTRA_CLIENT_ID` | `environment.tenant_id` and `identity.management_app_client_id`. |

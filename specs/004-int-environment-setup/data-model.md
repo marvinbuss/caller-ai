@@ -158,9 +158,13 @@ The app environment deployment reads the names and fails, naming the setting, wh
 
 | Field | Rules |
 |---|---|
-| `account_id` | Resource ID of an existing account. A missing account fails, naming the setting. |
-| `text_deployment` | Existing deployment name used for text. |
-| `live_deployment` | Existing realtime deployment name used for speech. Must differ from `text_deployment`. |
+| `account_name` | Name and custom subdomain of the Foundry account the deployment creates: 2 to 64 lowercase letters, digits and hyphens, starting and ending with a letter or digit, globally unique. |
+| `text.deployment` | Deployment name used for text, sent as `CALLER_TEXT_DEPLOYMENT`. Must not be `gpt-live-1`. |
+| `live.deployment` | Realtime deployment used for speech. Must be `gpt-live-1`, the name the runtime requests. |
+| `text.model`, `live.model` | Model name. `live.model` must be `gpt-live-1`. |
+| `text.version`, `live.version` | Exact model version. Automatic version upgrades are off. |
+| `text.sku`, `live.sku` | Deployment type, one of `GlobalStandard`, `DataZoneStandard`, `Standard`. |
+| `text.capacity`, `live.capacity` | Whole number of capacity units, at least 1, within the subscription's quota. |
 
 ## Environment check (FR-028, FR-029)
 
@@ -183,5 +187,5 @@ Check ids: `services-provisioned`, `settings-complete`, `revisions-healthy`, `im
 | No file contains a field named like a secret, or a value that looks like one, outside the documented allow-list. | FR-012, SC-008 |
 | `public_access.enabled` needs `allowed_cidrs`. | FR-019 |
 | Every identity name in the file exists and is non-empty. | FR-042 |
-| The two model deployments exist and differ. | FR-039 |
+| The two model deployments are created and differ; the realtime deployment is `gpt-live-1`. | FR-039 |
 | Both apps run exactly one replica in `int`. | FR-050, R-19 |

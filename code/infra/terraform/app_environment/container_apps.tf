@@ -37,7 +37,7 @@ module "runtime_app" {
     CALLER_MANAGEMENT_ENDPOINT      = local.management_origin
     CALLER_MANAGEMENT_AUDIENCE      = var.app_environment.identity.management_app_client_id
     CALLER_TEXT_ENDPOINT            = local.text_endpoint
-    CALLER_TEXT_DEPLOYMENT          = var.app_environment.model.text_deployment
+    CALLER_TEXT_DEPLOYMENT          = module.model_access.text_deployment
     CALLER_LIVE_ENDPOINT            = local.live_endpoint
     CALLER_LIVE_REGION              = var.app_environment.application.live_region
     CALLER_LIVE_VOICE               = var.app_environment.application.voice

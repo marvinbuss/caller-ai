@@ -236,14 +236,23 @@ real `terraform validate` or first apply.
 
 ## R-14 Model account and deployments
 
-- **Decision**: An existing account with two named deployments: one for text and one realtime deployment for
-  speech. The variable file names the account and both deployments. The text endpoint and the live endpoint
-  differ (`*.openai.azure.com` and `*.services.ai.azure.com`), so the module creates a private endpoint for the
-  account and the documentation lists the DNS zones. The runtime's identity gets the least role that allows
-  calls. If the account is in another subscription the endpoint request waits for the owner's approval.
-- **Verify**: the role names for text and realtime use, and the region rule in `RuntimeOptions.live_region`
-  (one of four regions) against the owner's account. The existing deployments are the evidence of regional
-  support and quota (Principle I). The module reads the deployments through `azapi` data sources.
+- **Decision** (2026-11-09, replacing "an existing account"): the `model-access` module creates a new
+  Microsoft Foundry account (`azurerm_cognitive_account`, kind `AIServices`, SKU `S0`, project management
+  on, system-assigned identity) in `application.live_region`, with a custom subdomain equal to its name, key
+  access off and public network access off. It creates two `azurerm_cognitive_deployment` resources from
+  `app_environment.model.text` and `app_environment.model.live` (model, version, deployment type, capacity),
+  pinned with `NoAutoUpgrade` so the reviewed version does not change underneath the runtime. The realtime
+  deployment is named `gpt-live-1` because the runtime's `/openai/v1` Live session requests that name. The
+  deployments are created one after the other, because the account accepts one deployment change at a time.
+  The text endpoint and the live endpoint differ (`*.openai.azure.com` and `*.services.ai.azure.com`), so the
+  root creates one private endpoint for the account with the three DNS zones. The runtime's identity gets
+  `Cognitive Services OpenAI User` on the account.
+- **Alternatives**: keep an owner-supplied account (rejected by the owner: the environment must be complete
+  from its files); `azapi` for the account (rejected: `azurerm` 5.11.0 has every needed argument, including
+  `project_management_enabled`).
+- **Verify**: the role names for text and realtime use, the subscription's quota for both models under the
+  chosen deployment type, and the region rule in `RuntimeOptions.live_region` (one of four regions). A
+  successful apply is the evidence of regional support and quota (Principle I).
 
 ## R-15 Environment check and the functional journey
 

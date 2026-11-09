@@ -37,6 +37,12 @@ SECRET_VALUE = re.compile(
     r"-----BEGIN|AccountKey=|SharedAccessSignature|eyJ[A-Za-z0-9_-]{10,}\.|[A-Za-z0-9+/=]{40,}"
 )
 LOCATION = re.compile(r"[a-z0-9]{3,30}")
+FOUNDRY_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}[a-z0-9]")
+DEPLOYMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+DEPLOYMENT_TYPES = ("GlobalStandard", "DataZoneStandard", "Standard")
+DEPLOYMENT_FIELDS = ("deployment", "model", "version", "sku", "capacity")
+# The runtime's Live session requests this deployment by name.
+LIVE_MODEL = "gpt-live-1"
 FORBIDDEN_BACKEND = ("access_key", "sas_token", "client_secret")
 BACKEND_KEYS = {
     "resource_group_name",
@@ -235,6 +241,50 @@ def check_image(data: dict[str, Any], prefix: str, report: Report, file: str) ->
         report.error(file, f"{setting}.digest", "invalid_format")
 
 
+def check_model(data: dict[str, Any], report: Report, file: str) -> None:
+    prefix = "app_environment.model"
+    model = get(data, prefix, report, file, kinds=(dict,))
+    if model is None:
+        return
+    for key in model:
+        if key not in ("account_name", "text", "live"):
+            report.error(file, f"{prefix}.{key}", "unknown_key")
+    name = get(data, f"{prefix}.account_name", report, file)
+    if name is not None and not FOUNDRY_NAME.fullmatch(name):
+        report.error(file, f"{prefix}.account_name", "invalid_format")
+    deployments: dict[str, str | None] = {}
+    for purpose in ("text", "live"):
+        base = f"{prefix}.{purpose}"
+        node = get(data, base, report, file, kinds=(dict,))
+        if node is None:
+            continue
+        for key in node:
+            if key not in DEPLOYMENT_FIELDS:
+                report.error(file, f"{base}.{key}", "unknown_key")
+        deployment = get(data, f"{base}.deployment", report, file)
+        if deployment is not None and not DEPLOYMENT_NAME.fullmatch(deployment):
+            report.error(file, f"{base}.deployment", "invalid_format")
+        deployments[purpose] = deployment
+        for field in ("model", "version"):
+            value = get(data, f"{base}.{field}", report, file)
+            if value is not None and not value.strip():
+                report.error(file, f"{base}.{field}", "missing")
+        sku = get(data, f"{base}.sku", report, file)
+        if sku is not None and sku not in DEPLOYMENT_TYPES:
+            report.error(file, f"{base}.sku", "invalid_format")
+        capacity = get(data, f"{base}.capacity", report, file, kinds=(int,))
+        if capacity is not None and capacity < 1:
+            report.error(file, f"{base}.capacity", "invalid_format")
+    live = data["app_environment"]["model"].get("live")
+    if isinstance(live, dict):
+        for field in ("deployment", "model"):
+            if live.get(field) not in (None, LIVE_MODEL):
+                report.error(file, f"{prefix}.live.{field}", "invalid_format")
+    text = deployments.get("text")
+    if text is not None and text in (LIVE_MODEL, deployments.get("live")):
+        report.error(file, f"{prefix}.text.deployment", "must_differ")
+
+
 def check_app_environment(data: dict[str, Any], report: Report, file: str) -> None:
     get(data, "app_environment.resource_group_name", report, file)
     get(data, "app_environment.container_apps.environment_name", report, file)
@@ -260,11 +310,7 @@ def check_app_environment(data: dict[str, Any], report: Report, file: str) -> No
         value = get(data, f"app_environment.identity.roles.{role}", report, file)
         if value is not None and not value.strip():
             report.error(file, f"app_environment.identity.roles.{role}", "missing")
-    get(data, "app_environment.model.account_id", report, file)
-    text = get(data, "app_environment.model.text_deployment", report, file)
-    live = get(data, "app_environment.model.live_deployment", report, file)
-    if text is not None and live is not None and (not text or not live or text == live):
-        report.error(file, "app_environment.model.live_deployment", "invalid_format")
+    check_model(data, report, file)
     get(data, "app_environment.data_store.name", report, file)
     get(data, "app_environment.secret_store.name", report, file)
     key_id = get(data, "app_environment.signing_key.key_id", report, file)
@@ -357,6 +403,7 @@ def global_values(variables: dict[str, Any] | None) -> dict[str, str]:
         "state.storage_account_name": ("state", "storage_account_name"),
         "app_environment.data_store.name": ("app_environment", "data_store", "name"),
         "app_environment.secret_store.name": ("app_environment", "secret_store", "name"),
+        "app_environment.model.account_name": ("app_environment", "model", "account_name"),
     }
     for setting, path in sources.items():
         node: Any = variables

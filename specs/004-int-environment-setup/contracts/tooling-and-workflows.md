@@ -77,7 +77,7 @@ uv run --project code/tools --locked python code/tools/scripts/check_environment
 | `images-running` | Each app runs exactly the configured tag or digest. A failed pull is reported with the application and version (FR-037). |
 | `public-access-matches` | Environment public network access, each app's external ingress and the allow-list rules equal the flag. When the ranges are not open, a request from the runner is refused (SC-005). With an open range the check reports that no source restriction applies. |
 | `no-custom-outbound` | The network security group has only default rules, the route table has no routes, and no NAT gateway or firewall exists (FR-044, SC-014). |
-| `private-endpoints-approved` | Every private endpoint connection is approved, including the model account (reports pending). |
+| `private-endpoints-approved` | Every private endpoint connection is approved, including the Foundry account (reports pending). |
 | `model-access` | The account and both deployments exist and the runtime identity holds the role (FR-039). |
 | `runtime-role-assigned` | The runtime identity holds the `runtime` application role on the management registration (FR-052). |
 | `registration-and-roles-exist` | The sign-in registration and the roles named in `identity.roles` exist, read through Microsoft Graph with the deployment identity's `Application.Read.All` permission. A failure names the setting (FR-042). |

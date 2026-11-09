@@ -69,9 +69,9 @@ deployment declares exactly those two variables, plus the sensitive input in the
       "user_group_id": "00000000-0000-4000-8000-000000000007"
     },
     "model": {
-      "account_id": "/subscriptions/00000000-0000-4000-8000-000000000006/resourceGroups/rg-model/providers/Microsoft.CognitiveServices/accounts/replace-model",
-      "text_deployment": "replace-text-deployment",
-      "live_deployment": "replace-live-deployment"
+      "account_name": "aif-caller-int",
+      "text": { "deployment": "gpt-6.1-sol", "model": "gpt-6.1-sol", "version": "2026-09-29", "sku": "GlobalStandard", "capacity": 50 },
+      "live": { "deployment": "gpt-live-1", "model": "gpt-live-1", "version": "2026-09-10", "sku": "GlobalStandard", "capacity": 10 }
     },
     "data_store": { "name": "cosmos-caller-int", "backup_tier": "Continuous7Days", "configuration_audit_ttl": 86400, "call_session_ttl": 86400, "call_audit_ttl": 86400 },
     "secret_store": { "name": "kv-caller-int", "soft_delete_days": 30 },
@@ -109,7 +109,7 @@ deployment declares exactly those two variables, plus the sensitive input in the
 | `environment.name` equals the directory name and the file prefix. | FR-010 |
 | `public_access` follows the data model. Enabled needs a non-empty allow-list. The open ranges `0.0.0.0/0` and `::/0` are accepted only when listed explicitly and give a warning (`int` lists `0.0.0.0/0` so GitHub-hosted runners can reach it). | FR-019 |
 | Image has exactly one of `tag` or `digest`. `latest` is rejected. | FR-037 |
-| `model.text_deployment` and `model.live_deployment` are non-empty and differ. | FR-039 |
+| `model.account_name` is a valid, globally unique Foundry name. `model.text` and `model.live` each name a deployment, model, version, deployment type (`GlobalStandard`, `DataZoneStandard` or `Standard`) and a capacity of at least 1. The deployments differ, and `model.live` is `gpt-live-1` for both deployment and model. | FR-039 |
 | `identity` values are present and non-empty, including `user_group_id` (a GUID). Role names are read by the identity script and the app environment deployment. | FR-019, FR-042, FR-052 |
 | `container_apps_subnet_cidr` is at least a /27 inside the address space. | FR-005 |
 | `signing_key.key_id` matches `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`. | FR-051 |

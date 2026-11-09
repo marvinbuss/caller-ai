@@ -23,7 +23,7 @@ flowchart LR
     MI -->|"Data Contributor, three containers"| Cosmos["Cosmos DB"]
     MI -->|"Management app role"| RReg["Runtime registration"]
     RI["Runtime identity"] -->|"Data Contributor, two containers"| Cosmos
-    RI -->|"Cognitive Services OpenAI User"| Model["Model account"]
+    RI -->|"Cognitive Services OpenAI User"| Model["Foundry account"]
     Dep["Deployment identity"] -->|"Storage Blob Data Contributor"| State["State storage"]
     Dep -->|"Tester app role"| Reg["Management registration"]
 ```
@@ -38,8 +38,8 @@ Data roles are scoped to single containers, and the data store has no key or con
 ## Network
 
 Both apps run in a Container Apps environment inside the virtual network from bootstrap. The data store, the vault
-and the model account are reached through private endpoints in the private endpoint subnet, resolved through the
-bootstrap private DNS zones. Their public access is off.
+and the Foundry account are reached through private endpoints in the private endpoint subnet, resolved through the
+bootstrap private DNS zones. Their public access is off, and the Foundry account also refuses key-based access.
 
 The network has one network security group with only the platform's default rules and one route table without
 routes. No NAT gateway or firewall exists; outbound policy belongs to the network owner. The environment check

@@ -8,8 +8,8 @@ deliberately does not do, and which parts the project operates by hand. Step-by-
 ## What an environment is
 
 An environment is one Azure subscription that holds the state storage, the network, the two container
-apps, the data store, the secret store, monitoring and an existing AI model account that the owner
-supplies. Terraform builds everything except the model account, the sign-in registration and the runtime
+apps, the data store, the secret store, monitoring and a Microsoft Foundry account with a text and a realtime
+model deployment. Terraform builds everything except the sign-in registration and the runtime
 identity. The identity script creates those directory-side objects.
 
 | Part | Where it lives | Built by |
@@ -85,10 +85,10 @@ flowchart LR
             subgraph PeNet["Private endpoint subnet"]
                 PEC["Cosmos DB"]
                 PEK["Key Vault"]
-                PEA["Model account endpoint"]
+                PEA["Foundry account endpoint"]
             end
         end
-        Model["Existing AI model account"]
+        Model["Foundry account, text and gpt-live-1 deployments"]
         Entra["Entra ID"]
         State["State storage, identity-only"]
     end
@@ -162,7 +162,7 @@ registers it and a rerun passes.
 | Identity script | Directory objects and the sign-in secret cannot be created by a deployment identity without granting it directory rights | A directory administrator runs it once per environment, with a preview first; it writes the secret only to an ignored local file (Constitution Principle VIII) |
 | GitHub's container registry | The apps pull public images; no registry resource is deployed | Only public, scanned images are published; tags are never overwritten or deleted (Constitution Principle I) |
 | One-time local-state creation | The state storage cannot hold its own first state | `state-create` is the only operation allowed to use local state; it migrates the state and removes the local copy |
-| The existing model account | The owner supplies it; Terraform only reads it and grants a role | Keeps model access and quota under the owner's control |
+| Model quota | Quota for each model and deployment type belongs to the subscription and cannot be created by a deployment | The owner requests quota before the first apply; a missing quota fails the apply with the provider's reason |
 
 ## Related guides
 

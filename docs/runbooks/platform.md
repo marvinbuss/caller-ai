@@ -9,16 +9,16 @@ owns, and which inputs are reviewed. The picture of the whole environment is in
 | Service | Module | Root | Notes |
 |---------|--------|------|-------|
 | Virtual network, Container Apps subnet, private endpoint subnet, default network security group, route table | `network` | `bootstrap` | The only network resources in the repository (FR-005) |
-| Private DNS zones for Cosmos, Key Vault, the model account and their links | `private-dns` | `bootstrap` | Bootstrap owns the zones so a customer network can supply its own |
+| Private DNS zones for Cosmos, Key Vault, the Foundry account and their links | `private-dns` | `bootstrap` | Bootstrap owns the zones so a customer network can supply its own |
 | Container Apps environment | `container-app-environment` | `app_environment` | Workload profiles, Consumption plan, in the delegated subnet, logging to the workspace; external so the public access flag flips in place |
 | Runtime and management apps | `container-app` | `app_environment` | Single revision, exactly one replica, user-assigned identity, Key Vault secret references, health probes (runtime port 8000, management port 3000) |
 | Data store | `data-store` | `app_environment` | Serverless Cosmos DB for NoSQL, one database, five containers, identity-only roles scoped per container |
 | Secret store | `secret-store` | `app_environment` | Key Vault with RBAC authorization, purge protection and no public access |
 | Secrets | `key-vault-secret` | `app_environment` | Written through the management API so a GitHub-hosted runner needs no network path to the vault |
 | Permit signing key | `permit-key` | `app_environment` | RSA 2048 key pair for test-conversation start permits |
-| Private endpoints | `private-endpoint` | `app_environment` | One each for the data store, the vault and the model account |
+| Private endpoints | `private-endpoint` | `app_environment` | One each for the data store, the vault and the Foundry account |
 | Management identity | `workload-identity` | `app_environment` | User-assigned identity with its role assignments |
-| Model access | `model-access` | `app_environment` | Reads the existing account and deployments and grants the runtime the least model role |
+| Foundry account and models | `model-access` | `app_environment` | `AIServices` account in `application.live_region` with key access and public network access off, the text deployment and the `gpt-live-1` realtime deployment (versions pinned), and the runtime's least model role |
 | Monitoring | `monitoring` | `app_environment` | Log Analytics workspace, Application Insights, action group and alerts |
 | State storage | `state-backend` | `state` | See [Terraform state](terraform-state.md) |
 
@@ -28,10 +28,11 @@ configured period, text history is governed per item by the runtime, and configu
 
 ## What is not built here
 
-The model account, the sign-in registration, its roles and the runtime identity are not created by Terraform. The
-owner supplies the model account; the identity script (or, until it is delivered, a directory administrator)
+The sign-in registration, its roles and the runtime identity are not created by Terraform. The identity script
+(or, until it is delivered, a directory administrator)
 creates the directory objects. Terraform reads the runtime identity and fails with a message that names the
-setting when it is missing.
+setting when it is missing. Model quota is not created either: it belongs to the subscription, and a missing
+quota fails the apply of a model deployment with the provider's reason.
 
 ## Reviewed inputs
 

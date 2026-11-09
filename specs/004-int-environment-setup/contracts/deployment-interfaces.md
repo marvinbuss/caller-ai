@@ -35,11 +35,11 @@ network security rule, route table or route (FR-005, FR-044). The structure chec
 | In | `environment`, `app_environment` | Service sizing, images, references. |
 | In (sensitive) | `management_signin_secret` | From `TF_VAR_management_signin_secret`. Never printed. |
 | In (read) | Bootstrap state | `terraform_remote_state` on `<env>/bootstrap.tfstate`, read-only, identity-based. |
-| In (read) | Existing model account | Data source by `app_environment.model.account_id`. Preconditions name the setting on failure (FR-039). |
+| Creates | Foundry account and model deployments | `model-access` module from `app_environment.model`, in `application.live_region`, private endpoint only (FR-039). |
 | In (read) | Script-created identities | Data sources for the runtime identity by name. Preconditions name the setting on failure (FR-042). |
 | Out | `environment_manifest` | Non-secret object for the check: app names and default domains, image references as deployed, replica settings, service IDs, private endpoint IDs, public access setting and rules, model account ID, redirect URI, vault secret names (never values). |
 | Out | `workload_identity_client_ids` | Map runtime and management to client IDs. |
-| Providers | `azurerm`, `azapi` (vault secrets and read-only model deployment data sources), `tls` (key pair only) | No directory provider (FR-042). |
+| Providers | `azurerm`, `azapi` (vault secrets), `tls` (key pair only) | No directory provider (FR-042). |
 | State | `<env>/app_environment.tfstate` | Holds the two approved secrets under FR-031. |
 
 ## Reusable modules
@@ -63,7 +63,7 @@ only in its `main.tf`.
 | `permit-key` | key ID | public key PEM (output), private key (sensitive output for `key-vault-secret` only) | write a file |
 | `monitoring` | names, retention, cap, thresholds, action group, app IDs | workspace ID, alert IDs (platform metric alerts and log-query alerts for dependency failures and latency) | accept an alert without owner and runbook URL |
 | `workload-identity` | names, resource group | identity IDs, client IDs, principal IDs | create a directory object |
-| `model-access` | account ID, principal ID, endpoint inputs | role assignment ID, connection state | create the account or its deployments (FR-039) |
+| `model-access` | name, resource group, location, text and live deployment settings, runtime principal ID | account ID, name, endpoint, deployment names, role assignment ID | enable key access or public network access, auto-upgrade a model version (FR-039) |
 
 ## Tests required per module
 

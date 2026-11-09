@@ -30,7 +30,7 @@ output "environment_manifest" {
       secret_store_id       = module.secret_store.id
       workspace_id          = module.monitoring.workspace_id
       action_group_id       = module.monitoring.action_group_id
-      model_account_id      = var.app_environment.model.account_id
+      model_account_id      = module.model_access.account_id
       container_environment = module.container_app_environment.id
     }
     private_endpoints = [

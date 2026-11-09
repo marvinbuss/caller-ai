@@ -71,7 +71,7 @@ flowchart LR
 | `restarts` per app | Platform metric `RestartCount` | The total exceeds `alerts.restart_count` | Read the start reason code in the logs ([Application live mode](application-live-mode.md)); a loop of `settings_*` codes means a bad deployment, roll back |
 | `replicas` per app | Platform metric `Replicas` | The minimum drops below 1 | The app is not running; the revision is unhealthy or the environment is failing; run the environment check and roll back if needed |
 | `cpu` and `memory` per app | Platform metrics `CpuPercentage`, `MemoryPercentage` | The average exceeds `alerts.cpu_percent` or `alerts.memory_percent` | Check for a stuck session; the apps have one replica, so a sustained value means the container size needs review |
-| `dependency failures` | Log query over the apps' structured events | More than `alerts.dependency_count` events with a failure outcome and the dependency category | Check the named dependency (data store, vault, model account) and the private endpoint state |
+| `dependency failures` | Log query over the apps' structured events | More than `alerts.dependency_count` events with a failure outcome and the dependency category | Check the named dependency (data store, vault, Foundry account) and the private endpoint state |
 | `latency` | Log query over `latency_ms` in the structured events | More than five events slower than `alerts.latency_ms` | Compare with model latency; the deployment has no measured capacity target ([capacity](../capacity.md)) |
 
 The log-query alerts match the structured event fields the applications write. A change to those fields needs

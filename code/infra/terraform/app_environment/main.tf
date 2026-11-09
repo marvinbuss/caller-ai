@@ -12,7 +12,7 @@ locals {
   network = data.terraform_remote_state.bootstrap.outputs.network
   zones   = data.terraform_remote_state.bootstrap.outputs.private_dns_zone_ids
 
-  model_account_name = element(split("/", var.app_environment.model.account_id), 8)
+  model_account_name = var.app_environment.model.account_name
   text_endpoint      = "https://${local.model_account_name}.openai.azure.com"
   live_endpoint      = "https://${local.model_account_name}.services.ai.azure.com"
 }

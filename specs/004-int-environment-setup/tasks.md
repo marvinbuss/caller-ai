@@ -290,6 +290,19 @@ Every document links to the relevant official Terraform and Azure guidance (FR-0
 
 ---
 
+## Phase 11: Foundry account and model deployments (owner change 2026-11-09)
+
+**Purpose**: The owner reversed the "existing model account" decision. The app environment deployment now creates a Microsoft Foundry account and both model deployments (FR-039, research R-14). Supersedes the read-only parts of T026 and T036.
+
+- [X] T129 [P] Rewrite `code/infra/terraform/modules/model-access/tests/model_access.tftest.hcl` first: the account is `AIServices`, `S0`, project management on, key access off, public network access off, custom subdomain equals the name, system-assigned identity; two deployments with the configured model, version, type and capacity and `NoAutoUpgrade`; the runtime holds `Cognitive Services OpenAI User` on the created account; invalid name, equal deployments, a realtime deployment or model other than `gpt-live-1`, an unknown deployment type and a capacity below 1 are rejected naming the variable.
+- [X] T130 Rewrite `code/infra/terraform/modules/model-access/` (`main.tf`, `variables.tf`, `outputs.tf`, `versions.tf`, `README.md`) to create the account and the two deployments (text first, then live), drop the `azapi` deployment lookup, and refresh its `.terraform.lock.hcl`.
+- [X] T131 Update `code/infra/terraform/app_environment/` (`variables.tf` model object and validations, `main.tf` endpoints from the account name, `model_access.tf` inputs and the private endpoint target, `container_apps.tf` approved hosts, `outputs.tf` manifest account ID) and `tests/composition.tftest.hcl` (no model data source overrides; the manifest and runtime settings follow the created account).
+- [X] T132 Update `code/infra/environments/int/int.tfvars.json`, `code/tools/scripts/validate_environment.py` and `code/tools/tests/test_validate_environment.py` for the new `app_environment.model` shape and rules.
+- [X] T133 [P] Update `docs/environments.md`, `docs/runbooks/platform.md`, `docs/runbooks/platform-security.md`, `docs/runbooks/environment-bring-up.md` and any other page that says the model account is supplied by the owner; run `verify_docs.py`.
+- [X] T134 Run the Terraform format, validate and test for `model-access` and `app_environment`, the tools tests and `ci.py check`; fix any failure.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase dependencies
