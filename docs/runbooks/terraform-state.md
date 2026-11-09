@@ -1,177 +1,66 @@
-# Terraform State Foundation
+# Terraform state
 
-## Status and Authorization
+Each environment keeps its Terraform state, and the saved plans waiting for approval, in one storage account that
+the `state` root creates. This guide covers what protects it, how it is created, how roots find it and how to
+recover. The deployments are described in [Environments](../environments.md) and the delivery steps in
+[Terraform delivery](terraform-delivery.md).
 
-T094 is locally implemented and validated. It provided a protected remote-state bootstrap
-and reusable platform resource-group foundation. T095 now extends the module with the
-[development composition](platform.md); T096's [security definitions](platform-security.md)
-are now locally validated, with effective live behavior still pending qualification.
-No Azure login, backend connection, real plan, apply, provisioning or deployment was performed.
-Default application startup and all prior security/foundation/live gates are unchanged.
+## What holds state
 
-The owner's later Terraform CI/CD request adds [reusable protected delivery](terraform-delivery.md),
-explicit environment inputs and a separate private plan/review container with its own scoped
-writers. The bootstrap's existing remote-state protections remain; its first plan still needs
-protected storage in the already approved seed account. No real apply is implied by workflow code.
+| Item | Detail |
+|------|--------|
+| Storage account | One per environment, in its own resource group, created by the `state-backend` module |
+| Containers | `tfstate` holds one blob per root, `tfplans` holds saved plans and their review artifacts. Both are private |
+| Keys | `<env>/state.tfstate`, `<env>/bootstrap.tfstate`, `<env>/app_environment.tfstate`; the key comes from each root's backend file, never from code |
+| Redundancy and recovery | Geo-redundant storage, blob versioning, and soft delete of blobs and containers for `state.state_retention_days` |
+| Protection | A `CanNotDelete` lock on the account; remove it deliberately before any deletion |
 
-The authored resources describe a future reviewed environment. Names, region, principal IDs,
-existing network references and retention must be explicitly supplied; none is approved by a
-test fixture or an example. Backend/provider validation and mocked plans do not establish
-actual subscription permissions, regional support, network access, state locking or durability.
+State and plans can hold two approved secrets, the management sign-in client secret and the permit private key,
+so the account is identity-only: shared keys and anonymous access are off, TLS 1.2 or later is required and data
+is encrypted twice. The account keeps a public endpoint so that GitHub-hosted runners can reach it; access is by
+Azure role only (`Storage Blob Data Contributor` for the deployment identity, per container). This is the one
+accepted finding of the Terraform security scan and is annotated beside the resource.
 
-## Pinned Toolchain
+## First creation
 
-[The version pin](../../code/infra/terraform/.terraform-version) selects Terraform **1.17.0**.
-The bootstrap requires that exact CLI and AzureRM **5.11.0**. The reusable module allows
-compatible AzureRM 5.x beginning at 5.11.0; a consuming root must own its final selection/lock.
-Each validation root has a checked-in `.terraform.lock.hcl` recording 5.11.0 with signed
-provider checksums for `windows_amd64` and `linux_amd64`. A child-module lock is used for its
-standalone tests, not as a substitute for the development root's own lock.
-
-The local installed Terraform 1.9.1 was not adopted as the project pin. Terraform 1.17.0 was
-downloaded from HashiCorp over normal verified HTTPS, and its Windows archive SHA256 matched
-the official HTTPS checksum manifest:
-
-```text
-2948dd7f77dec0f562ec29000103e0441d915be5e5f1a02c1ce23681951cfb19
-```
-
-This is HTTPS checksum verification, not an independent CLI PGP-signature attestation.
-Terraform reported the installed AzureRM provider as signed by HashiCorp. No TLS bypass,
-alternate Python/npm feed, machine-wide installer, elevation or system-tool replacement was
-used. The portable CLI lives under ignored `code/tools/test-results/terraform/`.
-
-## State and Platform Ownership
-
-```mermaid
-flowchart LR
-    Operator[Separately authorized operator] --> Runner[Private approved runner]
-    Runner --> Existing[Existing approved administrative remote backend]
-    Runner --> Bootstrap[Reviewed bootstrap configuration]
-    Bootstrap --> State[Private encrypted Azure Blob state account]
-    State --> Container[Private tfstate container with explicit writer RBAC]
-    Runner --> PrivateDNS[Approved private Blob DNS and subnet]
-    PrivateDNS --> State
-    Platform[Future reviewed development root] --> State
-    Platform --> Foundation[Reusable protected platform resource group]
-```
-
-The [bootstrap](../../code/infra/terraform/bootstrap/main.tf) declares a dedicated state resource
-group and ZRS StorageV2 account with Azure storage encryption and infrastructure encryption,
-HTTPS-only transport, TLS 1.2 minimum, public network access disabled, shared-key access disabled,
-OAuth default authentication, private containers and deny-by-default network rules. Cross-tenant
-replication and nested public objects are disabled. A Blob private endpoint uses approved existing
-subnet/DNS-zone references; there is no temporary public-access bootstrap exception.
-
-Explicit Entra object IDs receive `Storage Blob Data Contributor` scoped to the state container,
-not the subscription/resource group. This is the documented backend role for reading/writing
-and leasing state; no application service receives state access. Terraform `prevent_destroy`
-guards protect the state resource group, account and container, and an Azure `CanNotDelete`
-management lock protects the account. These are safeguards, not irrevocable protection against
-an authorized administrator changing locks or configuration. RBAC propagation remains a live check.
-
-Blob versioning and blob/container soft delete use an explicitly supplied recovery interval of
-7-365 integral days. This input is a technical recovery setting, not an invented legal retention
-policy. Versioning alone does not expire old versions or certify backup deletion; approved
-version lifecycle, backup retention, residency and recovery drills remain environment obligations.
-The future apply must verify ZRS and the selected storage features in the approved region.
-
-The [reusable platform foundation](../../code/infra/terraform/modules/platform/main.tf) retains
-its dedicated protected resource group with explicit region, name and owner tags. T095's
-adjacent module resources are described in the [platform runbook](platform.md). They do not
-establish live call capacity, grant cross-service access or imply a ready cluster.
-
-## Avoiding Circular Bootstrap and Local-State Fallback
-
-The bootstrap's own `azurerm` backend is intentionally partial. It requests Entra authentication
-and OIDC and disables Azure CLI fallback. Its approved backend account/container/key and federation
-context must be supplied separately by the authorized administrator. It cannot initialize itself
-against the new account before that account exists.
-
-Use an **already approved administrative remote backend** for any separately authorized initial
-provisioning. If none exists, stop and obtain the approved landing-zone/bootstrap procedure;
-do not silently create local plaintext state, temporarily expose storage or use access keys/SAS.
-The existing subnet, private DNS linkage and private runner access are also prerequisites.
-No such provisioning or migration is executed by this increment.
-
-Provider and backend credentials are distinct. Provisioning needs reviewed management-plane
-and role-assignment authority; backend writing needs only the approved state-container data role.
-The provider requests OIDC, disables Azure CLI use and disables automatic resource-provider
-registration. The authorized provisioning environment must supply the approved federation and
-must not introduce secret/key/SAS authentication fallbacks. Resource providers must already be
-registered through the reviewed administrative process.
-
-Backend coordinates are nonsecret references. Tokens/secrets must never be supplied through
-committed variables, backend files, command-line values, outputs or plan artifacts. Environment
-or protected workload-identity token delivery belongs to a separately approved operation.
-Terraform state can still contain provider-computed sensitive attributes even when no secret
-variables/outputs are declared; `sensitive` only controls display, not encryption. Treat state,
-plans, cached backend metadata and old versions as protected administrative data.
-
-## Credential-Free Verification
-
-After preparing the locked Python tooling environment, run from repository root:
+The state account cannot hold its own first state, so `state-create` creates it once, run locally by an
+engineer who is signed in with the Azure CLI. It is the only operation allowed to use local state.
 
 ```powershell
-uv run --project code/tools --locked --no-sync python code/tools/scripts/verify_terraform.py prepare
-uv run --project code/tools --locked --no-sync python code/tools/scripts/verify_terraform.py check
-uv run --project code/tools --locked --no-sync pytest code/tools/tests -q
+az login --tenant <tenant-id>
+uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation state-create --environment int --root state --plan-container tfplans
+uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation state-create --environment int --root state --plan-container tfplans --confirm-apply
 ```
 
-`prepare` explicitly downloads the pinned CLI if absent, verifies the official HTTPS checksum,
-and initializes each validation root using `-backend=false -input=false -lockfile=readonly`.
-It may download provider dependencies from their official registry, but never configures Azure
-state or credentials. Existing installation feeds for Python/npm remain the required Microsoft
-proxies; Terraform/vendor downloads are separate tooling dependencies.
+The first command only plans. The second applies and then runs `init -migrate-state -force-copy` with the `state`
+backend file. It retries the migration while the new role assignment propagates, confirms that the remote blob
+exists, and only then removes the local state. If the migration fails, the local state is kept and nothing is
+removed. The command refuses to run when the backend blob already exists.
 
-`check` requires the prepared exact CLI and fails if it is missing or mismatched. It performs
-recursive format checking, `terraform validate`, and native `terraform test` in all three roots.
-All test runs are explicit `command = plan` with `mock_provider "azurerm"`; these are mocked
-plans, not authorized real Azure plans. Inherited Azure/ARM variables, Terraform variable/CLI
-argument overrides and CI identity tokens are stripped, and an empty temporary Azure CLI
-configuration location is supplied. No default cloud credential chain is intentionally used.
+## Every other run
 
-The verifier's dispatcher has no real `plan`, `apply`, `destroy` or `force-unlock` command path.
-Failures propagate without a success fallback or hidden retry. The check-only path rejects
-missing, empty, failed or skipped native test evidence: a zero exit code alone is not proof
-that any required test ran. The existing CI `prepare` helper prepares these dependencies;
-the Terraform pre-commit hook runs the check-only path.
-PR jobs gain no new cloud identity, permissions or deployment step. Remote CI results are not
-claimed merely because those helpers are wired.
+All other operations refuse a missing or unreachable backend and never fall back to local state. They read the
+reviewed backend file `<root>.azurerm.tfbackend.json` of the environment and authenticate with OIDC and Azure AD
+only. The workflows take a lock with a wait of five minutes so that two runs cannot change the same state.
 
-## Executed Evidence
+## Sensitivity
 
-Native Windows with Terraform 1.17.0 and signed AzureRM 5.11.0 passed backend-disabled schema
-validation and **seven original T094 native mocked cases**: private encrypted/keyless storage, explicit
-writers/private link/deletion lock, empty writers, invalid retention, malformed UUID, explicit
-platform ownership and missing owner/region rejection. The malformed-UUID regression first
-failed against the loose guard, then passed after canonical UUID validation was added.
-The T095 verifier covered three roots and 16 passing native cases. T096 expands the current
-gate to 24; see [platform security evidence](platform-security.md) for the identity/network assertions.
+Treat the storage account and its versions as secret-bearing. Grant roles to people only for a reason and a
+period, never read a state blob into a ticket or a log, and rotate the two secrets (see
+[Environment bring-up](environment-bring-up.md)) after any suspected exposure.
 
-All **31 tooling tests** pass, including six new verifier cases for cloud/argument injection,
-checksum mismatch, child failure, allowed check commands, absent-tool fail-closed behavior and
-rejection of a successful but empty native test suite.
-Strict mypy passes the two changed Python scripts. Actual backend authentication, Blob leases,
-restore, locking under contention and Windows/Linux deployed behavior are not tested by mocks.
-Linux package hashes are prepared, but native Linux execution and remote CI remain unobserved.
+## Recovery
 
-No application behavior or dependencies changed. The existing backend Azure-deadline assertion,
-deferred media failures, tooling advisory, frontend intermittent export risk and foundation/live
-release obligations remain as documented; they are not waived by T094.
+| Situation | Action |
+|-----------|--------|
+| A run left a lock | The blob lease expires after the lock timeout. Read the holder in the run's log before releasing it |
+| A state blob was overwritten or deleted | Restore a previous blob version or the soft-deleted blob within the retention days |
+| The account was deleted | Remove the lock deliberately only for a planned teardown. After an accidental deletion, restore the soft-deleted container if it is within retention, otherwise recreate with `state-create` and import the other roots' resources |
 
-## Recovery Rules
+The destroy input of the workflows is refused for the `state` root. Removing the state storage is a deliberate
+manual operation.
 
-Retain state locking. Never use `-lock=false` as a workaround, force-unlock an active writer,
-remove deletion protection or migrate state without a separately reviewed procedure and proof
-that no writer is active. Resolve lock ownership using administrative metadata, not state dumps.
+## Verification
 
-For backend 403/network/DNS errors, check federated identity, exact container role, RBAC propagation,
-private runner routing and private DNS. Do not enable public networking, supply shared keys or
-grant subscription-wide data roles to get past a failed check. Reconcile and verify recovered
-state serial/lineage before any approved resume. Version restoration and deletion-lock changes
-require an accountable operator and reviewed backups; no recovery command is run automatically.
-
-Official references: [AzureRM backend locking/authentication](https://developer.hashicorp.com/terraform/language/backend/azurerm),
-[Terraform release](https://releases.hashicorp.com/terraform/1.17.0/), and
-[AzureRM 5.11.0 provider](https://registry.terraform.io/providers/hashicorp/azurerm/5.11.0/docs).
+Offline, without a credential: `verify_terraform.py check` runs formatting, validation and the native tests of
+every root and module with mocked providers, and `validate_environment.py` checks the environment files.

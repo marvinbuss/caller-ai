@@ -1,0 +1,100 @@
+name: Publish Images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish ${{ matrix.image }}
+    if: github.repository == 'marvinbuss/caller-ai'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: runtime
+            context: code/backend
+          - image: management
+            context: code/management
+    env:
+      IMAGE: ghcr.io/marvinbuss/caller-ai/${{ matrix.image }}
+      TRIVY: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+        with:
+          version: "0.13.4"
+          enable-cache: false
+      - name: Prepare locked tooling environment
+        run: uv sync --locked --project code/tools
+      - name: Work out the immutable tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          tags="sha-${GITHUB_SHA}"
+          if [[ "${GITHUB_REF}" =~ ^refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            tags="${tags} ${BASH_REMATCH[1]}"
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+      - name: Fail when a tag already exists (tags are never overwritten)
+        shell: bash
+        run: |
+          for tag in ${{ steps.tags.outputs.tags }}; do
+            uv run --project code/tools --locked python code/tools/scripts/verify_published_images.py --operation tag-free --image "$IMAGE" --tag "$tag"
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the image
+        shell: bash
+        run: docker build --tag "$IMAGE:sha-${GITHUB_SHA}" "${{ matrix.context }}"
+      - name: Scan the image for secrets and HIGH or CRITICAL vulnerabilities
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            "$TRIVY" image --quiet --image-src docker \
+            --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --timeout 10m \
+            "$IMAGE:sha-${GITHUB_SHA}"
+      - name: Sign in to the registry
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish the immutable tags
+        shell: bash
+        run: |
+          for tag in ${{ steps.tags.outputs.tags }}; do
+            docker tag "$IMAGE:sha-${GITHUB_SHA}" "$IMAGE:${tag}"
+            docker push "$IMAGE:${tag}"
+          done
+      - name: Prove the image can be pulled without credentials
+        shell: bash
+        run: |
+          for tag in ${{ steps.tags.outputs.tags }}; do
+            uv run --project code/tools --locked python code/tools/scripts/verify_published_images.py --operation anonymous-pull --image "$IMAGE" --tag "$tag"
+          done
+      - name: Report the digests
+        shell: bash
+        run: |
+          for tag in ${{ steps.tags.outputs.tags }}; do
+            uv run --project code/tools --locked python code/tools/scripts/verify_published_images.py --operation digest --image "$IMAGE" --tag "$tag"
+          done

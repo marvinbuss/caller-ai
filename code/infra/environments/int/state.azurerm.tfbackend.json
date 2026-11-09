@@ -1,0 +1,9 @@
+{
+  "resource_group_name": "rg-caller-int-state",
+  "storage_account_name": "callerintstate0001",
+  "container_name": "tfstate",
+  "key": "int/state.tfstate",
+  "use_azuread_auth": true,
+  "use_oidc": true,
+  "use_cli": false
+}

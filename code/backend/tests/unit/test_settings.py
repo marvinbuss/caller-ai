@@ -55,7 +55,7 @@ def test_local_startup_does_not_construct_live_clients(monkeypatch: pytest.Monke
 def test_live_startup_has_no_local_fallback() -> None:
     from caller_runtime.main import create_app
 
-    with pytest.raises(RuntimeError, match="live_mode_unavailable"):
+    with pytest.raises(RuntimeError, match="settings_missing"):
         with TestClient(create_app(Settings(mode="live"))):
             pytest.fail("Live startup silently fell back to local mode")
 

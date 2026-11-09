@@ -57,3 +57,14 @@ enforces (frame size, queue, no proxy, no redirects), so no second client librar
   browser never reaches the backend directly) and have no library equivalent.
 - Terraform delivery helpers in `code/tools/scripts/terraform_delivery.py`: thin wrappers over the
   Terraform CLI that enforce state-key and approval checks.
+
+## Infrastructure (code/infra)
+
+| Capability | Library | Notes |
+| --- | --- | --- |
+| Azure resources | hashicorp/azurerm 5.11.0 | Pinned exactly in every module and root. |
+| Key Vault secret writes and read-only data sources | Azure/azapi 2.13.0 | Used only to write vault secrets through the management API (a GitHub-hosted runner cannot reach a private vault's data plane) and for read-only data sources that zurerm lacks. The Foundry account and model deployments use `azurerm` resources. The secret value goes through the provider's sensitive body input. |
+| Permit signing key pair | hashicorp/tls 4.4.2 | Used only by the permit-key module (FR-051). The private key reaches the vault and the remote state, as the owner approved. |
+| Directory objects | none in Terraform | zuread is not used (FR-042). The identity script administers directory objects. |
+| Terraform security scan | Trivy config | Same digest-pinned Trivy image as the image scan, in scripts/audit_dependencies.py. |
+| Script tests | Pester 5 | For code/infra/scripts/identity/. |

@@ -110,6 +110,7 @@ class ManagementTestResources:
     signing_key: RSAPrivateKey = field(repr=False)
     verification_keys: Mapping[str, RSAPublicKey] = field(repr=False)
     credential: WorkloadCredential = field(repr=False)
+    transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
 
 
 class ManagementRequest(BaseModel):
@@ -132,10 +133,10 @@ class ManagementRequest(BaseModel):
         UUID(self.runtime_audience)
         for client in self.runtime_clients:
             UUID(client)
-        if self.configuration_ref == self.audit_ref or self.runtime_audience in {
-            self.policy.client_id,
-            self.policy.api_audience,
-        }:
+        if (
+            self.configuration_ref == self.audit_ref
+            or self.runtime_role == self.policy.manager_role
+        ):
             raise ValueError("distinct_management_resources_required")
         if self.tests is not None and (
             self.tests.test_role == self.policy.manager_role
@@ -396,6 +397,7 @@ async def compose_management(
                     telemetry=telemetry,
                     permits=TurnPermits(signer, lambda: datetime.now(UTC)),
                     active_revision=active_revision,
+                    http_transport=resolved.tests.transport,
                 )
             gateway = CapabilityGateway(
                 repository=repository,
@@ -416,7 +418,11 @@ async def compose_management(
             api.state.management_configuration = True
             api.include_router(
                 configuration_router(
-                    repository=repository, identity=identity, validator=validator, audit=audit
+                    repository=repository,
+                    identity=identity,
+                    validator=validator,
+                    audit=audit,
+                    reader_role=request.tests.test_role if request.tests is not None else None,
                 )
             )
             api.include_router(

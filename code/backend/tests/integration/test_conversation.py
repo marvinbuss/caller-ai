@@ -512,7 +512,7 @@ def test_reviewed_composition_construction_is_credential_free(
     credentials.assert_not_called()
 
 
-def test_composition_refuses_uninitialized_authority_before_credential_acquisition(
+def test_composition_creates_the_missing_authority_on_the_first_start(
     reviewed_runtime_options, signed_test_permit, authority_store
 ):
     import asyncio
@@ -537,11 +537,14 @@ def test_composition_refuses_uninitialized_authority_before_credential_acquisiti
     telemetry = Telemetry("caller-runtime", "local")
 
     async def scenario():
+        # The start stops later (no configuration), but the empty store got its authority.
         with pytest.raises(AdmissionError, match="test_runtime_unavailable"):
             async with runtime.running(telemetry):
-                pytest.fail("uninitialized_test_authority_admitted")
+                pytest.fail("start_without_configuration_admitted")
         containers.assert_awaited_once()
-        credentials.assert_not_called()
+        credentials.assert_awaited_once()
+        created = await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        assert created.authority.slots == []
 
     try:
         asyncio.run(scenario())

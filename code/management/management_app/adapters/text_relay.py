@@ -26,7 +26,11 @@ from typing import Any
 import httpx
 from fastapi import WebSocket
 
-from management_app.adapters.backend_connection import TurnPermits, compose_request
+from management_app.adapters.backend_connection import (
+    TurnPermits,
+    compose_request,
+    correlation_for,
+)
 from management_app.adapters.relay_frames import RelayLimit, parse_control
 from management_app.models.test_session import StartPermit, utc
 from management_app.observability import Telemetry
@@ -159,6 +163,7 @@ class TextRelay:
         if expires <= now:
             raise PermissionError("test_auth_expired")
         session_id = "console-" + secrets.token_hex(8)
+        correlation = correlation_for(permit.request_id)
         sequence = 0
         conversation_id: str | None = None
         queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=MAX_QUEUED_TURNS)
@@ -174,7 +179,7 @@ class TextRelay:
                 await browser.send_text(json.dumps(message | fields, separators=(",", ":")))
 
         async def finish(code: str = "stopped", status: str = "complete") -> None:
-            await send("ended", code=code, cleanupStatus=status, correlationId=secrets.token_hex(8))
+            await send("ended", code=code, cleanupStatus=status, correlationId=correlation)
             await browser.close(code=1000, reason="stopped")
             ended.set()
 
@@ -186,7 +191,7 @@ class TextRelay:
             fields: dict[str, Any] = {
                 "code": error.code,
                 "cleanupStatus": "active",
-                "correlationId": secrets.token_hex(8),
+                "correlationId": correlation,
             }
             if error.reason is not None:
                 fields["reason"] = error.reason
@@ -207,6 +212,7 @@ class TextRelay:
                 request_id=claims.request_id,
                 text=text,
                 conversation_id=conversation_id,
+                correlation_id=correlation,
             )
             del token, signed
             async with httpx.AsyncClient(
@@ -365,7 +371,9 @@ class TextRelay:
                 bounds=BOUNDS,
             )
         if self._telemetry is not None:
-            self._telemetry.event("test.relay", "success", mode="text", reason="ready")
+            self._telemetry.event(
+                "test.relay", "success", mode="text", reason="ready", correlation_id=correlation
+            )
         worker_task = asyncio.create_task(worker())
         tasks = {worker_task, asyncio.create_task(watch()), asyncio.create_task(reader())}
         try:

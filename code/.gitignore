@@ -19,6 +19,7 @@
 **/.terraform/
 *.tfstate*
 *.tfplan
+*_override.tf
 *.tfvars
 !*.tfvars.example
 *.key

@@ -45,6 +45,8 @@ ERROR_CODES = {
 class IdentityPort(Protocol):
     async def require_manager(self, request: Request) -> str: ...
 
+    async def require_reader(self, request: Request, *, reader_role: str | None) -> str: ...
+
 
 class ValidationPort(Protocol):
     def validate(self, payload: Document) -> list[Issue]: ...
@@ -128,6 +130,7 @@ def create_router(
     identity: IdentityPort,
     validator: ValidationPort,
     audit: AuditPort,
+    reader_role: str | None = None,
 ) -> APIRouter:
     if any(port is None for port in (repository, identity, validator, audit)):
         raise ValueError("configuration_ports_required")
@@ -157,7 +160,11 @@ def create_router(
         actor = None
         try:
             async with asyncio.timeout_at(deadline):
-                actor = await identity.require_manager(request)
+                actor = (
+                    await identity.require_manager(request)
+                    if reader_role is None
+                    else await identity.require_reader(request, reader_role=reader_role)
+                )
                 if request.query_params:
                     raise HTTPException(422, "unsupported_configuration_parameters")
                 current = await repository.read_active()

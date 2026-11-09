@@ -40,6 +40,17 @@ The limits are enforced per request or session from signed data and the single a
 they are not CPU or fleet measurements. Add instances only after measuring real demand: slots are
 global in the authority item, so extra instances do not raise the five-slot ceiling.
 
+## Replicas in an environment
+
+Each deployed app runs exactly **one replica** (minimum and maximum are both one). The reason is the session
+model above: a voice session is one WebSocket owned by one instance, an instance restart loses its sessions
+anyway, and the five slots are global in the authority item, so extra replicas do not raise capacity. A single
+replica also keeps the test environment cheap and its behavior easy to reason about. A restart, a revision change
+or a failed replica ends active sessions; the `replicas` alert fires when the count drops below one (see
+[monitoring](monitoring.md)). The test console that uses these limits is a test tool for configurations, not a
+call-handling feature, so the environment states no capacity target (Constitution Principle VI; see
+[capacity](../capacity.md)).
+
 ## Voice Session Behavior
 
 A voice session is one WebSocket owned by one backend instance. Admission is checked before the

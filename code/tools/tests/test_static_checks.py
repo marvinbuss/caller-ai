@@ -1400,27 +1400,13 @@ def test_terraform_check_uses_validate_and_mocked_tests_only(terraform_checks, m
             calls.append(arguments) or SimpleNamespace(stdout=summary)
         ),
     )
+    monkeypatch.setattr(terraform_checks, "environment_findings", lambda: [])
+    monkeypatch.setattr(terraform_checks, "scan_configuration", lambda: 1)
     terraform_checks.check()
-    assert [arguments[0] for arguments in calls] == [
-        "fmt",
-        "validate",
-        "test",
-        "validate",
-        "test",
-        "validate",
-        "test",
-    ]
-    assert terraform_checks.ROOTS[-1] == terraform_checks.BASE / "environments"
-
-
-def test_terraform_stages_share_one_root_without_a_stage_variable(terraform_checks):
-    directory = terraform_checks.BASE / "environments"
-    main = (directory / "main.tf").read_text(encoding="utf-8")
-    variables = (directory / "variables.tf").read_text(encoding="utf-8")
-    assert 'source              = "../modules/platform"' in main
-    assert "var.environment" not in main + variables
-    assert 'variable "label"' in variables and 'output "environment"' not in main
-    assert not list(directory.glob("*/main.tf"))
+    names = [arguments[0] for arguments in calls]
+    assert names[0] == "fmt"
+    assert names[1:] == ["validate", "test"] * (len(terraform_checks.ROOTS) + 13)
+    assert terraform_checks.ROOTS[-1] == terraform_checks.BASE / "app_environment"
 
 
 def test_terraform_preparation_is_explicit_and_missing_tool_does_not_fall_back(
@@ -1447,67 +1433,6 @@ def test_terraform_check_rejects_successful_but_empty_native_suite(terraform_che
     )
     with pytest.raises(RuntimeError, match="terraform_native_tests_incomplete"):
         terraform_checks.check()
-
-
-@pytest.mark.parametrize(
-    "line",
-    [
-        'condition = var.environment == "x"',
-        'count = var.stage == "prod" ? 1 : 0',
-        'count = contains(["dev", "test"], var.stage) ? 1 : 0',
-        'key = "${var.stage}/platform.tfstate"',
-    ],
-)
-def test_terraform_static_check_rejects_stage_name_logic(terraform_checks, tmp_path, line):
-    (tmp_path / "main.tf").write_text(line + "\n")
-
-    assert terraform_checks.stage_name_findings(tmp_path) == ["main.tf"]
-
-
-def test_terraform_static_check_accepts_the_repository_and_ignores_comments(
-    terraform_checks, tmp_path
-):
-    (tmp_path / "main.tf").write_text('# count = var.environment == "prod" ? 1 : 0\n')
-
-    assert terraform_checks.stage_name_findings(tmp_path) == []
-    assert terraform_checks.stage_name_findings() == []
-
-
-def test_only_the_runtime_identity_owns_the_text_history_container(terraform_checks, tmp_path):
-    assert terraform_checks.text_history_owner_findings() == []
-    security = tmp_path / "modules/platform/security.tf"
-    security.parent.mkdir(parents=True)
-    security.write_text(
-        'locals {\n  container_owners = {\n    text-conversations = "management"\n  }\n}\n'
-    )
-
-    assert terraform_checks.text_history_owner_findings(tmp_path) == ["text-conversations"]
-
-
-def test_example_pairs_validate_for_any_stage_without_code_edits(terraform_checks, tmp_path):
-    config = terraform_checks.BASE / "config"
-    assert terraform_checks.check_examples(config) == 6
-    for stack in ("bootstrap", "platform"):
-        for suffix in ("tfvars.json.example", "azurerm.tfbackend.json.example"):
-            source = (config / f"dev.{stack}.{suffix}").read_text()
-            (tmp_path / f"qa-7.{stack}.{suffix}").write_text(source.replace("dev/", "qa-7/"))
-
-    assert terraform_checks.check_examples(tmp_path) == 2
-
-
-def test_example_pair_with_environment_key_or_malformed_state_key_is_rejected(
-    terraform_checks, tmp_path
-):
-    config = terraform_checks.BASE / "config"
-    for suffix in ("tfvars.json.example", "azurerm.tfbackend.json.example"):
-        (tmp_path / f"x.platform.{suffix}").write_text(
-            (config / f"dev.platform.{suffix}").read_text()
-        )
-    values = tmp_path / "x.platform.tfvars.json.example"
-    values.write_text(values.read_text().replace('"label"', '"environment"'))
-
-    with pytest.raises(ValueError, match="invalid_example_pair"):
-        terraform_checks.check_examples(tmp_path)
 
 
 RETIRED_PATHS = (
@@ -1552,3 +1477,15 @@ def test_active_files_name_no_retired_endpoint_path():
             offenders.append(name)
 
     assert offenders == []
+
+
+def test_identity_hand_over_directory_is_ignored_by_git():
+    root = Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        ["git", "check-ignore", "code/.local/identity/int/management-signin-secret"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0

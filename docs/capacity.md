@@ -1,5 +1,14 @@
 # Capacity and Cost Qualification
 
+## Statement for the `int` environment
+
+The first internal test environment (see [Environments](environments.md)) has **no capacity target**. Each app runs
+one replica, the data store is serverless, and the admission limits above (one active test per manager, five
+occupied slots) bound the load a tester can create. The environment exists to prove that the deployed apps start,
+authenticate, converse and recover; it is not sized or priced for traffic. Do not use any number from it as a
+forecast for a production environment. The test console is a way to try a configuration, not a call-handling
+feature, so it carries no throughput promise.
+
 ## Current State
 
 Actual model cost per turn and per Live voice second, Cosmos RU demand, deployed instance and
@@ -15,7 +24,7 @@ are not production capacity or a billing estimate.
 | Text history storage growth | Pending | Measured item size and the 30-day expiry effect on the `text-conversations` container |
 | Instance and long-lived socket limits | Pending | Measured voice sessions per instance against the authority's five occupied slots |
 | Voice and text turn latency and admission | Pending | Approved live samples, not HTTP means or virtual timing |
-| Monitoring, firewall and egress storage budgets | Pending | Approved caps, actual ingestion/egress, retention and on-call delivery |
+| Monitoring and log ingestion budgets | Pending | Approved daily cap, actual ingestion, retention and on-call delivery |
 
 Admission allows one active test per manager and at most five occupied slots in the shared
 authority item; an ambiguous write keeps a slot occupied until cleanup is verified. See

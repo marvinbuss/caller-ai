@@ -4,11 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Name of an existing reviewed stage configuration; any name works
+        description: Name of an existing reviewed environment folder under code/infra/environments
         required: true
-        default: dev
+        default: int
       apply_changes:
         description: Request protected apply after reviewing the private saved plan
+        type: boolean
+        default: false
+      expect_no_changes:
+        description: Fail when the plan has any change (repeat-run and drift check)
+        type: boolean
+        default: false
+      destroy:
+        description: Plan the removal of this root; the protected apply still decides
         type: boolean
         default: false
 
@@ -24,4 +32,6 @@ jobs:
       environment: ${{ inputs.environment }}
       root: bootstrap
       apply_changes: ${{ inputs.apply_changes }}
+      expect_no_changes: ${{ inputs.expect_no_changes }}
+      destroy: ${{ inputs.destroy }}
       runner_labels: ${{ vars.TF_RUNNER_LABELS || '["ubuntu-24.04"]' }}

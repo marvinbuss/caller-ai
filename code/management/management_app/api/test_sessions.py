@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import secrets
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -138,7 +139,9 @@ def create_router(
             started, started_tick = clock()
             deadline = asyncio.get_running_loop().time() + 10
             async with asyncio.timeout_at(deadline):
-                session = identity.require_test_manager(request, mutation=True, test_role=test_role)
+                session = await identity.require_test_principal(
+                    request, mutation=True, test_role=test_role
+                )
                 now, budget = remaining(started, started_tick)
                 deadline = min(deadline, asyncio.get_running_loop().time() + budget)
                 if request.query_params:
@@ -160,11 +163,13 @@ def create_router(
                     raise HTTPException(422, "invalid_test_request") from None
                 mode = control.mode
                 now, _budget = remaining(started, started_tick)
-                session = identity.require_test_manager(request, mutation=True, test_role=test_role)
+                session = await identity.require_test_principal(
+                    request, mutation=True, test_role=test_role
+                )
                 now, _budget = remaining(started, started_tick)
                 purge(now)
                 principal = session.principal
-                session_digest = identity.sessions.digest(request.cookies[identity.cookie_name])
+                session_digest = identity.test_digest(request)
                 key = principal.tenant_id, principal.actor_id, control.request_id
                 previous = issued.get(key)
                 if previous is not None:
@@ -245,7 +250,9 @@ def create_router(
                 or socket.scope.get("subprotocols", []).count("caller.console.v1") != 1
             ):
                 raise PermissionError("test_permission_denied")
-            session = identity.require_test_manager(socket, mutation=False, test_role=test_role)
+            session = await identity.require_test_principal(
+                socket, mutation=False, test_role=test_role
+            )
             principal = session.principal
             actor_key = hashlib.sha256(
                 (principal.tenant_id + "\0" + principal.actor_id).encode()
@@ -257,7 +264,7 @@ def create_router(
             pending_by_actor[actor_key] = pending_by_actor.get(actor_key, 0) + 1
             counted = True
             now, _tick = clock()
-            session_digest = identity.sessions.digest(socket.cookies[identity.cookie_name])
+            session_digest = identity.test_digest(socket)
             candidates = [
                 record
                 for record in issued.values()
@@ -286,7 +293,9 @@ def create_router(
                 auth = Authenticate.model_validate_json(
                     json.dumps(json.loads(raw, object_pairs_hook=unique_object), allow_nan=False)
                 )
-                session = identity.require_test_manager(socket, mutation=False, test_role=test_role)
+                session = await identity.require_test_principal(
+                    socket, mutation=False, test_role=test_role
+                )
                 principal = session.principal
                 permit = signer.verify(
                     auth.permit,
@@ -315,13 +324,22 @@ def create_router(
                 await socket.close(code=1013, reason="test_unavailable")
                 return
 
+            held = session
+
             def validate_current() -> ServerSession:
-                current = identity.require_test_manager(socket, mutation=False, test_role=test_role)
+                if socket.headers.getlist("authorization"):
+                    # An application token was verified when the socket authenticated.
+                    current = held
+                    if current.expires_at <= time.time():
+                        raise PermissionError("test_identity_changed")
+                else:
+                    current = identity.require_test_manager(
+                        socket, mutation=False, test_role=test_role
+                    )
                 if (
                     current.principal.tenant_id != permit.tenant_id
                     or current.principal.actor_id != permit.actor_id
-                    or identity.sessions.digest(socket.cookies[identity.cookie_name])
-                    != permit.management_session_digest
+                    or identity.test_digest(socket) != permit.management_session_digest
                 ):
                     raise PermissionError("test_identity_changed")
                 return current

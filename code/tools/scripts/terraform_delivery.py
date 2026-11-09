@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -23,10 +24,19 @@ from uuid import UUID
 
 import httpx
 from ci import ROOT
+from validate_environment import validate as validate_environment_files
 from verify_terraform import require_toolchain
 
 BASE = ROOT / "code/infra/terraform"
-ROOTS = {"bootstrap": BASE / "bootstrap", "platform": BASE / "environments"}
+ENVIRONMENTS = ROOT / "code/infra/environments"
+ROOTS = {
+    "state": BASE / "state",
+    "bootstrap": BASE / "bootstrap",
+    "app_environment": BASE / "app_environment",
+}
+SIGNIN_SECRET_VARIABLE = "TF_VAR_management_signin_secret"  # pragma: allowlist secret
+# Terraform cannot plan a root whose azurerm backend is uninitialized, so creation uses local state.
+LOCAL_BACKEND_OVERRIDE = "state_create_override.tf"
 
 
 def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -95,9 +105,14 @@ def valid_state_key(key: Any) -> bool:
 
 
 def load_inputs(
-    environment: str, stack: str, plan_container: str, *, directory: Path = BASE / "config"
+    environment: str, stack: str, plan_container: str, *, directory: Path = ENVIRONMENTS
 ) -> DeliveryInputs:
-    """Load reviewed nonsecret per-environment JSON; construction performs no cloud I/O."""
+    """Load reviewed nonsecret per-environment JSON; construction performs no cloud I/O.
+
+    `directory` holds one folder per environment. The variable file is sliced so that a root only
+    receives the `environment` object and its own object (the app environment root also receives the
+    state coordinates it needs to read the bootstrap outputs).
+    """
     try:
         if (
             re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,30}", environment) is None
@@ -106,9 +121,18 @@ def load_inputs(
             or "--" in plan_container
         ):
             raise ValueError("invalid_selector")
-        backend_path = directory / f"{environment}.{stack}.azurerm.tfbackend.json"
-        variable_path = directory / f"{environment}.{stack}.tfvars.json"
-        backend, variables = read_json(backend_path), read_json(variable_path)
+        if validate_environment_files(environment, base=directory).errors:
+            raise ValueError("environment_files_invalid")
+        folder = directory / environment
+        backend_path = folder / f"{stack}.azurerm.tfbackend.json"
+        variable_path = folder / f"{environment}.tfvars.json"
+        backend, document = read_json(backend_path), read_json(variable_path)
+        variables: dict[str, Any] = {"environment": document["environment"], stack: document[stack]}
+        if stack == "app_environment":
+            variables["state"] = {
+                key: document["state"][key]
+                for key in ("resource_group_name", "storage_account_name")
+            }
         required = {
             "resource_group_name",
             "storage_account_name",
@@ -131,8 +155,9 @@ def load_inputs(
             or plan_container == backend["container_name"]
         ):
             raise ValueError("invalid_backend_binding")
+        identity = variables["environment"]
         for key in ("subscription_id", "tenant_id", "client_id"):
-            value = variables[key]
+            value = identity[key]
             if not isinstance(value, str) or str(UUID(value)).lower() != value.lower():
                 raise ValueError("invalid_identity")
             if key in backend:
@@ -189,8 +214,7 @@ def require_context(
             or values.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
             or values.get("GITHUB_REPOSITORY") != "marvinbuss/caller-ai"
             or values.get("GITHUB_REF") != "refs/heads/main"
-            or values.get("TF_DEPLOYMENT_ENVIRONMENT")
-            != f"{inputs.environment}-terraform-{inputs.stack}-{operation}"
+            or values.get("TF_DEPLOYMENT_ENVIRONMENT") != inputs.environment
             or not values.get("ACTIONS_ID_TOKEN_REQUEST_URL")
             or not values.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
             or not values.get("GITHUB_TOKEN")
@@ -200,7 +224,7 @@ def require_context(
                 for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
             )
             or any(
-                values.get("ARM_" + key.upper()) != inputs.variables[key]
+                values.get("ARM_" + key.upper()) != inputs.variables["environment"][key]
                 for key in ("subscription_id", "tenant_id", "client_id")
             )
         ):
@@ -215,7 +239,12 @@ def require_context(
 
 
 def plan_manifest(
-    inputs: DeliveryInputs, binding: dict[str, str], digest: str, *, now: float | None = None
+    inputs: DeliveryInputs,
+    binding: dict[str, str],
+    digest: str,
+    *,
+    now: float | None = None,
+    destroy: bool = False,
 ) -> dict[str, Any]:
     """Bind private plan bytes to exact source, workflow run, inputs and a one-day review window."""
     return {
@@ -224,6 +253,7 @@ def plan_manifest(
         "stack": inputs.stack,
         "configuration_sha256": inputs.fingerprint,
         "plan_sha256": digest,
+        "destroy": destroy,
         "created_at": time.time() if now is None else now,
         **binding,
     }
@@ -248,15 +278,18 @@ def verify_plan(
             or re.fullmatch(r"[a-f0-9]{64}", expected_digest) is None
             or not 0 < len(content) <= 64 * 1024 * 1024
             or hashlib.sha256(content).hexdigest() != expected_digest
-            or manifest != plan_manifest(inputs, binding, expected_digest, now=created)
+            or manifest
+            != plan_manifest(
+                inputs, binding, expected_digest, now=created, destroy=manifest["destroy"] is True
+            )
         ):
             raise ValueError("invalid_plan")
     except (ValueError, TypeError, KeyError):
         raise ValueError("terraform_plan_binding_invalid") from None
 
 
-def plan_changes(document: dict[str, Any]) -> int:
-    """Count resource/output changes; resource deletion needs a separate reviewed path."""
+def plan_changes(document: dict[str, Any], *, allow_delete: bool = False) -> int:
+    """Count resource/output changes; deletion is allowed only for a reviewed destroy plan."""
     changes = document.get("resource_changes", [])
     if not isinstance(changes, list):
         raise ValueError("terraform_plan_invalid")
@@ -265,8 +298,11 @@ def plan_changes(document: dict[str, Any]) -> int:
         actions = item.get("change", {}).get("actions")
         if not isinstance(actions, list) or not actions:
             raise ValueError("terraform_plan_invalid")
-        if "delete" in actions:
+        if "delete" in actions and not allow_delete:
             raise ValueError("terraform_destructive_plan_blocked")
+        if allow_delete and actions == ["delete"]:
+            count += 1
+            continue
         if actions not in (["no-op"], ["read"], ["create"], ["update"]):
             raise ValueError("terraform_plan_invalid")
         count += actions in (["create"], ["update"])
@@ -288,8 +324,10 @@ def run_command(
     command: list[str], *, directory: Path, values: dict[str, str], timeout: int
 ) -> subprocess.CompletedProcess[str]:
     """Capture potentially sensitive tool output; callers emit only fixed metadata."""
+    # subprocess cannot start az.cmd on Windows by its bare name, so resolve it on PATH first.
+    executable = shutil.which(command[0], path=values.get("PATH")) or command[0]
     result = subprocess.run(
-        command,
+        [executable, *command[1:]],
         cwd=directory,
         env=values,
         stdin=subprocess.DEVNULL,
@@ -352,13 +390,16 @@ def verify_environment_protection(
         raise ValueError("terraform_environment_unprotected") from None
 
 
-def delivery_environment(values: dict[str, str]) -> dict[str, str]:
+def delivery_environment(values: dict[str, str], stack: str = "") -> dict[str, str]:
     allowed_arm = {"ARM_CLIENT_ID", "ARM_TENANT_ID", "ARM_SUBSCRIPTION_ID"}
+    # The sign-in secret reaches only the app environment root, as a sensitive environment variable.
+    allowed_secret = {SIGNIN_SECRET_VARIABLE} if stack == "app_environment" else set()
     cleaned = {
         key: value
         for key, value in values.items()
         if not key.startswith(("TF_VAR_", "TF_CLI_ARGS", "TF_TOKEN_", "ARM_", "AZURE_STORAGE_"))
         or key in allowed_arm
+        or key in allowed_secret
     }
     cleaned.update(
         ARM_USE_OIDC="true",
@@ -378,15 +419,21 @@ def deliver(
     operation: str,
     *,
     expected_digest: str = "",
+    destroy: bool = False,
+    expect_no_changes: bool = False,
     values: dict[str, str] | None = None,
     runner: Runner = run_command,
     protection_checker: Callable[..., None] = verify_environment_protection,
 ) -> dict[str, Any]:
     """Plan or apply an exact private artifact only from protected manual GitHub/main runs."""
+    if destroy and inputs.stack not in {"bootstrap", "app_environment"}:
+        raise ValueError("terraform_destroy_forbidden")
+    if destroy and expect_no_changes:
+        raise ValueError("terraform_delivery_arguments_invalid")
     original = dict(os.environ) if values is None else dict(values)
     binding = require_context(inputs, operation, original)
     protection_checker(inputs, operation, original)
-    environment = delivery_environment(original)
+    environment = delivery_environment(original, inputs.stack)
     fingerprint = inputs.fingerprint
     binary = str(require_toolchain())
 
@@ -412,15 +459,19 @@ def deliver(
                 "--resource-group",
                 inputs.backend["resource_group_name"],
                 "--subscription",
-                inputs.backend.get("subscription_id", inputs.variables["subscription_id"]),
+                inputs.backend.get(
+                    "subscription_id", inputs.variables["environment"]["subscription_id"]
+                ),
                 "--only-show-errors",
                 "--output",
                 "json",
             ]
         )
     )
+    # The state storage keeps a public endpoint so GitHub-hosted runners can reach it. Access is by
+    # identity only, with shared keys and anonymous access off (FR-031).
     if (
-        account.get("publicNetworkAccess") != "Disabled"
+        account.get("publicNetworkAccess") not in {"Enabled", None}
         or account.get("allowSharedKeyAccess") is not False
         or account.get("allowBlobPublicAccess") is not False
         or account.get("enableHttpsTrafficOnly") is not True
@@ -494,6 +545,8 @@ def deliver(
     try:
         with tempfile.TemporaryDirectory(prefix="caller-tf-delivery-") as temporary:
             directory = Path(temporary)
+            variable_file = directory / "variables.tfvars.json"
+            variable_file.write_text(json.dumps(inputs.variables), encoding="utf-8")
             plan, manifest_path, review = (
                 directory / name for name in ("plan.tfplan", "manifest.json", "review.txt")
             )
@@ -523,7 +576,8 @@ def deliver(
                         "-no-color",
                         "-lock-timeout=300s",
                         "-detailed-exitcode",
-                        "-var-file=" + str(inputs.variable_path.resolve()),
+                        "-var-file=" + str(variable_file),
+                        *(["-destroy"] if destroy else []),
                         "-out=" + str(plan),
                     ],
                     timeout=2700,
@@ -531,7 +585,12 @@ def deliver(
                 )
                 if not plan.is_file() or not 0 < plan.stat().st_size <= 64 * 1024 * 1024:
                     raise ValueError("terraform_plan_invalid")
-                changes = plan_changes(json.loads(command([binary, "show", "-json", str(plan)])))
+                changes = plan_changes(
+                    json.loads(command([binary, "show", "-json", str(plan)])),
+                    allow_delete=destroy,
+                )
+                if expect_no_changes and changes:
+                    raise ValueError("terraform_unexpected_changes")
                 review.write_text(
                     command([binary, "show", "-no-color", str(plan)]), encoding="utf-8"
                 )
@@ -539,7 +598,9 @@ def deliver(
                 if inputs.fingerprint != fingerprint:
                     raise ValueError("terraform_configuration_changed")
                 manifest_path.write_text(
-                    json.dumps(plan_manifest(inputs, binding, digest), sort_keys=True),
+                    json.dumps(
+                        plan_manifest(inputs, binding, digest, destroy=destroy), sort_keys=True
+                    ),
                     encoding="utf-8",
                 )
                 for artifact in (plan, review, manifest_path):
@@ -556,22 +617,144 @@ def deliver(
                 artifact.chmod(0o600)
             if not plan.is_file() or plan.stat().st_size > 64 * 1024 * 1024:
                 raise ValueError("terraform_plan_invalid")
-            verify_plan(
-                inputs, binding, read_json(manifest_path), plan.read_bytes(), expected_digest
-            )
+            manifest = read_json(manifest_path)
+            verify_plan(inputs, binding, manifest, plan.read_bytes(), expected_digest)
             command(initialization)
-            plan_changes(json.loads(command([binary, "show", "-json", str(plan)])))
+            plan_changes(
+                json.loads(command([binary, "show", "-json", str(plan)])),
+                allow_delete=manifest["destroy"] is True,
+            )
             if inputs.fingerprint != fingerprint:
                 raise ValueError("terraform_configuration_changed")
             command(
                 [binary, "apply", "-input=false", "-no-color", "-lock-timeout=300s", str(plan)],
                 timeout=5400,
             )
+            target = original.get("ENVIRONMENT_MANIFEST_PATH", "")
+            if target and inputs.stack == "app_environment" and manifest["destroy"] is not True:
+                # The manifest names resources and settings only; it holds no secret value.
+                description = command([binary, "output", "-json", "environment_manifest"])
+                json.loads(description)
+                Path(target).write_text(description, encoding="utf-8")
             return {
                 "result": "terraform_plan_applied",
                 "plan_sha256": expected_digest,
                 "configuration_sha256": fingerprint,
             }
+    finally:
+        os.umask(previous_umask)
+
+
+def state_create(
+    inputs: DeliveryInputs,
+    *,
+    confirm_apply: bool = False,
+    values: dict[str, str] | None = None,
+    runner: Runner = run_command,
+    sleep: Callable[[float], None] = time.sleep,
+    attempts: int = 6,
+) -> dict[str, Any]:
+    """Create the state storage with local state, then migrate the state into it.
+
+    Run locally by an engineer who is signed in with the Azure CLI. This is the only operation that
+    may use local state (FR-006, FR-007). Without `confirm_apply` it only plans. The local state is
+    removed only after the remote blob exists.
+    """
+    if inputs.stack != "state":
+        raise ValueError("terraform_state_create_forbidden")
+    original = dict(os.environ) if values is None else dict(values)
+    environment = delivery_environment(original, inputs.stack)
+    environment.update(ARM_USE_OIDC="false", ARM_USE_CLI="true")
+    local_backend = {**inputs.backend, "use_oidc": False, "use_cli": True}
+    binary = str(require_toolchain())
+    storage = [
+        "--account-name",
+        inputs.backend["storage_account_name"],
+        "--container-name",
+        inputs.backend["container_name"],
+        "--name",
+        inputs.backend["key"],
+        "--auth-mode",
+        "login",
+        "--only-show-errors",
+        "--output",
+        "json",
+    ]
+
+    def blob_exists() -> bool:
+        result = runner(
+            ["az", "storage", "blob", "exists", *storage],
+            directory=inputs.root,
+            values=environment,
+            timeout=120,
+        )
+        return result.returncode == 0 and json.loads(result.stdout or "{}").get("exists") is True
+
+    def command(arguments: list[str], *, timeout: int = 600, codes: tuple[int, ...] = (0,)) -> str:
+        result = runner(arguments, directory=inputs.root, values=environment, timeout=timeout)
+        if result.returncode not in codes:
+            raise ValueError("terraform_delivery_command_failed")
+        return result.stdout
+
+    if blob_exists():
+        raise ValueError("terraform_state_exists")
+    previous_umask = os.umask(0o077)
+    try:
+        with tempfile.TemporaryDirectory(prefix="caller-tf-state-") as temporary:
+            directory = Path(temporary)
+            variable_file = directory / "variables.tfvars.json"
+            variable_file.write_text(json.dumps(inputs.variables), encoding="utf-8")
+            plan = directory / "state.tfplan"
+            override = inputs.root / LOCAL_BACKEND_OVERRIDE
+            try:
+                override.write_text('terraform {\n  backend "local" {}\n}\n', encoding="utf-8")
+                command([binary, "init", "-reconfigure", "-input=false", "-no-color"])
+                command(
+                    [
+                        binary,
+                        "plan",
+                        "-input=false",
+                        "-no-color",
+                        "-detailed-exitcode",
+                        "-var-file=" + str(variable_file),
+                        "-out=" + str(plan),
+                    ],
+                    timeout=1800,
+                    codes=(0, 2),
+                )
+                changes = plan_changes(json.loads(command([binary, "show", "-json", str(plan)])))
+                if not confirm_apply:
+                    return {"result": "terraform_state_planned", "changes": changes}
+                command([binary, "apply", "-input=false", "-no-color", str(plan)], timeout=3600)
+            finally:
+                override.unlink(missing_ok=True)
+            migration = [
+                binary,
+                "init",
+                "-migrate-state",
+                "-force-copy",
+                "-input=false",
+                "-no-color",
+                *(
+                    "-backend-config="
+                    + key
+                    + "="
+                    + (str(value).lower() if type(value) is bool else str(value))
+                    for key, value in sorted(local_backend.items())
+                ),
+            ]
+            for attempt in range(attempts):
+                result = runner(migration, directory=inputs.root, values=environment, timeout=600)
+                if result.returncode == 0:
+                    break
+                if attempt + 1 == attempts:
+                    raise ValueError("terraform_state_migration_failed")
+                sleep(30)  # role assignments need time to propagate (research R-08)
+            if not blob_exists():
+                raise ValueError("terraform_state_migration_failed")
+            for leftover in ("terraform.tfstate", "terraform.tfstate.backup"):
+                (inputs.root / leftover).unlink(missing_ok=True)
+            return {"result": "terraform_state_created", "changes": changes}
     finally:
         os.umask(previous_umask)
 
@@ -585,12 +768,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         parser = SafeParser(add_help=False)
         parser.add_argument(
-            "--operation", choices=("check", "guard", "plan", "apply"), default="check"
+            "--operation",
+            choices=("check", "guard", "plan", "apply", "state-create"),
+            default="check",
         )
         parser.add_argument("--environment", required=True)
         parser.add_argument("--root", choices=tuple(ROOTS), required=True)
         parser.add_argument("--plan-container", required=True)
         parser.add_argument("--expected-plan-sha256", default="")
+        parser.add_argument("--expect-no-changes", action="store_true")
+        parser.add_argument("--destroy", action="store_true")
+        parser.add_argument("--confirm-apply", action="store_true")
         arguments = parser.parse_args(argv)
         inputs = load_inputs(arguments.environment, arguments.root, arguments.plan_container)
         if arguments.operation == "check":
@@ -603,9 +791,15 @@ def main(argv: list[str] | None = None) -> int:
             require_context(inputs, operation)
             verify_environment_protection(inputs, operation, dict(os.environ))
             report = {"result": "terraform_delivery_environment_protected"}
+        elif arguments.operation == "state-create":
+            report = state_create(inputs, confirm_apply=arguments.confirm_apply)
         else:
             report = deliver(
-                inputs, arguments.operation, expected_digest=arguments.expected_plan_sha256
+                inputs,
+                arguments.operation,
+                expected_digest=arguments.expected_plan_sha256,
+                destroy=arguments.destroy,
+                expect_no_changes=arguments.expect_no_changes,
             )
         print(json.dumps(report, sort_keys=True))
         output = os.environ.get("GITHUB_OUTPUT")

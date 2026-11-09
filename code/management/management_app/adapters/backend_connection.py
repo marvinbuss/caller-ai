@@ -6,6 +6,7 @@ optional empty `settings` object. The permit for a text turn is minted on the se
 turn only and is never shown to the browser.
 """
 
+import hashlib
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -18,6 +19,11 @@ from management_app.security import TestPermitSigner
 TEXT_PATH = "/v1/conversations/text"
 VOICE_PATH = "/v1/conversations/voice"
 VOICE_SUBPROTOCOL = "caller.voice.v1"
+
+
+def correlation_for(request_id: str) -> str:
+    """One opaque id per console session, sent to the runtime and recorded in both logs."""
+    return hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:32]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +48,7 @@ def compose_request(
     text: str | None = None,
     conversation_id: str | None = None,
     settings: Mapping[str, Any] | None = None,
+    correlation_id: str | None = None,
 ) -> BackendRequest:
     if kind not in {"text", "voice"} or not token or not signed_permit or not request_id:
         raise ValueError("invalid_backend_request")
@@ -51,6 +58,8 @@ def compose_request(
         raise ValueError("settings_not_supported")
     extra: dict[str, Any] = {} if settings is None else {"settings": {}}
     headers = {"Authorization": "Bearer " + token}
+    if correlation_id is not None:
+        headers["X-Correlation-ID"] = correlation_id
     if kind == "voice":
         if text is not None or conversation_id is not None:
             raise ValueError("invalid_backend_request")

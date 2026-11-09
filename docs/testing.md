@@ -22,3 +22,29 @@ manager identity, so a test session left in `cleanup pending` holds only that ca
 not fail the cases after it. The speech cases press Mute only when no audio is queued on the console socket, because the console ends a session that is muted with audio still queued.
 
 Markers: `quick` (fast tier) and `browser` (needs prepared Chromium). `--strict-markers` is on.
+
+## In-process end-to-end journey
+
+`code/e2e` composes the runtime and the management app from their live settings in one process, with
+fake stores, a local identity authority and a streamed model. One test publishes a configuration, reads
+it as a tester application, requests a signed ticket, runs a text turn through the console socket and the
+runtime, and checks the stored history and the one correlation id in both apps' events. CI runs it with
+`ci.py e2e` (a locked environment that installs both apps). To run it beside the other tests without that
+environment, use the management environment: `uv run --directory code/management python -m pytest ../e2e/tests`
+borrows the runtime's source and packages from `code/backend/.venv`.
+
+Where the public package index is unreachable, install the same locked environment through a mirror that
+you set in your own shell (see `code/.local`, which is not committed). The lock is never rewritten: export
+its hash-pinned requirements to a temporary file and install them with hash checking, so the mirror can
+only serve the exact files the lock names. From `code/e2e`:
+
+```powershell
+uv export --frozen --no-header --no-emit-package caller-runtime --no-emit-package caller-management --no-emit-package caller-e2e --output-file $env:TEMP\e2e-requirements.txt
+uv venv --python 3.12 .venv
+uv pip install --python .venv\Scripts\python.exe --require-hashes --no-deps -r $env:TEMP\e2e-requirements.txt
+uv pip install --python .venv\Scripts\python.exe --no-deps ..\backend ..\management
+.\.venv\Scripts\python.exe -m pytest tests -q -p no:cacheprovider
+```
+
+Do not run `uv lock` or `uv sync --locked` with a mirror set: the lock names the public index, so they
+either fail or rewrite it. `ci.py check` rejects a mirror host in any committed file.
