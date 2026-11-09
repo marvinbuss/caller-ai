@@ -133,7 +133,11 @@ function Test-Preflight {
     if ($account.id -ne $Inputs.Subscription) { Stop-Script 1 'Preflight failed: the selected subscription differs from environment.subscription_id.' }
     if ($account.user.type -ne 'user') { Stop-Script 1 'Preflight failed: sign in as a person; a service principal cannot be used for directory administration.' }
     $me = Invoke-Az -Arguments @('ad', 'signed-in-user', 'show', '--output', 'json') -AllowFailure
-    if (-not $me) { Stop-Script 1 'Preflight failed: the signed-in user cannot be read from the directory.' }
+    if (-not $me) {
+        # The cached account can outlive the Graph token, so a stale sign-in passes the check above.
+        Stop-Script 1 ("Preflight failed: the signed-in user cannot be read from the directory. The Azure CLI sign-in has usually " +
+            "expired; run 'az logout' and 'az login --tenant $($Inputs.Tenant)', select subscription $($Inputs.Subscription), then run the script again.")
+    }
 
     $roles = Invoke-Az -Arguments @('rest', '--method', 'get', '--url',
         'https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=displayName', '--output', 'json') -AllowFailure

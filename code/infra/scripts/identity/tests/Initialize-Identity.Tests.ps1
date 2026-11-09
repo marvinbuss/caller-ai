@@ -162,6 +162,7 @@ Describe 'Initialize-Identity registration phase' {
         @{ Name = 'there is no sign-in'; Change = { param($s) $s.account = $null }; Message = 'no Azure CLI sign-in' }
         @{ Name = 'the tenant differs'; Change = { param($s) $s.account.tenantId = 'other' }; Message = 'tenant differs' }
         @{ Name = 'the subscription differs'; Change = { param($s) $s.account.id = 'other' }; Message = 'subscription differs' }
+        @{ Name = 'the directory sign-in expired'; Change = { param($s) $s.directoryReadable = $false }; Message = 'az login --tenant' }
         @{ Name = 'the directory role is missing'; Change = { param($s) $s.directoryRoles = @('Reader') }; Message = 'Privileged Role Administrator or Global Administrator' }
         @{ Name = 'the Azure rights are missing'; Change = { param($s) $s.azureRoles = @('Reader') }; Message = 'Azure rights on the subscription' }
     ) {

@@ -18,7 +18,7 @@ switch -Regex ($command) {
         if (-not $state.account) { Fail }
         Out-Json $state.account; exit 0
     }
-    '^ad signed-in-user' { Out-Json @{ id = 'user-object-id' }; exit 0 }
+    '^ad signed-in-user' { if ($state.directoryReadable -eq $false) { Fail }; Out-Json @{ id = 'user-object-id' }; exit 0 }
     '^role assignment list' { Out-Json @($state.azureRoles | ForEach-Object { @{ roleDefinitionName = $_ } }); exit 0 }
     '^ad group show' {
         $id = Get-Option '--group'
