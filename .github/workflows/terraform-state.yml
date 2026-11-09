@@ -27,7 +27,6 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       root: state
-      slug: state
       apply_changes: ${{ inputs.apply_changes }}
       expect_no_changes: ${{ inputs.expect_no_changes }}
       runner_labels: ${{ vars.TF_RUNNER_LABELS || '["ubuntu-24.04"]' }}

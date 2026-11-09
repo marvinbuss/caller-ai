@@ -123,15 +123,14 @@ in the protected GitHub environment and deletes the local file (FR-046).
 | `terraform-state.yml` | `workflow_dispatch` (`environment`, `apply_changes`) | Reusable deploy with `root: state`. First creation is `state-create`, not this workflow. |
 | `terraform-bootstrap.yml` | `workflow_dispatch` | Reusable deploy with `root: bootstrap`. |
 | `terraform-app-environment.yml` | `workflow_dispatch` (also `expect_no_changes`, `destroy`) | Reusable deploy with `root: app_environment` and the secret from the protected environment, then the environment check. |
-| `terraform-deploy.yml` | `workflow_call` | `plan` job in environment `<env>-terraform-<root>-plan`, `apply` job in `<env>-terraform-<root>-apply` with required reviewers. OIDC only. Concurrency group per environment and root. For `app_environment` a final step runs the check with `--functional` and uploads its JSON. |
+| `terraform-deploy.yml` | `workflow_call` | `plan` and `apply` jobs in the GitHub environment named like the input environment, with required reviewers. OIDC only. Concurrency group per environment and root. For `app_environment` a final step runs the check with `--functional` and uploads its JSON. |
 | `images.yml` | push to `main`, `v*` tag, `workflow_dispatch` | Build, Trivy scan (secrets, HIGH and CRITICAL), `tag-free`, push, `anonymous-pull`, digests in the summary. `contents: read`, `packages: write`. Actions pinned by commit SHA. No step deletes or prunes package versions. |
 | `ci.yml` | pull request, push | Environment and structure checks, Terraform tests and security scan, tooling and application tests, browser tests, Pester. |
 
-GitHub settings used (names only): environments `int-terraform-state-plan`, `int-terraform-state-apply`,
-`int-terraform-bootstrap-plan`, `int-terraform-bootstrap-apply`, `int-terraform-app_environment-plan`,
-`int-terraform-app_environment-apply`; secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-`AZURE_SUBSCRIPTION_ID` per environment (identifiers, not credentials) and `MANAGEMENT_SIGNIN_SECRET` in the
-two `app_environment` environments; variable `TF_PLAN_CONTAINER`.
+GitHub settings used (names only): environment `int`; secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_SUBSCRIPTION_ID` (identifiers, not credentials) and `MANAGEMENT_SIGNIN_SECRET` in it; variable
+`TF_PLAN_CONTAINER`. The deployment identity has one federated credential for the subject
+`repo:marvinbuss/caller-ai:environment:int`.
 
 ## Image references
 

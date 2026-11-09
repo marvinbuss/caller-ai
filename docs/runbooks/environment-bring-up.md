@@ -18,10 +18,10 @@ How to bring up, verify, change, recover and remove an environment such as `int`
 
 | Need | Detail |
 |------|--------|
-| Azure | A tenant, one subscription for the environment, an account allowed to create resource groups and role assignments, and a deployment identity with OIDC federation to this repository's GitHub environments |
+| Azure | A tenant, one subscription for the environment, an account allowed to create resource groups and role assignments, and a deployment identity with one federated credential: issuer `https://token.actions.githubusercontent.com`, subject `repo:marvinbuss/caller-ai:environment:<env>`, audience `api://AzureADTokenExchange` |
 | Directory rights | A directory administrator for the identity objects (app registrations, roles, role assignments, and consent for the Graph read permission `Application.Read.All`; Privileged Role Administrator or Global Administrator), and a group that will hold the editor and tester roles (`identity.user_group_id`) |
 | Model | Quota in the subscription for the text model and `gpt-live-1` under the deployment types in `app_environment.model`, in an allowed region. Terraform creates the Foundry account and both deployments |
-| GitHub | Environments `<env>-terraform-state-plan`, `-apply`, `<env>-terraform-bootstrap-plan`, `-apply`, `<env>-terraform-app-environment-plan`, `-apply`, with required reviewers on every `apply` environment; secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` in each; the variable `TF_PLAN_CONTAINER` (`tfplans`); `MANAGEMENT_SIGNIN_SECRET` in the two `app_environment` environments |
+| GitHub | One environment named `<env>`, limited to protected branches, with required reviewers and self-review prevented; secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` and `MANAGEMENT_SIGNIN_SECRET` in it; the variable `TF_PLAN_CONTAINER` (`tfplans`) |
 | Local | Terraform 1.17.0 (the pinned binary prepared by the tools), Python through `uv`, PowerShell 7, Azure CLI, Docker for the security scan |
 
 ## 1. Offline checks
@@ -92,7 +92,7 @@ are in [Terraform state](terraform-state.md).
    |--------|---------------|-------|
    | `management_app_client_id` and `runtime_app_client_id` (printed) | `app_environment.identity.management_app_client_id` and `app_environment.identity.runtime_app_client_id` in `code/infra/environments/<env>/<env>.tfvars.json` | Not secrets; commit them with the reviewed environment files after `validate_environment.py` passes |
    | `tenant_id`, `runtime_identity_name`, `roles.*` (printed) | Already inputs in the same file (`environment.tenant_id`, `app_environment.identity`); compare them with the printed values | The script reads them, so they should match; a difference means the file was edited after the run |
-   | Client secret (file `code/.local/identity/<env>/management-signin-secret`) | The secret `MANAGEMENT_SIGNIN_SECRET` in the GitHub environments `<env>-terraform-app-environment-plan` and `<env>-terraform-app-environment-apply` | Paste it once from the file, then delete `code/.local/identity/<env>/`. The folder is ignored by git and the file has owner-only access. It is created only when no valid secret exists, and it is never printed |
+   | Client secret (file `code/.local/identity/<env>/management-signin-secret`) | The secret `MANAGEMENT_SIGNIN_SECRET` in the GitHub environment `<env>` | Paste it once from the file, then delete `code/.local/identity/<env>/`. The folder is ignored by git and the file has owner-only access. It is created only when no valid secret exists, and it is never printed |
 
    Run the script again at any time: with a valid secret it creates nothing and writes no file. After the first
    app environment deployment run it once more with `-Phase redirect` (step 5).

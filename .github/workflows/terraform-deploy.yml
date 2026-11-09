@@ -9,10 +9,6 @@ on:
       root:
         type: string
         required: true
-      slug:
-        description: Hyphenated root name used in protected deployment environment names
-        type: string
-        required: true
       apply_changes:
         type: boolean
         default: false
@@ -40,7 +36,8 @@ jobs:
     if: github.repository == 'marvinbuss/caller-ai' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
-    environment: ${{ inputs.environment }}-terraform-${{ inputs.slug }}-plan
+    # One GitHub environment per deployment environment, so one federated credential covers every root.
+    environment: ${{ inputs.environment }}
     permissions:
       contents: read
       actions: read
@@ -52,7 +49,7 @@ jobs:
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
       DEPLOY_ROOT: ${{ inputs.root }}
       PLAN_CONTAINER: ${{ vars.TF_PLAN_CONTAINER }}
-      TF_DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}-terraform-${{ inputs.slug }}-plan
+      TF_DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}
       TF_DELIVERY_OPERATION: plan
       EXPECT_NO_CHANGES: ${{ inputs.expect_no_changes && 'true' || 'false' }}
       DESTROY: ${{ inputs.destroy && 'true' || 'false' }}
@@ -101,7 +98,7 @@ jobs:
     needs: plan
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 120
-    environment: ${{ inputs.environment }}-terraform-${{ inputs.slug }}-apply
+    environment: ${{ inputs.environment }}
     permissions:
       contents: read
       actions: read
@@ -111,7 +108,7 @@ jobs:
       DEPLOY_ROOT: ${{ inputs.root }}
       PLAN_CONTAINER: ${{ vars.TF_PLAN_CONTAINER }}
       PLAN_SHA256: ${{ needs.plan.outputs.plan_sha256 }}
-      TF_DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}-terraform-${{ inputs.slug }}-apply
+      TF_DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}
       TF_DELIVERY_OPERATION: apply
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}

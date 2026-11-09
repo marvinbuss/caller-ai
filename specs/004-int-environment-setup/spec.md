@@ -21,6 +21,7 @@
 - Q: Who creates the directory sign-in registrations (app registrations and roles) that protect the public entry points: the app environment deployment or the directory administrators? → A: Directory administrators create them once, using a PowerShell and Azure CLI script that this feature delivers. The script prefers federated credentials and user-assigned managed identities, the variable file names the results, and the app environment deployment only configures the applications to use them.
 - Q: Should each environment have its own Azure subscription, or should environments share one? → A: Each environment has its own subscription, named in its variable file.
 - Q: Should outbound internet traffic from the hosted applications be restricted? → A: No additional outbound rules. Default network rules and configuration apply, because the real hosting lands in a customer network that a platform team provides (decided 2026-11-05, replacing an earlier approved-destinations list; FR-044).
+- Q: How many GitHub environments and federated credentials does an environment need? → A: One. The GitHub environment is named exactly like the deployment environment (`int`), every root's plan and apply jobs run in it with required reviewers, and the deployment identity has one federated credential for that environment (decided 2026-11-09, replacing a plan and an apply environment per root).
 
 ### Session 2026-11-05
 

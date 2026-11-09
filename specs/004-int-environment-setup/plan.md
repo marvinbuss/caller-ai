@@ -111,7 +111,7 @@ be written up in D-05 before merge. The identity script is not merged before the
 | Sign-in secret or permit private key exposed | Written to the vault through the management API only, never printed, read through managed identities, held in the encrypted, locked remote state, never in files or logs. Secret validity is at most 90 days. |
 | State storage on a public endpoint | Identity-only access, shared keys off, versioning, soft delete, delete lock, writer roles scoped to two containers. |
 | Public images leak code or secrets | Trivy secret and vulnerability scan blocks publishing. The source repository is private, so publishing exposes application code (owner accepted). |
-| Deployment identity abused | OIDC federation limited to the repository, protected environments for plan and apply, least-privilege roles in the runbook. |
+| Deployment identity abused | OIDC federation limited to the repository's protected environment, required reviewers before plan and apply, least-privilege roles in the runbook. |
 | Deployment identity holds the tester role (FR-053) | A compromised pipeline identity could use the test console and model sessions. Protected GitHub environments, an OIDC subject limited to this repository, and the runtime's existing admission limit on live sessions. The identity holds no directory write permission (FR-042). |
 | Health endpoints and the sign-in page reachable by anyone (open range) | They carry no conversation or dependency detail and no data. Every data endpoint needs sign-in plus a role, or a signed permit. |
 | Model sessions abused | Allow-list, sign-in, test-role check and the runtime's existing admission limit on live sessions. |

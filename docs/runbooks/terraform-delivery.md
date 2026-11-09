@@ -41,9 +41,11 @@ flowchart TD
 
 ## Protection
 
-Two GitHub environments exist per root: `<env>-terraform-<root>-plan` and `<env>-terraform-<root>-apply`, where
-`<root>` is `state`, `bootstrap` or `app-environment`. The apply environment requires reviewers who are not the
-author of the run. The delivery script verifies that the environment exists and, for an apply, that review is
+One GitHub environment exists per deployment environment, named exactly like it (`int`). The plan and apply
+jobs of every root run in it, so the deployment identity needs one federated credential with the subject
+`repo:marvinbuss/caller-ai:environment:<env>`. The environment requires reviewers who are not the author of the
+run, so a reviewer approves both the plan job and, after reading the plan, the apply job. The delivery script
+verifies that the environment exists and, for an apply, that review is
 required and self-review is prevented; it also requires the `main` branch to be protected. Workflows run only
 from `main`, only on manual dispatch, and use short-lived OIDC tokens (`id-token: write`, `contents: read`). No
 long-lived secret authenticates to Azure.

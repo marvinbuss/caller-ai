@@ -303,6 +303,17 @@ Every document links to the relevant official Terraform and Azure guidance (FR-0
 
 ---
 
+## Phase 12: One GitHub environment per deployment environment (owner change 2026-11-09)
+
+**Purpose**: One federated credential per environment. Plan and apply jobs of every root run in the GitHub environment named like the input environment (`int`), replacing a plan and an apply environment per root. Supersedes the environment names in T045.
+
+- [X] T135 Update `code/tools/tests/test_terraform_delivery.py` first: the delivery context accepts only `TF_DEPLOYMENT_ENVIRONMENT` equal to the input environment and rejects per-root names; both jobs of `terraform-deploy.yml` use `${{ inputs.environment }}`; callers pass no `slug`.
+- [X] T136 Update `code/tools/scripts/terraform_delivery.py` (`require_context`), `.github/workflows/terraform-deploy.yml` (job environments, drop `slug`) and the three caller workflows.
+- [X] T137 [P] Update `docs/runbooks/terraform-delivery.md`, `docs/runbooks/environment-bring-up.md`, `docs/security.md`, [plan.md](plan.md), [quickstart.md](quickstart.md) and [tooling-and-workflows.md](contracts/tooling-and-workflows.md) with the single environment and the federated credential subject `repo:marvinbuss/caller-ai:environment:<env>`.
+- [X] T138 Run the tools tests, `verify_docs.py` and `ci.py check`; fix any failure.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase dependencies

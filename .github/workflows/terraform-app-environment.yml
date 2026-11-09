@@ -31,7 +31,6 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       root: app_environment
-      slug: app-environment
       apply_changes: ${{ inputs.apply_changes }}
       expect_no_changes: ${{ inputs.expect_no_changes }}
       destroy: ${{ inputs.destroy }}

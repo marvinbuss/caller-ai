@@ -184,7 +184,7 @@ def execution_case(delivery_case, monkeypatch):
         "GITHUB_SHA": "a" * 40,
         "GITHUB_RUN_ID": "123",
         "GITHUB_RUN_ATTEMPT": "1",
-        "TF_DEPLOYMENT_ENVIRONMENT": "dev-terraform-app-environment-plan",
+        "TF_DEPLOYMENT_ENVIRONMENT": "dev",
         "ACTIONS_ID_TOKEN_REQUEST_URL": "https://token.actions.githubusercontent.com/fixture",
         "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "synthetic-request-token",
         "GITHUB_TOKEN": "synthetic-github-token",
@@ -249,7 +249,6 @@ def test_delivery_applies_only_the_saved_checksum_bound_plan(execution_case):
         inputs, "plan", values=values, runner=execute, protection_checker=lambda *args: None
     )
     assert plan["changes"] == 1 and len(plan["plan_sha256"]) == 64
-    values["TF_DEPLOYMENT_ENVIRONMENT"] = "dev-terraform-app-environment-apply"
     result = module.deliver(
         inputs,
         "apply",
@@ -271,7 +270,6 @@ def test_apply_writes_the_environment_manifest_for_the_environment_check(executi
         inputs, "plan", values=values, runner=execute, protection_checker=lambda *args: None
     )
     target = tmp_path / "manifest.json"
-    values["TF_DEPLOYMENT_ENVIRONMENT"] = "dev-terraform-app-environment-apply"
     values["ENVIRONMENT_MANIFEST_PATH"] = str(target)
     module.deliver(
         inputs,
@@ -293,7 +291,6 @@ def test_delivery_rejects_tampered_blob_before_apply(execution_case):
     for name in blobs:
         if name.endswith("plan.tfplan"):
             blobs[name] += b"changed"
-    values["TF_DEPLOYMENT_ENVIRONMENT"] = "dev-terraform-app-environment-apply"
     with pytest.raises(ValueError, match="terraform_plan_binding_invalid"):
         module.deliver(
             inputs,
@@ -314,6 +311,19 @@ def test_delivery_requires_environment_protection_before_any_command(execution_c
 
     with pytest.raises(ValueError, match="terraform_environment_unprotected"):
         module.deliver(inputs, "plan", values=values, runner=execute, protection_checker=denied)
+    assert commands == []
+
+
+@pytest.mark.parametrize("name", ["dev-terraform-app-environment-plan", "prod", ""])
+def test_delivery_runs_only_in_the_github_environment_named_after_the_environment(
+    execution_case, name
+):
+    module, inputs, values, commands, _blobs, execute = execution_case
+    values["TF_DEPLOYMENT_ENVIRONMENT"] = name
+    with pytest.raises(ValueError, match="terraform_delivery_context_invalid"):
+        module.deliver(
+            inputs, "plan", values=values, runner=execute, protection_checker=lambda *args: None
+        )
     assert commands == []
 
 
@@ -405,7 +415,7 @@ def test_delivery_verifies_actual_main_branch_protection(delivery_case, monkeypa
             "apply",
             {
                 "GITHUB_TOKEN": "synthetic-token",
-                "TF_DEPLOYMENT_ENVIRONMENT": "dev-terraform-app-environment-apply",
+                "TF_DEPLOYMENT_ENVIRONMENT": "dev",
             },
         )
     else:
@@ -415,7 +425,7 @@ def test_delivery_verifies_actual_main_branch_protection(delivery_case, monkeypa
                 "apply",
                 {
                     "GITHUB_TOKEN": "synthetic-token",
-                    "TF_DEPLOYMENT_ENVIRONMENT": "dev-terraform-app-environment-apply",
+                    "TF_DEPLOYMENT_ENVIRONMENT": "dev",
                 },
             )
 
@@ -452,7 +462,8 @@ def test_reusable_workflows_keep_plan_apply_and_bootstrap_protected():
     assert "terraform apply" not in source and "-auto-approve" not in source
     for operation in ("plan", "apply"):
         job = workflow["jobs"][operation]
-        assert job["environment"].endswith("-" + operation)
+        assert job["environment"] == "${{ inputs.environment }}"
+        assert job["env"]["TF_DEPLOYMENT_ENVIRONMENT"] == "${{ inputs.environment }}"
         assert job["permissions"]["contents"] == "read"
         assert job["permissions"]["id-token"] == "write"
         assert any("--operation guard" in step.get("run", "") for step in job["steps"])
@@ -469,8 +480,7 @@ def test_reusable_workflows_keep_plan_apply_and_bootstrap_protected():
         assert set(caller["on"]) == {"workflow_dispatch"}
         assert caller["jobs"]["deploy"]["uses"] == "./.github/workflows/terraform-deploy.yml"
         assert caller["jobs"]["deploy"]["with"]["root"] == stack
-        assert caller["jobs"]["deploy"]["with"]["slug"] == stack.replace("_", "-")
-        assert caller["jobs"]["deploy"]["with"]["slug"] == stack.replace("_", "-")
+        assert "slug" not in caller["jobs"]["deploy"]["with"]
         assert "inherit" not in json.dumps(caller)
 
 
@@ -483,7 +493,7 @@ def _state_values(variables):
         "GITHUB_SHA": "a" * 40,
         "GITHUB_RUN_ID": "123",
         "GITHUB_RUN_ATTEMPT": "1",
-        "TF_DEPLOYMENT_ENVIRONMENT": "dev-terraform-state-apply",
+        "TF_DEPLOYMENT_ENVIRONMENT": "dev",
         "ACTIONS_ID_TOKEN_REQUEST_URL": "https://token.actions.githubusercontent.com/fixture",
         "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "synthetic-request-token",
         "GITHUB_TOKEN": "synthetic-github-token",

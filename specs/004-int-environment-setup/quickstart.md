@@ -8,10 +8,10 @@ end to end. Commands run from the repository root in PowerShell 7. Interfaces ar
 
 | Need | Detail |
 |---|---|
-| Azure | Tenant, one subscription for `int`, an account allowed to create resource groups, role assignments and a deployment identity with OIDC federation to this repository's environments. |
+| Azure | Tenant, one subscription for `int`, an account allowed to create resource groups, role assignments and a deployment identity with one federated credential for the subject `repo:marvinbuss/caller-ai:environment:int`. |
 | Directory rights | An administrator able to create app registrations, roles and role assignments and to consent to Graph application permissions (Privileged Role Administrator or Global Administrator) for the identity script (FR-040, FR-053), and a group that will hold the editor and tester roles (`identity.user_group_id`). |
 | Model | Model quota in the subscription for the text model and `gpt-live-1` under the deployment type in `app_environment.model`, in an allowed region. The app environment deployment creates the Foundry account and both deployments (FR-039). |
-| GitHub | Environments `int-terraform-<root>-plan|apply` with required reviewers on `apply`, and variables set per [tooling-and-workflows.md](contracts/tooling-and-workflows.md). |
+| GitHub | Environment `int` with required reviewers, and secrets and variables set per [tooling-and-workflows.md](contracts/tooling-and-workflows.md). |
 | Local | Terraform 1.17.0, Python through `uv`, PowerShell 7, Azure CLI, Trivy. |
 | Open items | The owner answers the items at the end of [plan.md](plan.md) before step 3. |
 
@@ -53,7 +53,7 @@ the anonymous pull check passes. Copy the `sha-<40 hex>` tags into `app_environm
    pwsh code/infra/scripts/identity/Initialize-Identity.ps1 -Environment int
    ```
    Copy the printed values into `app_environment.identity`. Store the secret in `MANAGEMENT_SIGNIN_SECRET`
-   in the two `app_environment` GitHub environments, then delete `code/.local/identity/int/`.
+   in the GitHub environment `int`, then delete `code/.local/identity/int/`.
 5. Review and record the settings fingerprint. Put the nonsecret management settings of the planned deployment
    into a JSON file and run
    ```powershell

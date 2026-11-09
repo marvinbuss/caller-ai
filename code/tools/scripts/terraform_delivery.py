@@ -211,8 +211,7 @@ def require_context(
             or values.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
             or values.get("GITHUB_REPOSITORY") != "marvinbuss/caller-ai"
             or values.get("GITHUB_REF") != "refs/heads/main"
-            or values.get("TF_DEPLOYMENT_ENVIRONMENT")
-            != f"{inputs.environment}-terraform-{inputs.stack.replace('_', '-')}-{operation}"
+            or values.get("TF_DEPLOYMENT_ENVIRONMENT") != inputs.environment
             or not values.get("ACTIONS_ID_TOKEN_REQUEST_URL")
             or not values.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
             or not values.get("GITHUB_TOKEN")
