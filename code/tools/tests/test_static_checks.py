@@ -626,6 +626,19 @@ def test_safe_file_passes_and_missing_file_fails(tmp_path: Path) -> None:
     assert invoke("check_secrets.py", str(tmp_path / "missing.py")).returncode == 1
 
 
+def test_only_the_reviewed_fingerprint_digest_is_exempt(tmp_path: Path) -> None:
+    digest = secrets.token_hex(32)
+    reviewed = tmp_path / "reviewed.json"
+    reviewed.write_text(
+        f'{{\n  "reviewed_fingerprint": "{digest}",\n  "x": 1\n}}\n', encoding="utf-8"
+    )
+    assert invoke("check_secrets.py", str(reviewed)).returncode == 0
+    other = tmp_path / "other.json"
+    other.write_text(f'{{\n  "signing_value": "{digest}",\n  "x": 1\n}}\n', encoding="utf-8")
+    result = invoke("check_secrets.py", str(other))
+    assert result.returncode == 1 and digest not in result.stdout + result.stderr
+
+
 def test_workflow_has_unprivileged_native_jobs() -> None:
     import re
 

@@ -10,6 +10,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The reviewed settings fingerprint is a public SHA-256 digest that the app compares at start.
+REVIEWED_FINGERPRINT_LINE = r'^\s*"reviewed_fingerprint": "[0-9a-f]{64}",?$'
+
 
 def main() -> int:
     if not sys.argv[1:] or not all(Path(name).is_file() for name in sys.argv[1:]):
@@ -22,6 +25,8 @@ def main() -> int:
             "detect_secrets.pre_commit_hook",
             "--no-verify",
             "--json",
+            "--exclude-lines",
+            REVIEWED_FINGERPRINT_LINE,
             *sys.argv[1:],
         ],
         capture_output=True,
