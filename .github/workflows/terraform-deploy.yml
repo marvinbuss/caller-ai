@@ -23,6 +23,16 @@ on:
       runner_labels:
         type: string
         default: '["ubuntu-24.04"]'
+    # Callers pass these by name; a reusable workflow does not see environment secrets otherwise.
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      MANAGEMENT_SIGNIN_SECRET:
+        required: false
 
 permissions:
   contents: read
