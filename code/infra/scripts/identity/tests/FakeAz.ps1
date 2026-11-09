@@ -9,6 +9,12 @@ function Out-Json { param($Value) ConvertTo-Json -InputObject $Value -Depth 30 -
 function Get-Option { param([string] $Name) $i = [array]::IndexOf($arguments, $Name); if ($i -ge 0 -and $i + 1 -lt $arguments.Count) { return $arguments[$i + 1] } }
 function Fail { exit 1 }
 function New-Id { [guid]::NewGuid().ToString() }
+# az.cmd drops the quotes of inline JSON on Windows, so only a body file (@path) is accepted.
+function Read-Body {
+    $raw = Get-Option '--body'
+    if (-not $raw -or -not $raw.StartsWith('@')) { Fail }
+    Get-Content -LiteralPath $raw.Substring(1) -Raw | ConvertFrom-Json -AsHashtable -Depth 20
+}
 
 $verb = ($arguments | Where-Object { $_ -notlike '-*' } | Select-Object -First 4) -join ' '
 $command = "$($arguments[0]) $($arguments[1]) $($arguments[2])".Trim()
@@ -87,7 +93,7 @@ switch -Regex ($command) {
         if ($method -eq 'patch' -and $url -match '/v1\.0/applications/([^/]+)$') {
             $app = $state.apps | Where-Object { $_.id -eq $Matches[1] } | Select-Object -First 1
             if (-not $app) { Fail }
-            $body = (Get-Option '--body') | ConvertFrom-Json -AsHashtable -Depth 20
+            $body = Read-Body
             if ($body.api) { $app.api = $body.api }
             Save-State; exit 0
         }
@@ -96,7 +102,7 @@ switch -Regex ($command) {
             if ($method -eq 'get') {
                 Out-Json @{ value = @($state.assignments | Where-Object { $_.resourceId -eq $resource }) }; exit 0
             }
-            $body = (Get-Option '--body') | ConvertFrom-Json -AsHashtable
+            $body = Read-Body
             $state.assignments += @{ principalId = $body.principalId; resourceId = $resource; appRoleId = $body.appRoleId }
             Save-State; Out-Json @{ id = New-Id }; exit 0
         }

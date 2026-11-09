@@ -168,6 +168,18 @@ function Test-Preflight {
     return [pscustomobject]@{ Group = $group; Deployment = $deployment }
 }
 
+function Invoke-GraphWrite {
+    # az.cmd strips the quotes of inline JSON on Windows, so the body always goes through a file.
+    param([string] $Method, [string] $Url, $Body)
+    $file = Join-Path ([System.IO.Path]::GetTempPath()) ('caller-graph-' + [guid]::NewGuid().ToString('N') + '.json')
+    try {
+        $Body | ConvertTo-Json -Depth 20 -Compress | Set-Content -LiteralPath $file -Encoding utf8NoBOM
+        Invoke-Az -Arguments @('rest', '--method', $Method, '--url', $Url, '--headers', 'Content-Type=application/json',
+            '--body', "@$file", '--output', 'json') -Raw | Out-Null
+    }
+    finally { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+}
+
 function Get-RoleAssignments {
     param([string] $ResourceId)
     $result = Invoke-Az -Arguments @('rest', '--method', 'get', '--url',
@@ -187,10 +199,8 @@ function Set-RoleAssignment {
     }
     Write-Change "assign $Description"
     if ($script:Preview) { return }
-    $body = @{ principalId = $PrincipalId; resourceId = $ResourceId; appRoleId = $RoleId } | ConvertTo-Json -Compress
-    Invoke-Az -Arguments @('rest', '--method', 'post', '--url',
-        "https://graph.microsoft.com/v1.0/servicePrincipals/$ResourceId/appRoleAssignedTo",
-        '--headers', 'Content-Type=application/json', '--body', $body, '--output', 'json') | Out-Null
+    Invoke-GraphWrite -Method 'post' -Url "https://graph.microsoft.com/v1.0/servicePrincipals/$ResourceId/appRoleAssignedTo" `
+        -Body @{ principalId = $PrincipalId; resourceId = $ResourceId; appRoleId = $RoleId }
 }
 
 function Set-OwnerOnlyAccess {
@@ -219,9 +229,7 @@ function Set-AccessTokenVersion {
         # `az ad app update --set api...` fails on app registrations, so patch Graph with the whole api object.
         $api = if ($current.api) { $current.api } else { [pscustomobject]@{} }
         $api | Add-Member -NotePropertyName requestedAccessTokenVersion -NotePropertyValue 2 -Force
-        $body = @{ api = $api } | ConvertTo-Json -Depth 20 -Compress
-        Invoke-Az -Arguments @('rest', '--method', 'patch', '--url', "https://graph.microsoft.com/v1.0/applications/$($current.id)",
-            '--headers', 'Content-Type=application/json', '--body', $body) -Raw | Out-Null
+        Invoke-GraphWrite -Method 'patch' -Url "https://graph.microsoft.com/v1.0/applications/$($current.id)" -Body @{ api = $api }
     }
 }
 
