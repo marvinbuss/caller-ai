@@ -97,3 +97,18 @@ def test_close_releases_both_clients_once(clients: AzureClients) -> None:
     asyncio.run(clients.close())
     asyncio.run(clients.close())
     assert clients._cosmos.closed == 1 and clients.credential.closed == 1
+
+
+def test_the_real_clients_construct_with_their_async_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name, value in complete().items():
+        monkeypatch.setenv(name, value)
+    live = Settings().live()
+
+    async def construct() -> None:
+        clients = AzureClients(live)
+        clients.container("configuration")
+        await clients.close()
+
+    asyncio.run(construct())

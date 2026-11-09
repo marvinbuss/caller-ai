@@ -16,6 +16,7 @@ custom code is retained. Add a row when a dependency is added or custom code rep
 | WebSocket client/server | `websockets` (also used by the SDK and by tests) | Declared directly (`>=15,<17`) because the SDK `realtime` extra pins `<16` and the repository runs 16. |
 | Cosmos DB | `azure-cosmos` | Authority container and text history container. |
 | Azure credentials | `azure-identity` | Managed identity and workload identity. |
+| Async HTTP transport for the Azure SDK | `aiohttp` | Required by `azure.identity.aio` and `azure.cosmos.aio`; without it the clients cannot be constructed and the start fails. azure-core's requests-based async transport does not work with the Cosmos client. |
 | Permit and token verification | `PyJWT[crypto]` | Standard JWT library. |
 | JSON schema checks | `jsonschema` | Capability argument validation. |
 | Telemetry | OpenTelemetry API and SDK | Content-free events and metrics. |
@@ -30,6 +31,7 @@ custom code is retained. Add a row when a dependency is added or custom code rep
 | Capability tools | `mcp` | Official MCP client for approved tool calls. |
 | Backend upstream socket | `websockets` | See the decision below. |
 | Cosmos DB and credentials | `azure-cosmos`, `azure-identity` | Configuration store and managed identity. |
+| Async HTTP transport for the Azure SDK | `aiohttp` | Same reason as for the backend. |
 
 ### Management upstream `websockets` usage
 

@@ -56,7 +56,7 @@ class RuntimeOptions(Metadata):
     management_endpoint: str
     management_audience: str
     text_endpoint: str
-    text_deployment: Identifier
+    text_deployment: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
     live_endpoint: str
     approved_hosts: frozenset[str]
     manager_issuer: str

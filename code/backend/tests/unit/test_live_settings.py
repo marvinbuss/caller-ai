@@ -70,6 +70,11 @@ def test_live_startup_accepts_a_complete_set(monkeypatch: pytest.MonkeyPatch) ->
     load(monkeypatch, complete()).validate_startup()
 
 
+def test_a_deployment_name_may_contain_dots(monkeypatch: pytest.MonkeyPatch) -> None:
+    values = {**complete(), "CALLER_TEXT_DEPLOYMENT": "gpt-6.1-sol"}
+    assert load(monkeypatch, values).live().text_deployment == "gpt-6.1-sol"
+
+
 def test_local_mode_needs_no_other_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = load(monkeypatch, {})
     settings.validate_startup()
