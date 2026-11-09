@@ -216,7 +216,12 @@ function Set-AccessTokenVersion {
     if ($current.api -and $current.api.requestedAccessTokenVersion -eq 2) { Write-Host "Unchanged: access token version of $Name"; return }
     Write-Change "set the access token version 2 of $Name"
     if (-not $script:Preview) {
-        Invoke-Az -Arguments @('ad', 'app', 'update', '--id', $App.appId, '--set', 'api.requestedAccessTokenVersion=2') -Raw | Out-Null
+        # `az ad app update --set api...` fails on app registrations, so patch Graph with the whole api object.
+        $api = if ($current.api) { $current.api } else { [pscustomobject]@{} }
+        $api | Add-Member -NotePropertyName requestedAccessTokenVersion -NotePropertyValue 2 -Force
+        $body = @{ api = $api } | ConvertTo-Json -Depth 20 -Compress
+        Invoke-Az -Arguments @('rest', '--method', 'patch', '--url', "https://graph.microsoft.com/v1.0/applications/$($current.id)",
+            '--headers', 'Content-Type=application/json', '--body', $body) -Raw | Out-Null
     }
 }
 

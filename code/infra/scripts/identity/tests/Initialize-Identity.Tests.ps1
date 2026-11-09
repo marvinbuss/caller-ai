@@ -4,7 +4,7 @@ BeforeAll {
     $script:Script = (Resolve-Path (Join-Path $PSScriptRoot '../Initialize-Identity.ps1')).Path
     $script:Fake = (Resolve-Path (Join-Path $PSScriptRoot 'FakeAz.ps1')).Path
     $script:RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../../../..')).Path
-    $script:Mutations = 'group create|identity create|ad app create|ad app update|ad sp create|credential reset|--method post'
+    $script:Mutations = 'group create|identity create|ad app create|ad app update|ad sp create|credential reset|--method (post|patch)'
 
     function New-Case {
         $root = Join-Path ([System.IO.Path]::GetTempPath()) ('identity-test-' + [guid]::NewGuid().ToString('N'))
@@ -89,6 +89,8 @@ Describe 'Initialize-Identity registration phase' {
         $runtimeApp = Get-App $script:Case 'caller-int-runtime'
         @($management.appRoles | ForEach-Object { $_.value }) | Should -Be @('Configuration.Manager', 'Configuration.Tester', 'Runtime.Caller')
         @($runtimeApp.appRoles | ForEach-Object { $_.value }) | Should -Be @('Management.Caller')
+        $management.api.requestedAccessTokenVersion | Should -Be 2
+        $runtimeApp.api.requestedAccessTokenVersion | Should -Be 2
         $state.servicePrincipals.Keys | Should -Contain $management.appId
         $state.servicePrincipals.Keys | Should -Contain $runtimeApp.appId
         $result.Output | Should -Match "management_app_client_id = $($management.appId)"

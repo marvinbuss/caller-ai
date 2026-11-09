@@ -55,7 +55,8 @@ switch -Regex ($command) {
         if (-not $app) { Fail }
         $roles = Get-Option '--app-roles'
         if ($roles) { $app.appRoles = @(Get-Content -LiteralPath $roles.TrimStart('@') -Raw | ConvertFrom-Json -AsHashtable -Depth 20) }
-        if ((Get-Option '--set') -eq 'api.requestedAccessTokenVersion=2') { $app.api = @{ requestedAccessTokenVersion = 2 } }
+        # The real CLI rejects generic --set on app registrations ("Couldn't find 'api' in ''").
+        if (Get-Option '--set') { Fail }
         $uris = Get-Option '--identifier-uris'
         if ($uris) { $app.identifierUris = @($uris) }
         $index = [array]::IndexOf($arguments, '--web-redirect-uris')
@@ -83,6 +84,13 @@ switch -Regex ($command) {
         $method = (Get-Option '--method')
         $url = (Get-Option '--url')
         if ($url -like '*transitiveMemberOf*') { Out-Json @{ value = @($state.directoryRoles | ForEach-Object { @{ displayName = $_ } }) }; exit 0 }
+        if ($method -eq 'patch' -and $url -match '/v1\.0/applications/([^/]+)$') {
+            $app = $state.apps | Where-Object { $_.id -eq $Matches[1] } | Select-Object -First 1
+            if (-not $app) { Fail }
+            $body = (Get-Option '--body') | ConvertFrom-Json -AsHashtable -Depth 20
+            if ($body.api) { $app.api = $body.api }
+            Save-State; exit 0
+        }
         if ($url -match '/servicePrincipals/([^/]+)/appRoleAssignedTo') {
             $resource = $Matches[1]
             if ($method -eq 'get') {
