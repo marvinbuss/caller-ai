@@ -97,7 +97,7 @@ variables {
       review_reference        = "int-live-review-1"
       reviewed_fingerprint    = "replace-after-review"
       available_live_sessions = 5
-      max_input_tokens        = 8000
+      max_input_tokens        = 16384
       max_output_tokens       = 1024
       voice                   = "replace-voice"
       live_region             = "swedencentral"
@@ -333,10 +333,82 @@ run "invalid_live_region_is_rejected_naming_the_setting" {
         review_reference        = "int-live-review-1"
         reviewed_fingerprint    = "replace-after-review"
         available_live_sessions = 5
-        max_input_tokens        = 8000
+        max_input_tokens        = 16384
         max_output_tokens       = 1024
         voice                   = "replace-voice"
         live_region             = "westus"
+      }
+      monitoring = {
+        workspace_name = "log-caller-int"
+        retention_days = 30
+        daily_cap_gb   = 1
+        action_group = {
+          name            = "ag-caller-int"
+          short_name      = "callerint"
+          email_receivers = { operations = "operations@example.invalid" }
+        }
+        alerts = {
+          owner          = "platform-team"
+          runbook_url    = "https://example.invalid/docs/runbooks/monitoring.md"
+          http_5xx_count = 5
+          restart_count  = 3
+          cpu_percent    = 80
+          memory_percent = 80
+        }
+      }
+    }
+  }
+
+  expect_failures = [var.app_environment]
+}
+
+# The runtime refuses every model request of a community agent (4 policy tools) below this limit.
+run "an_input_token_limit_too_small_for_community_agents_is_rejected" {
+  command = plan
+
+  variables {
+    app_environment = {
+      resource_group_name = "rg-caller-int-apps"
+      container_apps = {
+        environment_name = "cae-caller-int"
+        runtime = {
+          app_name = "ca-caller-int-runtime"
+          image    = { repository = "ghcr.io/marvinbuss/caller-ai/runtime", tag = "sha-0000000000000000000000000000000000000000" }
+        }
+        management = {
+          app_name = "ca-caller-int-management"
+          image    = { repository = "ghcr.io/marvinbuss/caller-ai/management", tag = "sha-0000000000000000000000000000000000000000" }
+        }
+      }
+      identity = {
+        resource_group_name      = "rg-caller-int-identity"
+        management_app_client_id = "00000000-0000-4000-8000-000000000005"
+        runtime_app_client_id    = "00000000-0000-4000-8000-000000000008"
+        runtime_identity_name    = "id-caller-int-runtime"
+        roles                    = { editor = "Configuration.Manager", tester = "Configuration.Tester", runtime = "Runtime.Caller", management = "Management.Caller" }
+        user_group_id            = "00000000-0000-4000-8000-000000000007"
+      }
+      model = {
+        account_name = "aif-caller-int"
+        text         = { deployment = "gpt-6.1-sol", model = "gpt-6.1-sol", version = "2026-09-29", sku = "GlobalStandard", capacity = 50 }
+        live         = { deployment = "gpt-live-1", model = "gpt-live-1", version = "2026-09-10", sku = "GlobalStandard", capacity = 10 }
+      }
+      data_store = {
+        name                    = "cosmos-caller-int"
+        configuration_audit_ttl = 86400
+        call_session_ttl        = 86400
+        call_audit_ttl          = 86400
+      }
+      secret_store = { name = "kv-caller-int" }
+      signing_key  = { key_id = "int-1" }
+      application = {
+        review_reference        = "int-live-review-1"
+        reviewed_fingerprint    = "replace-after-review"
+        available_live_sessions = 5
+        max_input_tokens        = 8000
+        max_output_tokens       = 1024
+        voice                   = "replace-voice"
+        live_region             = "swedencentral"
       }
       monitoring = {
         workspace_name = "log-caller-int"

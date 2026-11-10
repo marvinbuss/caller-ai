@@ -184,6 +184,12 @@ variable "app_environment" {
     error_message = "app_environment.application.available_live_sessions must be between 5 and 10000."
   }
 
+  # The runtime reserves 4096 tokens plus 1024 per tool; community agents carry at least four tools.
+  validation {
+    condition     = var.app_environment.application.max_input_tokens >= 16384 && var.app_environment.application.max_input_tokens <= 131072
+    error_message = "app_environment.application.max_input_tokens must be between 16384 and 131072; smaller limits refuse every community agent's model request."
+  }
+
   validation {
     condition = (
       length(var.app_environment.signing_key.previous_public_keys) <= 3 &&

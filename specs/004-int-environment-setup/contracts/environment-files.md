@@ -76,7 +76,7 @@ deployment declares exactly those two variables, plus the sensitive input in the
     "data_store": { "name": "cosmos-caller-int", "backup_tier": "Continuous7Days", "configuration_audit_ttl": 86400, "call_session_ttl": 86400, "call_audit_ttl": 86400 },
     "secret_store": { "name": "kv-caller-int", "soft_delete_days": 30 },
     "signing_key": { "key_id": "int-1" },
-    "application": { "review_reference": "int-live-review-1", "reviewed_fingerprint": "replace-after-review", "available_live_sessions": 5, "max_input_tokens": 8000, "max_output_tokens": 1024, "voice": "replace-voice", "live_region": "swedencentral" },
+    "application": { "review_reference": "int-live-review-1", "reviewed_fingerprint": "replace-after-review", "available_live_sessions": 5, "max_input_tokens": 16384, "max_output_tokens": 1024, "voice": "replace-voice", "live_region": "swedencentral" },
     "monitoring": {
       "workspace_name": "log-caller-int",
       "retention_days": 30,
