@@ -342,6 +342,15 @@ real `terraform validate` or first apply.
     connection to the runtime used a 1-second pong deadline with one queued message, the setting that dropped the
     Live socket before; it is now 5 s. An unexpected relay failure now also logs its error class and close codes
     (`test.relay.failure`), and no content, so a remaining cause can be named from the next test.
+  - The next test logged `test.relay.failure` with `BackendRefusal`: the runtime itself ended the session with an
+    error. The runtime's once-per-second authority watcher gave each check (authority read plus workload-token
+    verification) only 0.1 s. The second session failed at 21:41:05.9, exactly 300 s after the signing keys were
+    cached at 21:36:05.8: refreshing them from `login.microsoftonline.com` inside that 0.1 s could not finish, so
+    the session ended as `authority_unavailable`. A slow read under real-time audio load can do the same. The
+    contract bounds the watcher "within one second", so a check now has 0.9 s and the next check still starts one
+    second after the previous one began; a blocked check still fails closed within the second. Probes ruled out
+    the other suspects: a Live connection read at playback pace survived 50 s with and without keepalive, and a
+    three-minute, three-turn Live conversation produced no event the validator rejects.
 
 ## R-15 Environment check and the functional journey
 
