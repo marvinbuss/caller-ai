@@ -65,12 +65,15 @@ def rewrite(root: Path, baked: str, target: str) -> int:
 
 
 def apply(root: Path = CLIENT, baked_file: Path = BAKED, target: str | None = None) -> int:
-    if target is None:
-        target = os.environ.get("API_URL") or os.environ.get("CALLER_PUBLIC_ORIGIN", "")
-    if not target or not baked_file.exists():
+    if not baked_file.exists():
         return 0
     baked = baked_file.read_text(encoding="utf-8").strip()
-    if target == baked:
+    if target is None:
+        # The image sets API_URL to the build placeholder; only a real address counts.
+        configured = os.environ.get("API_URL", "")
+        target = configured if configured and configured != baked else ""
+        target = target or os.environ.get("CALLER_PUBLIC_ORIGIN", "")
+    if not target or target == baked:
         return 0
     return rewrite(root, baked, target)
 

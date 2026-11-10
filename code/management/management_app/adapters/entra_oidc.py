@@ -97,8 +97,9 @@ class MsalCodeFlow:
     async def begin(self, state: str) -> LoginFlow:
         def prepare() -> LoginFlow:
             application = self.factory()
+            # Entra refuses an app's token for itself unless the resource is its GUID (AADSTS90009).
             flow = application.initiate_auth_code_flow(
-                [f"api://{self.policy.api_audience}/{self.policy.manager_scope}"],
+                [f"{self.policy.api_audience}/{self.policy.manager_scope}"],
                 redirect_uri=self.policy.origin + "/auth/callback",
                 state=state,
                 response_mode="form_post",

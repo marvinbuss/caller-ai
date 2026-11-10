@@ -101,6 +101,10 @@ real `terraform validate` or first apply.
     `api://<client id>/.default`. Either the policy and flow accept a single registration, or a second
     registration is created. **Decision (owner, 2026-11-05): one registration.** T083 changes the policy and the
     sign-in flow to accept `api_audience == client_id` and the full `CALLER_MANAGER_SCOPE`; the contract and tests follow.
+  - **Live finding (2026-11-10)**: with one registration the sign-in requests a token for the app itself, and Entra
+    refuses `api://<client id>/.default` for that (`AADSTS90009`: only the GUID-based identifier is supported). Entra
+    then posts an error without a code to `/auth/callback`, which answers 401. The sign-in flow now requests
+    `<client id>/.default`; `CALLER_MANAGER_SCOPE` keeps the `api://` form, which the settings check still validates.
 
 ## R-05 Permit signing key pair
 
@@ -228,6 +232,9 @@ real `terraform validate` or first apply.
   through `python -m management_app.start`, which rewrites the placeholder to `API_URL` (or `CALLER_PUBLIC_ORIGIN`),
   which Terraform sets to the management app's own origin. The container test failed before the change and passes
   after it.
+- **Live finding (2026-11-10)**: the image itself sets `API_URL` to the placeholder, so on `int` the start script
+  took the placeholder as the target, rewrote nothing, and the browser tried `ws://caller-api-origin.invalid`. An
+  `API_URL` equal to the baked placeholder is now ignored, and `CALLER_PUBLIC_ORIGIN` applies.
 - **Constraint**: Reflex must stay the frontend framework (Principle V).
 
 ## R-13 Data store and credentials

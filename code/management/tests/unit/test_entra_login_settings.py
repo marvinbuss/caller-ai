@@ -71,4 +71,5 @@ def test_one_registration_serves_sign_in_and_the_api_with_the_default_scope() ->
     )
     flow = MsalCodeFlow(policy=single, application_factory=lambda: Application(calls))
     asyncio.run(flow.begin("fixture-state"))
-    assert calls[0]["scopes"] == [f"api://{CLIENT}/.default"]
+    # Entra refuses an app's token for itself unless the resource is its GUID (AADSTS90009).
+    assert calls[0]["scopes"] == [f"{CLIENT}/.default"]
