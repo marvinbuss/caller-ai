@@ -270,9 +270,12 @@ real `terraform validate` or first apply.
   chosen deployment type, and the region rule in `RuntimeOptions.live_region` (one of four regions). A
   successful apply is the evidence of regional support and quota (Principle I).
 - **Live findings (2026-11-10)**:
-  - `gpt-6.1-sol` rejects `max_tokens` with 400 `unsupported_parameter` and accepts `max_completion_tokens`, so
-    the text adapter now sends the output limit as `max_completion_tokens`.
-  - That 400 left the attempt unsettled, so the failed test's slot stayed occupied and every later test of the
+  - On Chat Completions, `gpt-6.1-sol` rejects `max_tokens` (400 `unsupported_parameter`) and refuses function
+    tools while reasoning is on (400: "use /v1/responses or set reasoning_effort to 'none'"; `none` is itself
+    unsupported, only `low` to `xhigh`). Every agent carries policy tools, so the text adapter now uses the
+    Responses API (`/openai/v1/responses`, `store=false`, `max_output_tokens`). A probe as the runtime identity
+    confirmed a streamed tool call and a follow-up turn with the returned items.
+  - The first 400 left the attempt unsettled, so the failed test's slot stayed occupied and every later test of the
     same manager got `manager_busy` ("Work busy"). With the owner's approval:
     - a model attempt now settles when the provider answered with a 4xx status, a definite refusal that proves
       the request finished; 5xx answers, timeouts, connection errors and cancellations stay uncertain, as

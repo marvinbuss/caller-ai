@@ -1,4 +1,4 @@
-"""Foundry Chat Completions model for text turns, wrapped so the application owns every dispatch.
+"""Foundry Responses API model for text turns, wrapped so the application owns every dispatch.
 
 The adapter gives the Agents SDK a model whose calls go through admission (an attempt is recorded
 before the request and settled after), use a managed-identity token, and travel over a bounded
@@ -26,7 +26,7 @@ from agents.agent_output import AgentOutputSchemaBase
 from agents.handoffs import Handoff
 from agents.items import ModelResponse, TResponseInputItem, TResponseStreamEvent
 from agents.models.interface import Model, ModelTracing
-from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from agents.models.openai_responses import OpenAIResponsesModel
 from agents.tool import FunctionTool, Tool
 from azure.core.credentials import AccessToken
 from openai import APIStatusError, AsyncOpenAI
@@ -164,7 +164,7 @@ class FoundryTextAdapter:
         self._disposal_unknown = False
         self.binding_hash = hashlib.sha256(
             json.dumps(
-                {"endpoint": self.endpoint, "deployment": deployment, "mode": "chat_completions"},
+                {"endpoint": self.endpoint, "deployment": deployment, "mode": "responses"},
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode("utf-8")
@@ -272,13 +272,7 @@ class FoundryTextAdapter:
             store=False,
             parallel_tool_calls=False,
             include_usage=True,
-            # Reasoning deployments reject max_tokens; the SDK only sets it, so pass the limit here.
-            max_tokens=None,
-            extra_args={
-                "max_completion_tokens": min(
-                    settings.max_tokens or self.max_output_tokens, self.max_output_tokens
-                )
-            },
+            max_tokens=min(settings.max_tokens or self.max_output_tokens, self.max_output_tokens),
             prompt_cache_retention=None,
             preserve_raw_usage=False,
         )
@@ -341,11 +335,8 @@ class FoundryTextAdapter:
                     timeout=remaining,
                 )
                 self._clients.add(client)
-                delegate = OpenAIChatCompletionsModel(
-                    model=self.deployment,
-                    openai_client=client,
-                    strict_feature_validation=True,
-                )
+                # Reasoning deployments accept function tools only on the Responses API.
+                delegate = OpenAIResponsesModel(model=self.deployment, openai_client=client)
                 intent = await self.admission.begin_attempt(
                     slot.session_id,
                     slot.owner_epoch,
@@ -447,9 +438,7 @@ class FoundryTextAdapter:
                     timeout=remaining,
                 )
                 self._clients.add(client)
-                delegate = OpenAIChatCompletionsModel(
-                    model=self.deployment, openai_client=client, strict_feature_validation=True
-                )
+                delegate = OpenAIResponsesModel(model=self.deployment, openai_client=client)
                 intent = await self.admission.begin_attempt(
                     slot.session_id,
                     slot.owner_epoch,

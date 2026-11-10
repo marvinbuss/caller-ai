@@ -69,7 +69,7 @@ flowchart LR
     Runtime --> History[(Text history, owner-keyed)]
     Runtime --> Authority[Runtime-owned Strong CAS admission authority]
     Runtime --> Registry[One pinned configured Agents registry]
-    Registry --> Text[Explicit Foundry Chat Completions]
+    Registry --> Text[Explicit Foundry Responses API]
     Runtime --> Live[Foundry GPT-Live client delegation]
     Live --> Registry
     Registry --> Capabilities[Authenticated management capability gateway]

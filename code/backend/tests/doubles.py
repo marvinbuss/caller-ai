@@ -76,3 +76,74 @@ def parse_sse(body: str) -> list[tuple[str, dict]]:
         lines = dict(line.split(": ", 1) for line in block.splitlines())
         events.append((lines["event"], json.loads(lines["data"])))
     return events
+
+
+def model_reply(text: str | None = None, call: tuple[str, dict] | None = None) -> dict:
+    """A completed Responses API object with either a text message or one function call."""
+    if call is not None:
+        name, arguments = call
+        output = [
+            {
+                "type": "function_call",
+                "id": "fc-fixture",
+                "call_id": "call-fixture-" + name,
+                "name": name,
+                "arguments": json.dumps(arguments),
+                "status": "completed",
+            }
+        ]
+    else:
+        output = [
+            {
+                "type": "message",
+                "id": "msg-fixture",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": text or "", "annotations": []}],
+            }
+        ]
+    return {
+        "id": "resp-fixture",
+        "object": "response",
+        "created_at": 1793318400,
+        "model": "reasoning-fixture",
+        "status": "completed",
+        "output": output,
+        "parallel_tool_calls": False,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+            "input_tokens": 8,
+            "output_tokens": 3,
+            "total_tokens": 11,
+            "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+            "output_tokens_details": {"reasoning_tokens": 0},
+        },
+    }
+
+
+def model_stream(text: str | None = None, call: tuple[str, dict] | None = None) -> list[bytes]:
+    """The server-sent events of a streamed Responses API reply."""
+    reply = model_reply(text, call)
+    events: list[dict] = [{"type": "response.created", "response": {**reply, "output": []}}]
+    if call is None:
+        events.append(
+            {
+                "type": "response.output_text.delta",
+                "item_id": "msg-fixture",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": text or "",
+                "logprobs": [],
+            }
+        )
+    events.append({"type": "response.completed", "response": reply})
+    return [
+        ("data: " + json.dumps({**event, "sequence_number": number}) + "\n\n").encode()
+        for number, event in enumerate(events)
+    ]
+
+
+def tool_names(body: dict) -> set[str]:
+    """Names of the function tools in a Responses API request body."""
+    return {tool["name"] for tool in body.get("tools", []) if tool.get("type") == "function"}
