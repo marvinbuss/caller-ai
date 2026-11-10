@@ -472,6 +472,11 @@ def test_reusable_workflows_keep_plan_apply_and_bootstrap_protected():
     assert set(workflow["on"]) == {"workflow_call"}
     assert workflow["on"]["workflow_call"]["inputs"]["apply_changes"]["default"] == "false"
     assert set(workflow["jobs"]) == {"plan", "apply"}
+    # An empty plan is still applied, so the environment check runs on a repeat run.
+    apply_condition = workflow["jobs"]["apply"]["if"]
+    assert "inputs.apply_changes" in apply_condition
+    assert "needs.plan.result == 'success'" in apply_condition
+    assert "outputs.changes" not in apply_condition
     assert "needs.plan.outputs.plan_sha256" in source
     assert "--expected-plan-sha256" in source
     assert "refs/heads/main" in source and "workflow_dispatch" in source
