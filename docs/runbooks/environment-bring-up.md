@@ -11,7 +11,7 @@ How to bring up, verify, change, recover and remove an environment such as `int`
 | Image publishing workflow | Delivered; first publication and the public package setting are manual |
 | Identity script | Delivered and tested with Pester against a fake Azure CLI; not yet run against a real directory |
 | Application live mode | Delivered and tested with fake clients: settings validation, live composition of both apps, the reviewed fingerprint and the frontend start address (see [Application live mode](application-live-mode.md)); not yet run against Azure |
-| Functional journey in the check (`--functional`) | Not delivered yet |
+| Functional journey in the check (`--functional`) | Delivered; on `int` the probes, sign-in redirect, configuration read and console ticket pass. Text and speech sessions wait for a published configuration with an enabled community (step 5) |
 | Live acceptance on `int` | Not run. Results go to [the acceptance record](../acceptance/int-environment.md) |
 
 ## Prerequisites
@@ -115,6 +115,13 @@ uv run --project code/tools --locked python code/tools/scripts/check_environment
 ```
 
 The manifest is the `environment_manifest` output of the `app_environment` root.
+
+The workflow's check also runs the functional journey (`--functional`). On a new environment it then fails at
+`configuration-read: no_enabled_community`: the management app starts with the protected Welcome, Routing and
+Goodbye agents only, and the runtime admits no test session until a business community is enabled. A member
+of the user group signs in to the management app, opens the configuration editor, adds a community with an
+entry agent, enables it and publishes. Then rerun `terraform-app-environment`; the plan has no changes, the
+apply step still runs, and the check repeats the journey.
 
 ## 6. Repeatability
 

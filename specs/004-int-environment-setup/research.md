@@ -334,6 +334,9 @@ real `terraform validate` or first apply.
 - **Decision**: `verify_terraform.py check` also runs a pinned Trivy `config` scan over `code/infra/terraform`
   and fails on HIGH or CRITICAL findings, with tests that a seeded misconfiguration fails.
 - **Rationale**: Principle VIII and FR-030 require security checks, and Trivy is already used for images.
+- **Where it runs**: the scanner is a Linux container image. The pre-commit hook, which `ci.py check` also runs on
+  the Windows runner, calls `verify_terraform.py check --no-scan`. The Linux `terraform` CI job always runs the full
+  check with the scan, so every change is still scanned.
 
 ## R-21 What gets removed
 

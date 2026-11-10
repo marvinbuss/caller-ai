@@ -612,11 +612,18 @@ def journey_read(context: Context, token: str) -> None:
         headers={"Authorization": f"Bearer {token}"},
     )
     try:
-        agents = response.json().get("agents")
+        document = response.json()
+        agents, communities = document.get("agents"), document.get("communities")
     except (ValueError, AttributeError):
-        agents = None
+        agents = communities = None
     if response.status_code != 200 or not isinstance(agents, list) or not agents:
         raise JourneyFailure(step, "read_refused")
+    # The runtime admits no test session until a published configuration enables a community.
+    if not isinstance(communities, list) or not any(
+        isinstance(community, dict) and community.get("enabled") is True
+        for community in communities
+    ):
+        raise JourneyFailure(step, "no_enabled_community")
 
 
 def journey_receive(socket: Any, step: str, deadline: float, clock: Callable[[], float]) -> Any:

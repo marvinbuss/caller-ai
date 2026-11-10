@@ -559,7 +559,15 @@ def management_http(**overrides):
                 return httpx.Response(overrides.get("anonymous", 401))
             if "read" in overrides:
                 return httpx.Response(overrides["read"])
-            return httpx.Response(200, json={"agents": [{"agentId": "a"}]})
+            return httpx.Response(
+                200,
+                json={
+                    "agents": [{"agentId": "a"}],
+                    "communities": overrides.get(
+                        "communities", [{"communityId": "c", "enabled": True}]
+                    ),
+                },
+            )
         if path == "/v1/console/tickets":
             if not authorized or "ticket" in overrides:
                 return httpx.Response(overrides.get("ticket", 403))
@@ -662,6 +670,12 @@ def test_a_missing_tester_token_fails_with_a_fixed_reason(case):
         ({"login": "https://evil.example.net/"}, "sign-in-redirect: no_redirect_to_sign_in"),
         ({"anonymous": 200}, "sign-in-redirect: anonymous_read_not_refused"),
         ({"read": 403}, "configuration-read: read_refused"),
+        # The runtime admits no test session until a business community is enabled.
+        ({"communities": []}, "configuration-read: no_enabled_community"),
+        (
+            {"communities": [{"communityId": "c", "enabled": False}]},
+            "configuration-read: no_enabled_community",
+        ),
         ({"ticket": 403}, "text-conversation: ticket_refused"),
     ],
 )

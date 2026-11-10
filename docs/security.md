@@ -34,6 +34,15 @@ The current minimatch exception was checked against the configured approved mirr
 11.0.1 is still absent. UTC verification/expiry values are recorded in the YAML; the initial
 window ends **2026-11-09T23:42:34Z**. The host UTC date was still November 2 when checked.
 
+On 2026-11-10 the window had expired and CI failed closed. Revalidation found the fixed 11.0.1
+on the approved mirror (`gap_confirmed=false`). Following the procedure below, the fix was tried as a
+Reflex-persisted `minimatch: 11.0.1` override: the frozen Bun install passed, but importing
+`@react-router/fs-routes` failed because 11.x no longer exports `makeRe`. Every published
+`@react-router/fs-routes` release (8.4.0 to the latest 8.5.1) still requires `^10.2.5`, and the advisory
+has no 10.x fix (affected 7.0.0 to <11.0.1). The override was not committed. The owner renewed the
+exception for a new seven-day window ending **2026-11-17T09:25:22Z**, with the reason updated. It is to
+be removed once `@react-router/fs-routes` accepts minimatch 11.
+
 Each entry must bind the exact ecosystem (`npm` or `PyPI`), package, installed version,
 advisory, fixed version, accountable owner, reason and UTC verification/expiry. No wildcard
 or version range is supported. Maximum approval duration is seven days; expired/future,

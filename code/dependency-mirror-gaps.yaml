@@ -6,6 +6,6 @@ exceptions:
     advisory: GHSA-g3hv-75wg-m249
     fixed_version: 11.0.1
     owner: project-owner
-    reason: Owner approved this temporary gap because the fixed release is absent from the approved mirror. Remove when available.
-    verified_at: '2026-11-02T23:42:34Z'
-    expires_at: '2026-11-09T23:42:34Z'
+    reason: Owner renewed on 2026-11-10. The fixed release 11.0.1 is now on the mirror but drops makeRe, which @react-router/fs-routes 8.4.0 to 8.5.1 (Reflex 0.10.0) imports; no 10.x fix exists. Remove when fs-routes supports minimatch 11.
+    verified_at: '2026-11-10T09:25:22Z'
+    expires_at: '2026-11-17T09:25:22Z'
