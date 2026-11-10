@@ -38,6 +38,8 @@ from caller_runtime.domain.conversation import (
 from caller_runtime.services.cleanup import CleanupReceiptVerifier
 
 OperationResult = TypeVar("OperationResult")
+# The contract allows media rechecks at most every second; frames arrive every 20 ms.
+MEDIA_RECHECK_SECONDS = 0.5
 
 
 class AdmissionError(RuntimeError):
@@ -85,6 +87,36 @@ class TestAdmissionService:
         self._pins: dict[str, RevisionSnapshot] = {}
         self._cleanup_verifier = cleanup_verifier
         self._dispatched: dict[tuple[str, ResourceKind], str] = {}
+        self._writes = 0
+        self._media: tuple[AuthoritySnapshot, float, int] | None = None
+        self._media_lock = asyncio.Lock()
+
+    async def _replace(
+        self, current: AuthoritySnapshot, candidate: TestAuthority, *, deadline: float
+    ) -> None:
+        self._writes += 1
+        self._media = None
+        try:
+            await self.repository.replace(current, candidate, deadline=deadline)
+        finally:
+            self._writes += 1
+
+    async def _media_snapshot(self) -> AuthoritySnapshot:
+        async with self._media_lock:
+            cached, tick = self._media, self._monotonic()
+            if (
+                cached is not None
+                and cached[2] == self._writes
+                and 0 <= tick - cached[1] < MEDIA_RECHECK_SECONDS
+            ):
+                return cached[0]
+            writes = self._writes
+            current = await self.repository.read(
+                deadline=min(self._deadline(), asyncio.get_running_loop().time() + 1)
+            )
+            if writes == self._writes:
+                self._media = (current, tick, writes)
+            return current
 
     def _now(self) -> datetime:
         try:
@@ -246,7 +278,7 @@ class TestAdmissionService:
                     document["slots"].append(slot.model_dump(mode="json", by_alias=True))
                 candidate = TestAuthority.model_validate_json(encoded(document))
                 try:
-                    await self.repository.replace(current, candidate, deadline=deadline)
+                    await self._replace(current, candidate, deadline=deadline)
                 except AuthorityConflict:
                     continue
                 except AuthorityUnavailable:
@@ -316,7 +348,7 @@ class TestAdmissionService:
                 ]
                 candidate = TestAuthority.model_validate_json(encoded(document))
                 try:
-                    await self.repository.replace(current, candidate, deadline=deadline)
+                    await self._replace(current, candidate, deadline=deadline)
                 except AuthorityConflict:
                     continue
                 except AuthorityUnavailable:
@@ -679,7 +711,7 @@ class TestAdmissionService:
                     for entry in document["slots"]
                 ]
                 try:
-                    await self.repository.replace(
+                    await self._replace(
                         current,
                         TestAuthority.model_validate_json(encoded(document)),
                         deadline=deadline,
@@ -762,7 +794,7 @@ class TestAdmissionService:
                         ]
                         candidate = TestAuthority.model_validate_json(encoded(document))
                         try:
-                            await self.repository.replace(current, candidate, deadline=deadline)
+                            await self._replace(current, candidate, deadline=deadline)
                         except AuthorityConflict:
                             continue
                         except AuthorityUnavailable:
@@ -801,7 +833,7 @@ class TestAdmissionService:
                         entry for entry in document["slots"] if entry["sessionId"] != session_id
                     ]
                     try:
-                        await self.repository.replace(
+                        await self._replace(
                             current,
                             TestAuthority.model_validate_json(encoded(document)),
                             deadline=deadline,
@@ -862,9 +894,7 @@ class TestAdmissionService:
         if session_id not in self._locks:
             raise AdmissionError("stale_owner")
         try:
-            current = await self.repository.read(
-                deadline=min(self._deadline(), asyncio.get_running_loop().time() + 1)
-            )
+            current = await self._media_snapshot()
             slot = self._owned(current, session_id, self.owner_id, owner_epoch)
             _, now = self._document(current)
             self._business(slot, now, None, media=True)

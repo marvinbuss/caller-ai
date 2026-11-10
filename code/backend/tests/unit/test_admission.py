@@ -254,6 +254,59 @@ def admission_case(authority_store, conversation_clock, runtime_revision_v2):
     return service, repository, container, conversation_clock, permit, cache
 
 
+def test_frame_rate_media_checks_share_one_authority_read_for_at_most_half_a_second(
+    admission_case,
+):
+    from caller_runtime.services.admission import AdmissionError
+
+    service, repository, container, clock, permit, cache = admission_case
+
+    def reads():
+        return sum(1 for call in container.calls if call[0] == "read")
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1, mode="speech"))
+        slot = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        before = reads()
+        # About 70 checks per second hit the 20-ms store on int; one read must serve them.
+        for _ in range(25):
+            await service.check_media(slot.session_id, slot.owner_epoch, generation=1)
+            clock.advance(0.015625)
+        assert reads() == before + 1
+        clock.advance(0.25)
+        await service.check_output(slot.session_id, slot.owner_epoch, generation=1)
+        assert reads() == before + 2
+        # A write by this service is seen by the next media check without waiting.
+        await service.mark_terminal(slot.session_id, slot.owner_epoch)
+        with pytest.raises(AdmissionError, match="^terminal$"):
+            await service.check_media(slot.session_id, slot.owner_epoch, generation=1)
+
+    asyncio.run(scenario())
+
+
+def test_media_checks_see_an_outside_authority_change_within_half_a_second(admission_case):
+    from caller_runtime.services.admission import AdmissionError
+
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1, mode="speech"))
+        slot = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        await service.check_media(slot.session_id, slot.owner_epoch, generation=1)
+        container.records["browser-test-authority-v1"]["slots"] = []
+        clock.advance(0.5)
+        with pytest.raises(AdmissionError, match="^stale_owner$"):
+            await service.check_media(slot.session_id, slot.owner_epoch, generation=1)
+
+    asyncio.run(scenario())
+
+
 def test_admission_one_actor_across_cookie_and_mode_and_single_use_nonce(admission_case):
     from caller_runtime.services.admission import AdmissionError
 
