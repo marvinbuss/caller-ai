@@ -255,10 +255,15 @@ def revision_state(context: Context, app: dict[str, Any]) -> tuple[bool, str]:
     state = (revision or {}).get("properties", {})
     healthy = state.get("healthState") == "Healthy" and state.get("runningState") in {
         "Running",
+        "RunningAtMaxScale",
         "Processing",
         None,
     }
-    return healthy, str(state.get("runningStateDetails") or state.get("healthState") or "unknown")
+    return healthy, str(
+        state.get("runningStateDetails")
+        or "/".join(str(state[key]) for key in ("healthState", "runningState") if key in state)
+        or "unknown"
+    )
 
 
 def fetch_revision(context: Context, app_id: str, revision: str) -> dict[str, Any] | None:

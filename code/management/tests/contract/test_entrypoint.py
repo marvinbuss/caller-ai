@@ -104,7 +104,28 @@ def test_local_mode_keeps_the_existing_shell(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_live_mode_returns_the_composing_application(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CALLER_MODE", "live")
-    assert isinstance(create_app_from_environment(), LiveManagementApplication)
+    application = create_app_from_environment()
+    assert isinstance(getattr(application, "__wrapped__", None), LiveManagementApplication)
+
+
+def test_live_mode_takes_the_scheme_from_the_ingress(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        seen.append(scope["scheme"])
+
+    monkeypatch.setenv("CALLER_MODE", "live")
+    monkeypatch.setattr("management_app.live.LiveManagementApplication", lambda settings: inner)
+    application = create_app_from_environment()
+    for kind, scheme in (("http", "http"), ("websocket", "ws")):
+        scope = {
+            "type": kind,
+            "scheme": scheme,
+            "client": ("100.100.0.7", 41000),
+            "headers": [(b"x-forwarded-proto", b"https"), (b"x-forwarded-for", b"203.0.113.9")],
+        }
+        asyncio.run(application(scope, None, None))
+    assert seen == ["https", "wss"]
 
 
 def test_the_image_starts_the_factory_entrypoint_through_the_start_script() -> None:

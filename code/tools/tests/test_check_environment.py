@@ -310,6 +310,24 @@ def test_revisions_must_be_healthy_within_five_minutes(case):
     assert module.revisions_healthy(build()).status == "pass"
 
 
+def test_a_healthy_revision_at_its_replica_limit_passes(case):
+    module, world, _graph, build = case
+    for key in (f"{RUNTIME_ID}/revisions/runtime--1", f"{MANAGEMENT_ID}/revisions/management--1"):
+        world[key]["properties"] = {"healthState": "Healthy", "runningState": "RunningAtMaxScale"}
+    assert module.revisions_healthy(build()).status == "pass"
+
+
+def test_a_stopped_revision_names_its_running_state(case):
+    module, world, _graph, build = case
+    world[f"{RUNTIME_ID}/revisions/runtime--1"]["properties"] = {
+        "healthState": "Healthy",
+        "runningState": "Stopped",
+    }
+    clock = iter(range(0, 10000, 100))
+    result = module.revisions_healthy(build(clock=lambda: next(clock)))
+    assert result.status == "fail" and "Stopped" in result.detail
+
+
 def test_images_running_names_the_application_and_version_on_a_failed_pull(case):
     module, world, _graph, build = case
     world[MANAGEMENT_ID]["properties"]["template"]["containers"][0]["image"] = "ghcr.io/x/m:sha-old"
