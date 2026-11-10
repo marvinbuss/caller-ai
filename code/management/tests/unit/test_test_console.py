@@ -119,6 +119,8 @@ def test_relay_connect_and_first_ready_share_original_signed_deadline():
         and options["max_queue"] == 1
         and options["write_limit"] == 12000
     )
+    # Reads pause while a browser send is pending, so a 1-s pong deadline dropped live sessions.
+    assert options["ping_interval"] == 20 and options["ping_timeout"] == 5
     assert options["additional_headers"]["Authorization"] == "Bearer synthetic-workload-token"
 
 
@@ -246,6 +248,57 @@ def build_active_relay_case():
 @pytest.fixture
 def active_relay_case():
     return build_active_relay_case()
+
+
+def test_unexpected_relay_failure_logs_only_its_class_and_close_codes(caplog):
+    from websockets.exceptions import ConnectionClosedError
+    from websockets.frames import Close
+
+    from management_app.observability import Telemetry
+
+    client, browser, runtime, permit, credentials, sent, displayed, clock, ticks, envelope = (
+        build_active_relay_case()
+    )
+    client._telemetry = Telemetry("management", "live")
+    ready = runtime.recv
+
+    async def recv():
+        if displayed or sent:
+            raise ConnectionClosedError(None, Close(1011, "keepalive ping timeout"))
+        return await ready()
+
+    runtime.recv = recv
+
+    async def scenario():
+        await asyncio.wait_for(
+            client.run(
+                browser,
+                permit=permit,
+                signed_permit="synthetic-signed-permit",
+                validate_current=lambda: SimpleNamespace(
+                    expires_at=permit.auth_expires_at.timestamp()
+                ),
+                deadline=asyncio.get_running_loop().time() + 8,
+            ),
+            timeout=5,
+        )
+
+    with caplog.at_level("WARNING", logger="management.test-relay"):
+        asyncio.run(scenario())
+    lines = [
+        record.getMessage() for record in caplog.records if record.name == "management.test-relay"
+    ]
+    assert [json.loads(line) for line in lines] == [
+        {
+            "event": "test.relay.failure",
+            "error": "ConnectionClosedError",
+            "received": None,
+            "sent": 1011,
+            "browser": 1011,
+        }
+    ]
+    assert "synthetic" not in lines[0] and envelope["sessionId"] not in lines[0]
+    browser.close.assert_awaited_with(code=1011, reason="test_unavailable")
 
 
 def test_relay_active_voice_after_startup_expiry_is_exact_bounded_transport_not_execution(
@@ -1307,6 +1360,59 @@ console.log("native-pcm-pass");
         check=True,
     )
     assert result.stdout.strip() == "native-pcm-pass" and not result.stderr
+
+
+def test_browser_worklet_buffers_200_ms_before_playing_so_real_time_audio_does_not_stutter():
+    import shutil
+    import subprocess
+
+    from management_app.components.live_audio_js import WORKLET_CODE
+
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    harness = """
+const sampleRate = 24000, messages = [];
+class AudioWorkletProcessor {
+    constructor() { this.port = {postMessage: value => messages.push(value)}; }
+}
+let Processor;
+function registerProcessor(name, value) { Processor = value; }
+"""
+    scenario = """
+const tone = () => {
+    const pcm = new ArrayBuffer(960); new Int16Array(pcm).fill(8192); return pcm;
+};
+const processor = new Processor(), output = new Float32Array(128);
+let sequence = 0;
+const play = count => { for (let index = 0; index < count; index++)
+    processor.port.onmessage({data: {type: "play", generation: 1, sequence: ++sequence,
+        pcm: tone()}}); };
+const block = () => { processor.process([[]], [[output]]); return output.some(v => v !== 0); };
+const played = () => messages.filter(value => value.type === "played").length;
+play(5);
+for (let index = 0; index < 37; index++)
+    if (block() || played()) throw Error("played_before_200_ms_buffered");
+play(5);
+if (!block()) throw Error("silent_with_200_ms_buffered");
+for (let index = 0; index < 80 && processor.playback.length; index++) block();
+if (played() !== 10 || processor.primed) throw Error("underrun_not_reset");
+play(1);
+for (let index = 0; index < 37; index++)
+    if (block()) throw Error("resumed_without_buffer");
+let heard = false;
+for (let index = 0; index < 4; index++) heard = block() || heard;
+if (!heard || played() !== 11) throw Error("final_phrase_not_played");
+console.log("jitter-buffer-pass");
+"""
+    result = subprocess.run(
+        [node],
+        input=harness + WORKLET_CODE + scenario,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=True,
+    )
+    assert result.stdout.strip() == "jitter-buffer-pass" and not result.stderr
 
 
 @pytest.mark.parametrize("boundary", ["mute", "interrupt"])

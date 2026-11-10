@@ -150,10 +150,17 @@ def test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots(edito
                                 }
                             )
                         )
-                        assert (await message_of(text, "text.delta"))["text"] == (
-                            "Synthetic shared reply"
-                        )
-                        await message_of(text, "text.completed")
+                        # The reply streams in small deltas, as the live model sends it.
+                        reply = []
+                        while True:
+                            value = json.loads(await asyncio.wait_for(text.recv(), 5))
+                            if value["type"] == "text.completed":
+                                break
+                            if value["type"] == "text.delta":
+                                reply.append(value["text"])
+                            else:
+                                assert value["type"] == "agent.changed", value
+                        assert "".join(reply) == "Synthetic shared reply"
                     await text.send(
                         json.dumps(
                             {"type": "stop", "sequence": 3, "sessionId": opened["sessionId"]}

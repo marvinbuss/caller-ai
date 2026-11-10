@@ -19,6 +19,7 @@ class CallerPCM extends AudioWorkletProcessor {
         this.captureEpoch = 1; this.clearSequence = 0;
         this.capture = null; this.captureOffset = 0; this.grants = 0;
         this.playback = []; this.playbackBytes = 0; this.playbackOffset = 0; this.lastSequence = 0;
+        this.primed = false; this.waited = 0;
         this.port.onmessage = event => {
             const value = event.data;
             try {
@@ -71,6 +72,7 @@ class CallerPCM extends AudioWorkletProcessor {
     flush() {
         this.capture = null; this.captureOffset = this.grants = 0;
         this.playback = []; this.playbackBytes = this.playbackOffset = this.lastSequence = 0;
+        this.primed = false; this.waited = 0;
     }
     process(inputs, outputs) {
         const output = outputs[0]?.[0];
@@ -99,7 +101,14 @@ class CallerPCM extends AudioWorkletProcessor {
             }
         }
         if (output) {
-            for (let index = 0; index < output.length && this.playback.length; index++) {
+            // Live arrives near real time; start or resume only with 200 ms queued, or after
+            // waiting 200 ms so a short final phrase still plays.
+            if (!this.primed && this.playback.length) {
+                this.waited += output.length;
+                this.primed = this.playbackBytes >= 9600 || this.waited >= 4800;
+            }
+            for (let index = 0; this.primed && index < output.length &&
+                this.playback.length; index++) {
                 const packet = this.playback[0], view = new DataView(packet.pcm);
                 output[index] = view.getInt16(this.playbackOffset, true) / 32768;
                 this.playbackOffset += 2;
@@ -110,6 +119,7 @@ class CallerPCM extends AudioWorkletProcessor {
                         sequence: packet.sequence});
                 }
             }
+            if (this.primed && !this.playback.length) { this.primed = false; this.waited = 0; }
         }
         return true;
     }
