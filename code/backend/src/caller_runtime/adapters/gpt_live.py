@@ -47,6 +47,7 @@ IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 CLOSE_REASONS = frozenset(
     {"close_requested", "expired", "content", "remote_hangup", "connection_lost"}
 )
+PCM_FORMAT = {"type": "audio/pcm", "rate": 24000}
 
 
 def keys(document: dict[str, Any], required: set[str], optional: set[str] | None = None) -> None:
@@ -156,10 +157,25 @@ class GptLiveProtocol:
                     raise ValueError("duplicate_live_start")
                 session = event["session"]
                 expected = self.start_event()["session"]
-                keys(session, {"id", *expected}, {"expires_at"})
+                keys(
+                    session,
+                    {"id", *expected},
+                    {"expires_at", "status", "input", "context_management"},
+                )
                 if not isinstance(session["id"], str) or not IDENTIFIER.fullmatch(session["id"]):
                     raise ValueError("invalid_live_session")
-                if any(session[key] != value for key, value in expected.items()):
+                audio = session["audio"]
+                if not isinstance(audio, dict):
+                    raise ValueError("changed_live_configuration")
+                keys(audio, {"output"}, {"format"})
+                if (
+                    any(session[key] != expected[key] for key in expected if key != "audio")
+                    or audio["output"] != expected["audio"]["output"]
+                    or audio.get("format", PCM_FORMAT) != PCM_FORMAT
+                    or session.get("status", "active") != "active"
+                    or session.get("input", []) != []
+                    or not isinstance(session.get("context_management", {}), dict)
+                ):
                     raise ValueError("changed_live_configuration")
                 if "expires_at" in session and (
                     type(session["expires_at"]) is not int or session["expires_at"] <= 0
@@ -174,8 +190,15 @@ class GptLiveProtocol:
                 "session.input_transcript.delta",
                 "session.output_transcript.delta",
             }:
-                keys(event, {"type", "delta", "start_ms", "end_ms"})
-                timeline(event)
+                if kind == "session.output_audio.delta":
+                    # Live audio deltas carry no timeline; transcripts always do.
+                    keys(event, {"type", "delta"}, {"start_ms", "end_ms"})
+                    if ("start_ms" in event) != ("end_ms" in event):
+                        raise ValueError("invalid_live_timeline")
+                else:
+                    keys(event, {"type", "delta", "start_ms", "end_ms"})
+                if "start_ms" in event:
+                    timeline(event)
                 if not isinstance(event["delta"], str):
                     raise ValueError("invalid_live_delta")
                 if kind == "session.output_audio.delta":
@@ -212,8 +235,13 @@ class GptLiveProtocol:
                 keys(
                     event,
                     {"type", "usage"} | ({"reason"} if kind == "session.closed" else set()),
-                    {"context_window"} if kind == "session.usage.updated" else set(),
+                    {"context_window"} if kind == "session.usage.updated" else {"session"},
                 )
+                if "session" in event and (
+                    not isinstance(event["session"], dict)
+                    or event["session"].get("id") != self.provider_session_id
+                ):
+                    raise ValueError("invalid_live_session")
                 usage = event["usage"]
                 if not isinstance(usage, dict) or set(usage) != {"seconds"}:
                     raise ValueError("invalid_live_usage")

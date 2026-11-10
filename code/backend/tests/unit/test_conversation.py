@@ -1129,8 +1129,6 @@ def test_speech_reader_tracks_authorized_generation_only_and_never_fault_reconne
                     {
                         "type": "session.output_audio.delta",
                         "delta": base64.b64encode(pcm).decode(),
-                        "start_ms": 0,
-                        "end_ms": 20,
                     }
                 )
             )
@@ -1212,6 +1210,7 @@ def test_speech_transcript_budget_is_volatile_and_only_verified_user_speech_refr
             "delta": "Synthetic output",
             "start_ms": 0,
             "end_ms": 20,
+            "event_id": "event_Eii7Pei1Kd9FKoUKP9eeQ",
         }
         await controller.accept_transcript(base, generation=1, input_audio_accepted=True)
         await controller.accept_transcript(

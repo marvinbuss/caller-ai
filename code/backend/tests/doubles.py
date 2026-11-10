@@ -163,3 +163,38 @@ def model_stream(text: str | None = None, call: tuple[str, dict] | None = None) 
 def tool_names(body: dict) -> set[str]:
     """Names of the function tools in a Responses API request body."""
     return {tool["name"] for tool in body.get("tools", []) if tool.get("type") == "function"}
+
+
+def live_session(start: dict, session_id: str) -> dict:
+    """The session object the int Foundry Live endpoint returned for `start` (2026-11-10)."""
+    return {
+        "id": session_id,
+        "expires_at": 1794327781,
+        **start["session"],
+        "audio": {"format": {"type": "audio/pcm", "rate": 24000}, **start["session"]["audio"]},
+        "status": "active",
+        "input": [],
+        "context_management": {"type": "compaction"},
+    }
+
+
+def live_started(start: dict, session_id: str) -> str:
+    return json.dumps(
+        {
+            "event_id": "event_started",
+            "type": "session.started",
+            "session": live_session(start, session_id),
+        }
+    )
+
+
+def live_closed(start: dict, session_id: str, seconds: float) -> str:
+    return json.dumps(
+        {
+            "type": "session.closed",
+            "usage": {"seconds": seconds},
+            "reason": "close_requested",
+            "session": live_session(start, session_id),
+            "event_id": "event_closed",
+        }
+    )

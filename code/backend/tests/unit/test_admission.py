@@ -24,6 +24,7 @@ def live_case(admission_case):
     from types import SimpleNamespace
 
     from caller_runtime.adapters.gpt_live import GptLiveAdapter
+    from tests.doubles import live_closed, live_started
 
     service, repository, container, clock, permit, cache = admission_case
 
@@ -37,26 +38,14 @@ def live_case(admission_case):
             event = json.loads(raw)
             self.sent.append(event)
             if event["type"] == "session.start":
-                await self.events.put(
-                    json.dumps(
-                        {
-                            "type": "session.started",
-                            "session": {"id": "sess-case-fixture", **event["session"]},
-                        }
-                    )
-                )
+                self.start = event
+                await self.events.put(live_started(event, "sess-case-fixture"))
             elif event["type"] in {"session.input_audio.mute", "session.input_audio.unmute"}:
-                await self.events.put(json.dumps({"type": event["type"] + "d"}))
-            elif event["type"] == "session.close" and self.close_reply:
                 await self.events.put(
-                    json.dumps(
-                        {
-                            "type": "session.closed",
-                            "reason": "close_requested",
-                            "usage": {"seconds": 3},
-                        }
-                    )
+                    json.dumps({"type": event["type"] + "d", "event_id": "event_mute"})
                 )
+            elif event["type"] == "session.close" and self.close_reply:
+                await self.events.put(live_closed(self.start, "sess-case-fixture", 3))
 
         async def recv(self):
             return await self.events.get()
@@ -193,8 +182,6 @@ def test_live_late_generation_audio_is_fenced_without_relabelling(live_case):
                 {
                     "type": "session.output_audio.delta",
                     "delta": base64.b64encode(b"\0\0" * 480).decode(),
-                    "start_ms": 0,
-                    "end_ms": 20,
                 }
             )
         )
@@ -1373,6 +1360,7 @@ def test_gpt_live_connection_confirms_intent_and_exact_started_binding_before_au
     from types import SimpleNamespace
 
     from caller_runtime.adapters.gpt_live import GptLiveAdapter
+    from tests.doubles import live_closed, live_started
 
     service, repository, container, clock, permit, cache = admission_case
     scopes, connects, messages = [], [], []
@@ -1394,24 +1382,10 @@ def test_gpt_live_connection_confirms_intent_and_exact_started_binding_before_au
             event = json.loads(raw)
             messages.append(event)
             if event["type"] == "session.start":
-                await self.events.put(
-                    json.dumps(
-                        {
-                            "type": "session.started",
-                            "session": {"id": "sess-live-fixture", **event["session"]},
-                        }
-                    )
-                )
+                self.start = event
+                await self.events.put(live_started(event, "sess-live-fixture"))
             elif event["type"] == "session.close":
-                await self.events.put(
-                    json.dumps(
-                        {
-                            "type": "session.closed",
-                            "reason": "close_requested",
-                            "usage": {"seconds": 3},
-                        }
-                    )
-                )
+                await self.events.put(live_closed(self.start, "sess-live-fixture", 3))
 
         async def recv(self):
             return await self.events.get()
@@ -1685,6 +1659,7 @@ def test_live_close_confirms_receipt_settlement_after_reader_cancellation(
     live_case, monkeypatch, persisted_before_cancel
 ):
     from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
+    from tests.doubles import live_closed
 
     service, repository, clock, socket, opened = live_case
 
@@ -1709,15 +1684,7 @@ def test_live_close_confirms_receipt_settlement_after_reader_cancellation(
             return result if persisted_before_cancel else await original_settle(intent, **keywords)
 
         monkeypatch.setattr(service, "settle_attempt", blocked_settle)
-        await socket.events.put(
-            json.dumps(
-                {
-                    "type": "session.closed",
-                    "reason": "close_requested",
-                    "usage": {"seconds": 3},
-                }
-            )
-        )
+        await socket.events.put(live_closed(socket.start, "sess-case-fixture", 3))
         reader = asyncio.create_task(segment.next_event())
         await asyncio.wait_for(entered.wait(), 1)
         reader.cancel()

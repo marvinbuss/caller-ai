@@ -276,7 +276,7 @@ class ConversationExecutor:
             raise PermissionError("invalid_transcript")
         try:
             if (
-                set(event) != {"type", "delta", "start_ms", "end_ms"}
+                set(event) - {"event_id"} != {"type", "delta", "start_ms", "end_ms"}
                 or event["type"]
                 not in {"session.input_transcript.delta", "session.output_transcript.delta"}
                 or not isinstance(event["delta"], str)

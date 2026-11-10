@@ -264,8 +264,6 @@ def test_audio_interruption_and_stop_release_the_slot_only_after_closure_is_conf
                     {
                         "type": "session.output_audio.delta",
                         "delta": base64.b64encode(b"\x07\0" * 480).decode(),
-                        "start_ms": 0,
-                        "end_ms": 20,
                     }
                 )
             )
