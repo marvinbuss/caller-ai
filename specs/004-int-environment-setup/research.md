@@ -322,6 +322,16 @@ real `terraform validate` or first apply.
     `audio_credit_exhausted` only when playback stalls for 2 s. Live reads pause during that wait, so the Live
     pong deadline is 5 s instead of 1 s. A test that sends the burst and acknowledges as it plays fails on the
     old code; a test that never acknowledges still ends with 4413.
+  - The next voice test played audio slowly and with heavy stutter, then went quiet, the microphone did nothing,
+    and the slot stayed "busy". Every media step read the authority item: each outbound 20-ms frame, each
+    `audio.played` acknowledgement, each microphone frame and twice per Live event. That was about 70 reads per
+    second at about 21 ms each (no throttling), more time than real time allows on one connection: playback fell
+    behind, the reader of acknowledgements and microphone frames backed up, and the Live socket dropped without
+    a provider close event (Live attempt #4 stayed unsettled). The contract asks for rechecks at every
+    action/output boundary and at most every second, so media checks now share one authority read for at most
+    0.5 s; any write by this runtime clears it at once, the local terminal fence is still checked on every call,
+    and time limits are evaluated against the current clock. Work, transitions and attempts still read fresh.
+    With the owner's approval the stuck slot was removed once by an ETag-conditioned operator replace.
 
 ## R-15 Environment check and the functional journey
 
