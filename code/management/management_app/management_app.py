@@ -211,9 +211,15 @@ def create_app_from_environment() -> ASGIApp:
     settings = Settings()
     if settings.mode != "live":
         return app()
+    from granian.utils.proxies import wrap_asgi_with_proxy_headers
+
     from management_app.live import LiveManagementApplication
 
-    return LiveManagementApplication(settings)
+    # The ingress terminates TLS and is the only way in; the scheme checks need its forwarded proto.
+    return cast(
+        ASGIApp,
+        wrap_asgi_with_proxy_headers(LiveManagementApplication(settings), trusted_hosts="*"),
+    )
 
 
 def export_app() -> rx.App:

@@ -48,6 +48,10 @@ real `terraform validate` or first apply.
   or application gateway (extra service).
 - **Verify**: that the toggle is an in-place update; that an app with `external_enabled = false` is
   unreachable from outside while the environment stays external.
+- **Forwarded scheme**: the ingress terminates TLS, accepts HTTPS only and sets `X-Forwarded-Proto`. Both
+  servers trust that header from any address (runtime: Uvicorn `--forwarded-allow-ips "*"`; management:
+  Granian's proxy-header wrapper), because the ingress is the only way into a container and the routes'
+  `https`/`wss` checks need the original scheme. Neither app decides anything on the client address.
 
 ## R-03 Network and outbound traffic
 

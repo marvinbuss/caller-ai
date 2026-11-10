@@ -19,4 +19,4 @@ WORKDIR /app
 COPY --from=build --chown=10001:10001 /app/.venv /app/.venv
 USER 10001:10001
 EXPOSE 8000
-CMD ["/app/.venv/bin/uvicorn", "caller_runtime.entrypoint:create_app_from_environment", "--factory", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio", "--ws-max-size", "65536"]
+CMD ["/app/.venv/bin/uvicorn", "caller_runtime.entrypoint:create_app_from_environment", "--factory", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio", "--ws-max-size", "65536", "--forwarded-allow-ips", "*"]

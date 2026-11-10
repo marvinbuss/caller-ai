@@ -39,3 +39,5 @@ def test_the_image_starts_the_factory_entrypoint() -> None:
     dockerfile = (Path(__file__).parents[2] / "Dockerfile").read_text(encoding="utf-8")
     assert "caller_runtime.entrypoint:create_app_from_environment" in dockerfile
     assert '"--factory"' in dockerfile
+    # The ingress terminates TLS; the scheme checks need its X-Forwarded-Proto.
+    assert '"--forwarded-allow-ips", "*"' in dockerfile
