@@ -269,6 +269,18 @@ real `terraform validate` or first apply.
 - **Verify**: the role names for text and realtime use, the subscription's quota for both models under the
   chosen deployment type, and the region rule in `RuntimeOptions.live_region` (one of four regions). A
   successful apply is the evidence of regional support and quota (Principle I).
+- **Live findings (2026-11-10)**:
+  - `gpt-6.1-sol` rejects `max_tokens` with 400 `unsupported_parameter` and accepts `max_completion_tokens`, so
+    the text adapter now sends the output limit as `max_completion_tokens`.
+  - That 400 left the attempt unsettled, so the failed test's slot stayed occupied and every later test of the
+    same manager got `manager_busy` ("Work busy"). With the owner's approval:
+    - a model attempt now settles when the provider answered with a 4xx status, a definite refusal that proves
+      the request finished; 5xx answers, timeouts, connection errors and cancellations stay uncertain, as
+      spec 002 requires;
+    - the one stuck slot was removed once by a reviewed, ETag-conditioned operator recovery (no other slot,
+      nonce or attempt history changed).
+  - `max_input_tokens` must be at least 16384: the adapter reserves 4096 plus 1024 per tool, and community
+    agents carry at least four policy tools.
 
 ## R-15 Environment check and the functional journey
 

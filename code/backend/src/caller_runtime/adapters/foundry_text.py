@@ -29,7 +29,7 @@ from agents.models.interface import Model, ModelTracing
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.tool import FunctionTool, Tool
 from azure.core.credentials import AccessToken
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 from openai.types.responses.response_prompt_param import ResponsePromptParam
 
 from caller_runtime.domain.conversation import AttemptIntent, TestSlot, WorkBudget, utc
@@ -191,6 +191,14 @@ class FoundryTextAdapter:
             self._settlement_observer.record(intent, reference)
         await self.admission.settle_attempt(intent, settlement_ref=reference)
 
+    async def _settle_refusal(self, intent: AttemptIntent | None, error: APIStatusError) -> None:
+        """A 4xx answer proves the provider finished the request; 5xx and no answer stay open."""
+        if intent is not None and 400 <= error.status_code < 500:
+            try:
+                await self._settle(intent)
+            except Exception:
+                pass
+
     async def _dispose_client(self, client: AsyncOpenAI) -> None:
         try:
             await client.close()
@@ -264,7 +272,13 @@ class FoundryTextAdapter:
             store=False,
             parallel_tool_calls=False,
             include_usage=True,
-            max_tokens=min(settings.max_tokens or self.max_output_tokens, self.max_output_tokens),
+            # Reasoning deployments reject max_tokens; the SDK only sets it, so pass the limit here.
+            max_tokens=None,
+            extra_args={
+                "max_completion_tokens": min(
+                    settings.max_tokens or self.max_output_tokens, self.max_output_tokens
+                )
+            },
             prompt_cache_retention=None,
             preserve_raw_usage=False,
         )
@@ -296,6 +310,7 @@ class FoundryTextAdapter:
             prompt,
         )
         client: AsyncOpenAI | None = None
+        intent: AttemptIntent | None = None
         self._active_operations += 1
         try:
             await self.admission.check_work(
@@ -364,6 +379,9 @@ class FoundryTextAdapter:
             raise PermissionError(error.code) from None
         except PermissionError:
             raise
+        except APIStatusError as error:
+            await self._settle_refusal(intent, error)
+            raise PermissionError("model_unavailable") from None
         except Exception:
             raise PermissionError("model_unavailable") from None
         finally:
@@ -401,6 +419,7 @@ class FoundryTextAdapter:
         )
         client: AsyncOpenAI | None = None
         iterator: AsyncGenerator[TResponseStreamEvent, None] | None = None
+        intent: AttemptIntent | None = None
         completed = False
         self._active_operations += 1
         try:
@@ -488,6 +507,9 @@ class FoundryTextAdapter:
             raise
         except PermissionError:
             raise
+        except APIStatusError as error:
+            await self._settle_refusal(intent, error)
+            raise PermissionError("model_unavailable") from None
         except Exception:
             raise PermissionError("model_unavailable") from None
         finally:

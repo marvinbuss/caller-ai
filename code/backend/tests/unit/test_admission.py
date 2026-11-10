@@ -867,6 +867,8 @@ def test_foundry_text_uses_explicit_chat_model_and_confirmed_intent_before_http(
         assert request.headers["authorization"] == "Bearer synthetic-foundry-token"
         assert body["model"] == "reasoning-fixture" and body["store"] is False
         assert body.get("parallel_tool_calls") in {False, None}
+        # Reasoning deployments reject max_tokens with 400 unsupported_parameter.
+        assert "max_tokens" not in body and body["max_completion_tokens"] == 512
         return httpx2.Response(
             200,
             json={
@@ -1008,6 +1010,91 @@ def test_foundry_text_does_not_retry_or_follow_redirect_after_recorded_attempt(a
                 )
             assert "unapproved" not in str(failure.value)
             assert len(requests) == 1
+        finally:
+            await adapter.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("status", "settled"), [(400, True), (429, True), (500, False), (504, False)]
+)
+@pytest.mark.parametrize("stream", [False, True])
+def test_foundry_text_settles_only_a_definite_provider_refusal(
+    admission_case, status, settled, stream
+):
+    from types import SimpleNamespace
+
+    import httpx2
+    from agents import ModelSettings
+    from agents.models.interface import ModelTracing
+
+    from caller_runtime.adapters.foundry_text import FoundryTextAdapter
+    from caller_runtime.domain.conversation import SessionLimits, WorkBudget
+
+    service, repository, container, clock, permit, cache = admission_case
+    requests = []
+
+    class Credentials:
+        async def get_token(self, scope):
+            return SimpleNamespace(
+                token="synthetic-foundry-token", expires_on=clock.utc_now().timestamp() + 900
+            )
+
+    async def refuse(request):
+        requests.append(request)
+        return httpx2.Response(
+            status,
+            json={"error": {"code": "unsupported_parameter", "type": "invalid_request_error"}},
+        )
+
+    adapter = FoundryTextAdapter(
+        endpoint="https://approved-fixture.openai.azure.com",
+        deployment="reasoning-fixture",
+        approved_hosts=frozenset({"approved-fixture.openai.azure.com"}),
+        credential=Credentials(),
+        admission=service,
+        utc_now=clock.utc_now,
+        transport=httpx2.MockTransport(refuse),
+        max_input_tokens=16384,
+        max_output_tokens=512,
+    )
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        await service.mark_ready(slot.session_id, slot.owner_epoch)
+        limits = SessionLimits(
+            started_at=slot.started_at,
+            admission_deadline_utc=slot.admission_deadline_utc,
+            auth_expires_at=slot.auth_expires_at,
+        )
+        limits.mark_ready(clock.utc_now())
+        model = adapter.model_for(slot, WorkBudget.accept(limits, clock.utc_now()))
+        arguments = dict(
+            system_instructions="Synthetic instructions",
+            input="Synthetic accepted question",
+            model_settings=ModelSettings(),
+            tools=[],
+            output_schema=None,
+            handoffs=[],
+            tracing=ModelTracing.DISABLED,
+        )
+        try:
+            with pytest.raises(PermissionError, match="model_unavailable"):
+                if stream:
+                    async for _event in model.stream_response(**arguments):
+                        pass
+                else:
+                    await model.get_response(**arguments)
+            assert len(requests) == 1
+            observed = (
+                await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+            ).authority.slots[0]
+            assert observed.attempted_through == 1
+            assert observed.settled_through == (1 if settled else 0)
         finally:
             await adapter.close()
 

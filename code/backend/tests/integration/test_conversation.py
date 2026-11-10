@@ -828,15 +828,17 @@ def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanu
                 ).authority.slots
                 assert len(requests) == (0 if outcome in {"stale", "construction"} else 1)
                 assert not sockets and not any(message["type"] == "ready" for message in messages)
-                if outcome in {"unknown", "unsupported_deployment"}:
+                if outcome == "unknown":
                     assert len(slots) == 1 and slots[0].terminal_fence
                     assert (
                         slots[0].resources["model"].attempted == 1
                         and slots[0].resources["model"].settled == 0
                     )
-                    if outcome == "unsupported_deployment":
-                        assert controls["prepare_statuses"] == [404]
-                        assert "synthetic-private-provider-response" not in str(telemetry.events)
+                elif outcome == "unsupported_deployment":
+                    # A 4xx answer proves the provider finished the request, so cleanup can release.
+                    assert controls["prepare_statuses"] == [404]
+                    assert "synthetic-private-provider-response" not in str(telemetry.events)
+                    assert not slots
                 else:
                     assert not slots
                 return
