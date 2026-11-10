@@ -41,7 +41,7 @@ def run_owned_browser_runtime(fixture_path):
         ContainerDouble,
         live_closed,
         live_started,
-        model_reply,
+        model_capped,
         model_stream,
         tool_names,
     )
@@ -106,7 +106,7 @@ def run_owned_browser_runtime(fixture_path):
                 )
             )
             if not body.get("stream"):
-                return httpx2.Response(200, json=model_reply("Synthetic ready"))
+                return httpx2.Response(200, json=model_capped())
 
             class Chunks(httpx2.AsyncByteStream):
                 async def __aiter__(self):

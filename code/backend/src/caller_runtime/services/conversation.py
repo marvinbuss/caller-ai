@@ -94,7 +94,6 @@ class ConversationExecutor:
         self._prepare_attempted = True
         async with self._processing:
             self._processing_task = asyncio.current_task()
-            result = None
             try:
                 slot = self.policy.slot
                 if (
@@ -115,42 +114,17 @@ class ConversationExecutor:
                 await self.policy.admission.check_work(
                     slot.session_id, slot.owner_epoch, generation=slot.generation, work=work
                 )
-                model = self.text_adapter.model_for(slot, work)
-                registry = build_agents(
-                    self.policy.snapshot,
-                    model=model,
-                    capabilities=lambda configured: [],
-                    policy_tools=lambda configured: [],
+                welcome = next(
+                    agent
+                    for agent in self.policy.snapshot.for_runtime()["agents"]
+                    if agent["agentId"] == slot.active_agent_id
                 )
                 async with asyncio.timeout(work.remaining(self.utc_now())):
-                    result = await Runner.run(
-                        registry[slot.active_agent_id],
-                        input=(
-                            "Initialize the published Welcome conversation "
-                            "without invoking actions."
-                        ),
-                        max_turns=1,
-                        run_config=RunConfig(
-                            tracing_disabled=True,
-                            trace_include_sensitive_data=False,
-                            tool_execution=ToolExecutionConfig(max_function_tool_concurrency=1),
-                        ),
-                    )
+                    await self.text_adapter.ready(slot, work, instructions=welcome["prompt"])
                 await self.policy.admission.check_work(
                     slot.session_id, slot.owner_epoch, generation=slot.generation, work=work
                 )
-                if (
-                    not isinstance(result.final_output, str)
-                    or not result.final_output.strip()
-                    or len(result.final_output.encode("utf-8")) > 64 * 1024
-                ):
-                    raise PermissionError("test_runtime_unavailable")
             finally:
-                if result is not None:
-                    result.input = ""
-                    result.new_items.clear()
-                    result.raw_responses.clear()
-                    result.final_output = None
                 self._processing_task = None
 
     def restore_history(self, turns: list[dict[str, str]]) -> None:
