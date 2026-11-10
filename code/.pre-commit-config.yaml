@@ -41,7 +41,7 @@ repos:
         files: ^code/(backend/src|management/management_app|tools/scripts)/.*\.py$
       - id: terraform
         name: Locked credential-free Terraform checks
-        entry: uv run --locked --project code/tools python code/tools/scripts/verify_terraform.py check
+        entry: uv run --locked --project code/tools python code/tools/scripts/verify_terraform.py check --no-scan
         language: system
         pass_filenames: false
         files: ^code/infra/terraform/

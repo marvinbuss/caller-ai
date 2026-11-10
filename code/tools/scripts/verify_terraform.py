@@ -231,7 +231,7 @@ def scan_configuration(
     return len(results)
 
 
-def check() -> None:
+def check(*, scan: bool = True) -> None:
     binary = require_toolchain()
     native_tests = 0
     directories = (*ROOTS, *modules())
@@ -244,7 +244,8 @@ def check() -> None:
             execute(binary, ["validate", "-no-color"], directory=directory, values=values)
             result = execute(binary, ["test", "-json"], directory=directory, values=values)
             native_tests += native_test_count(result.stdout)
-    scan_configuration()
+    if scan:
+        scan_configuration()
     print(
         json.dumps(
             {
@@ -253,6 +254,7 @@ def check() -> None:
                 "roots": len(ROOTS),
                 "modules": len(modules()),
                 "native_tests": native_tests,
+                "configuration_scan": scan,
             }
         )
     )
@@ -261,9 +263,11 @@ def check() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("prepare", "check"))
+    # The scanner is a Linux container; the source hook on Windows runners cannot start it.
+    parser.add_argument("--no-scan", action="store_true")
     arguments = parser.parse_args()
     try:
-        prepare() if arguments.command == "prepare" else check()
+        prepare() if arguments.command == "prepare" else check(scan=not arguments.no_scan)
     except (
         OSError,
         ValueError,

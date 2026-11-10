@@ -47,6 +47,45 @@ def test_check_runs_fmt_validate_and_test_for_each_root_and_module(module, monke
     assert [name for name, _ in calls].count("fmt") == 1
 
 
+def test_the_configuration_scan_is_left_out_only_when_asked(module, monkeypatch, capsys):
+    monkeypatch.setattr(module, "require_toolchain", lambda: Path("terraform"))
+    monkeypatch.setattr(
+        module,
+        "execute",
+        lambda binary, arguments, **keywords: subprocess.CompletedProcess(
+            arguments,
+            0,
+            stdout=json.dumps({"type": "test_summary", "test_summary": _summary()}),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(module, "environment_findings", lambda: [])
+    scans = []
+    monkeypatch.setattr(module, "scan_configuration", lambda: scans.append(1))
+    module.check(scan=False)
+    assert scans == []
+    assert json.loads(capsys.readouterr().out)["configuration_scan"] is False
+
+
+def test_the_hook_leaves_out_the_container_scan_and_the_terraform_job_runs_it():
+    import yaml
+
+    root = SCRIPTS.parents[2]
+    hooks = {
+        hook["id"]: hook
+        for hook in yaml.safe_load((root / "code/.pre-commit-config.yaml").read_text())["repos"][0][
+            "hooks"
+        ]
+    }
+    # Windows runners cannot start the Linux scanner image; the Linux Terraform job runs it.
+    assert hooks["terraform"]["entry"].endswith("verify_terraform.py check --no-scan")
+    workflow = yaml.safe_load((root / ".github/workflows/ci.yml").read_text())
+    terraform = workflow["jobs"]["terraform"]
+    assert terraform["runs-on"] == "ubuntu-24.04"
+    runs = [step.get("run", "") for step in terraform["steps"]]
+    assert any(run.endswith("verify_terraform.py check") for run in runs)
+
+
 def test_environment_validation_failure_stops_the_check_before_terraform_runs(module, monkeypatch):
     calls = []
     monkeypatch.setattr(module, "require_toolchain", lambda: Path("terraform"))
