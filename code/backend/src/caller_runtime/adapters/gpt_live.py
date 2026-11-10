@@ -438,7 +438,8 @@ class GptLiveAdapter:
                         open_timeout=remaining,
                         close_timeout=1,
                         ping_interval=20,
-                        ping_timeout=1,
+                        # Reads pause for up to 2 s while playback credit is exhausted.
+                        ping_timeout=5,
                         logger=self._logger,
                     )
                     await socket.send(json.dumps(protocol.start_event(), allow_nan=False))
