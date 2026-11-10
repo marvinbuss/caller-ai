@@ -37,7 +37,14 @@ def run_owned_browser_runtime(fixture_path):
     from caller_runtime.adapters.admission_repository import TestAdmissionRepository
     from caller_runtime.composition import ConversationRuntime, RuntimeOptions
     from caller_runtime.main import create_app
-    from tests.doubles import ContainerDouble, model_reply, model_stream, tool_names
+    from tests.doubles import (
+        ContainerDouble,
+        live_closed,
+        live_started,
+        model_reply,
+        model_stream,
+        tool_names,
+    )
 
     path = Path(fixture_path)
     fixture = json.loads(path.read_text())
@@ -119,14 +126,8 @@ def run_owned_browser_runtime(fixture_path):
             event = json.loads(raw)
             kind = event["type"]
             if kind == "session.start":
-                await self.events.put(
-                    json.dumps(
-                        {
-                            "type": "session.started",
-                            "session": {"id": "fixture-live-" + uuid4().hex, **event["session"]},
-                        }
-                    )
-                )
+                self.start, self.session_id = event, "fixture-live-" + uuid4().hex
+                await self.events.put(live_started(event, self.session_id))
             elif kind == "session.input_audio.append":
                 counters["inputFrames"] += 1
                 if self.offset == 0:
@@ -135,24 +136,16 @@ def run_owned_browser_runtime(fixture_path):
                             {
                                 "type": "session.output_audio.delta",
                                 "delta": base64.b64encode(b"\x05\x00" * 480).decode(),
-                                "start_ms": 0,
-                                "end_ms": 20,
                             }
                         )
                     )
                 self.offset += 20
             elif kind in {"session.input_audio.mute", "session.input_audio.unmute"}:
-                await self.events.put(json.dumps({"type": kind + "d"}))
-            elif kind == "session.close":
                 await self.events.put(
-                    json.dumps(
-                        {
-                            "type": "session.closed",
-                            "reason": "close_requested",
-                            "usage": {"seconds": self.offset / 1000},
-                        }
-                    )
+                    json.dumps({"type": kind + "d", "event_id": "event_" + uuid4().hex})
                 )
+            elif kind == "session.close":
+                await self.events.put(live_closed(self.start, self.session_id, self.offset / 1000))
             else:
                 raise AssertionError("unexpected_fixture_live_event")
 
@@ -1335,8 +1328,6 @@ def test_owned_speech_socket_writes_actual_pcm_and_accepts_only_sent_played_sequ
                 {
                     "type": "session.output_audio.delta",
                     "delta": base64.b64encode(pcm).decode(),
-                    "start_ms": 0,
-                    "end_ms": 20,
                 }
             ),
         )
@@ -1917,8 +1908,6 @@ def test_owned_tls_speech_pressure_and_retired_audio_never_relabel(
             {
                 "type": "session.output_audio.delta",
                 "delta": base64.b64encode(pcm).decode(),
-                "start_ms": 0,
-                "end_ms": len(pcm) / 48,
             }
         )
         await asyncio.wrap_future(

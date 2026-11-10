@@ -294,6 +294,16 @@ real `terraform validate` or first apply.
     executor's own transition to finish and checks once more against the new slot; a generation change that
     this executor did not make still stops the output. The test doubles now stream the live event shape and
     the storage fake adds read latency, which reproduced the failure before the fix.
+  - The first voice test showed "pending cleanup", then "busy". Probes as the runtime identity recorded the
+    real Live (`gpt-live-1`) events. `session.started` adds `status`, `input`, `context_management` and
+    `audio.format` (`audio/pcm`, 24000 Hz); `session.output_audio.delta` has no `start_ms`/`end_ms`;
+    `session.closed` repeats the `session` object; transcript deltas carry `event_id`. The strict validator
+    rejected the start, so the Live attempt stayed unsettled (no provider session ID recorded) and the slot
+    stayed occupied, as spec 002 requires. The validator now accepts these shapes and still rejects a changed
+    model, instructions, voice, delegation, PCM format, a non-active status, pre-filled input, a missing
+    transcript timeline and a close for another session. The test fakes now send the recorded shapes; with them
+    the old validator fails 40 tests. With the owner's approval the one stuck slot was removed once by an
+    ETag-conditioned operator replace.
 
 ## R-15 Environment check and the functional journey
 
