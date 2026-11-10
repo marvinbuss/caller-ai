@@ -13,10 +13,10 @@ import json
 import logging
 import math
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, TypeVar, cast
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -30,6 +30,7 @@ from agents.models.openai_responses import OpenAIResponsesModel
 from agents.tool import FunctionTool, Tool
 from azure.core.credentials import AccessToken
 from openai import APIStatusError, AsyncOpenAI
+from openai.types.responses import Response
 from openai.types.responses.response_prompt_param import ResponsePromptParam
 
 from caller_runtime.domain.conversation import AttemptIntent, TestSlot, WorkBudget, utc
@@ -39,6 +40,11 @@ from caller_runtime.services.admission import (
     SettlementObserver,
     TestAdmissionService,
 )
+
+Reply = TypeVar("Reply")
+READINESS_INPUT = "Initialize the published Welcome conversation without invoking actions."
+# The provider minimum; a full Welcome reply on a reasoning model can outlast the startup budget.
+READINESS_OUTPUT_TOKENS = 16
 
 
 class FoundryCredential(Protocol):
@@ -303,6 +309,66 @@ class FoundryTextAdapter:
             conversation_id,
             prompt,
         )
+
+        async def request(client: AsyncOpenAI) -> ModelResponse:
+            # Reasoning deployments accept function tools only on the Responses API.
+            delegate = OpenAIResponsesModel(model=self.deployment, openai_client=client)
+            return await delegate.get_response(
+                system_instructions=instructions,
+                input=inputs,
+                model_settings=checked,
+                tools=tools,
+                output_schema=output_schema,
+                handoffs=[],
+                tracing=ModelTracing.DISABLED,
+            )
+
+        result = await self._attempt(slot, work, request)
+        if self._telemetry is not None:
+            self._telemetry.model_usage(
+                mode=slot.mode,
+                input_tokens=result.usage.input_tokens,
+                output_tokens=result.usage.output_tokens,
+            )
+        return result
+
+    async def ready(self, slot: TestSlot, work: WorkBudget, *, instructions: str) -> None:
+        """Prove the pinned deployment answers a bounded, tool-free request; keep no output."""
+        if self._closed:
+            raise PermissionError("model_unavailable")
+        self._settings(instructions, READINESS_INPUT, ModelSettings(), [], [], None, None, None)
+
+        async def request(client: AsyncOpenAI) -> Response:
+            return await client.responses.create(
+                model=self.deployment,
+                instructions=instructions,
+                input=READINESS_INPUT,
+                store=False,
+                max_output_tokens=READINESS_OUTPUT_TOKENS,
+            )
+
+        response = await self._attempt(slot, work, request)
+        if self._telemetry is not None and response.usage is not None:
+            self._telemetry.model_usage(
+                mode=slot.mode,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+            )
+        # A reasoning model may spend the whole cap on reasoning; the cap still proves an answer.
+        capped = (
+            response.status == "incomplete"
+            and response.incomplete_details is not None
+            and response.incomplete_details.reason == "max_output_tokens"
+        )
+        if (response.status != "completed" and not capped) or not response.output:
+            raise PermissionError("model_unavailable")
+
+    async def _attempt(
+        self,
+        slot: TestSlot,
+        work: WorkBudget,
+        call: Callable[[AsyncOpenAI], Awaitable[Reply]],
+    ) -> Reply:
         client: AsyncOpenAI | None = None
         intent: AttemptIntent | None = None
         self._active_operations += 1
@@ -335,8 +401,7 @@ class FoundryTextAdapter:
                     timeout=remaining,
                 )
                 self._clients.add(client)
-                # Reasoning deployments accept function tools only on the Responses API.
-                delegate = OpenAIResponsesModel(model=self.deployment, openai_client=client)
+                opened = client
                 intent = await self.admission.begin_attempt(
                     slot.session_id,
                     slot.owner_epoch,
@@ -346,25 +411,11 @@ class FoundryTextAdapter:
                     work=work,
                 )
 
-                async def request() -> ModelResponse:
-                    return await delegate.get_response(
-                        system_instructions=instructions,
-                        input=inputs,
-                        model_settings=checked,
-                        tools=tools,
-                        output_schema=output_schema,
-                        handoffs=[],
-                        tracing=ModelTracing.DISABLED,
-                    )
+                async def request() -> Reply:
+                    return await call(opened)
 
                 result = await self.admission.perform(intent, request, work=work)
                 await self._settle(intent)
-                if self._telemetry is not None:
-                    self._telemetry.model_usage(
-                        mode=slot.mode,
-                        input_tokens=result.usage.input_tokens,
-                        output_tokens=result.usage.output_tokens,
-                    )
                 return result
         except AdmissionError as error:
             raise PermissionError(error.code) from None

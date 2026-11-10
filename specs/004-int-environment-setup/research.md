@@ -304,6 +304,16 @@ real `terraform validate` or first apply.
     transcript timeline and a close for another session. The test fakes now send the recorded shapes; with them
     the old validator fails 40 tests. With the owner's approval the one stuck slot was removed once by an
     ETag-conditioned operator replace.
+  - The next voice test stayed at "starting", then "busy". Speech readiness ran the published Welcome agent on the
+    reasoning deployment and required a non-empty reply; a realistic Welcome greeting took 4.4 to 10.5 s (75 to
+    194 reasoning tokens), more than the 10-second startup budget leaves after the gateway's share. The admission
+    timeout cancelled the request mid-flight, so the model attempt stayed unsettled and the slot occupied, as
+    spec 002 requires. Readiness now sends one tool-free Responses request with the pinned Welcome instructions
+    and the provider minimum of 16 output tokens (1.2 to 2.5 s live); a `completed` answer or an `incomplete`
+    answer capped by `max_output_tokens` (often reasoning only) proves the backend, other answers fail after
+    settling, and nothing generated is kept. The test fakes now answer readiness with the capped shape; with
+    them the old readiness fails 15 tests. With the owner's approval the stuck slot was removed once by an
+    ETag-conditioned operator replace.
 
 ## R-15 Environment check and the functional journey
 

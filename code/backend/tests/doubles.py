@@ -160,6 +160,18 @@ def model_stream(text: str | None = None, call: tuple[str, dict] | None = None) 
     ]
 
 
+def model_capped(reason: str = "max_output_tokens") -> dict:
+    """What the live reasoning model returned for a 16-token readiness request: only reasoning."""
+    reply = model_reply()
+    reply["output"] = reply["output"][:1]
+    reply["status"] = "incomplete"
+    reply["incomplete_details"] = {"reason": reason}
+    reply["usage"]["output_tokens"] = reply["usage"]["output_tokens_details"][
+        "reasoning_tokens"
+    ] = 16
+    return reply
+
+
 def tool_names(body: dict) -> set[str]:
     """Names of the function tools in a Responses API request body."""
     return {tool["name"] for tool in body.get("tools", []) if tool.get("type") == "function"}

@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import pytest
 
-from tests.doubles import model_reply, model_stream
+from tests.doubles import model_capped, model_reply, model_stream
 from tests.unit.test_admission import admission_case as admission_case
 from tests.unit.test_admission import authority_store as authority_store
 from tests.unit.test_admission import live_case as live_case
@@ -510,7 +510,9 @@ def text_execution_case(admission_case):
                 )
             if controls.get("prepare_late"):
                 clock.advance(11)
-            return httpx2.Response(200, json=model_reply("Synthetic configured welcome ready"))
+            return httpx2.Response(
+                200, json=model_capped(controls.get("prepare_reason", "max_output_tokens"))
+            )
         if "clarity" in controls and not body.get("stream"):
             assert body["text"]["format"]["type"] == "json_schema"
             assert not body.get("tools") and body["store"] is False
@@ -1929,6 +1931,8 @@ def test_shared_model_readiness_uses_pinned_welcome_before_initial_ready_without
         controls["prepare"] = True
         await controller.prepare()
         assert len(requests) == 1 and requests[0]["instructions"] == "Synthetic welcome prompt"
+        # A full Welcome reply on the live reasoning model took 4-10 s; readiness must stay short.
+        assert requests[0]["max_output_tokens"] == 16 and not requests[0].get("tools")
         observed = (
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority.slots[0]
@@ -1940,6 +1944,40 @@ def test_shared_model_readiness_uses_pinned_welcome_before_initial_ready_without
             observed.resources["live"].attempted == observed.resources["capability"].attempted == 0
         )
         assert controller.retained_bytes == 0
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("reason", ["content_filter", "max_input_tokens"])
+def test_readiness_fails_on_another_incomplete_reason_but_still_settles(
+    text_execution_case, admission_case, reason
+):
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        controller = ConversationExecutor(
+            policy=ConversationPolicy(
+                slot=slot, snapshot=service.snapshot_for(slot), admission=service
+            ),
+            text_adapter=adapter,
+            utc_now=clock.utc_now,
+        )
+        controls["prepare"], controls["prepare_reason"] = True, reason
+        with pytest.raises(PermissionError, match="^model_unavailable$"):
+            await controller.prepare()
+        observed = (
+            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        ).authority.slots[0]
+        assert observed.resources["model"].attempted == observed.resources["model"].settled == 1
         await controller.close()
 
     asyncio.run(scenario())
