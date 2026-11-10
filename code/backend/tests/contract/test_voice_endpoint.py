@@ -385,6 +385,43 @@ def test_playback_that_is_never_acknowledged_still_ends_as_credit_exhausted(endp
     ]
 
 
+def test_live_events_behind_queued_speech_are_read_before_that_speech_plays(endpoint):
+    # A long Live answer arrives within seconds; user speech behind it must not wait for playback.
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        assert socket.receive_json()["type"] == "ready"
+        provider_greeting(endpoint, 10)
+        provider = endpoint.provider_sockets[0]
+
+        async def speech():
+            await provider.events.put(
+                json.dumps(
+                    {
+                        "type": "session.input_transcript.delta",
+                        "delta": "Synthetic caller words",
+                        "start_ms": 0,
+                        "end_ms": 20,
+                        "event_id": "event_input",
+                    }
+                )
+            )
+
+        endpoint.client.portal.call(speech)
+        frames = 0
+        while True:
+            frame = socket.receive()
+            if frame.get("bytes") is not None:
+                frames += 1
+                continue
+            event = json.loads(frame["text"])
+            if event["type"] == "transcript.delta":
+                break
+            assert event["type"] == "audio.credit", event
+        # Nothing was played back, so at most the 0.5-s window of the queued speech was sent.
+        assert event["speaker"] == "user" and event["fragment"] == "Synthetic caller words"
+        assert frames <= 25
+
+
 def test_a_second_session_for_the_same_manager_is_capacity_unavailable(endpoint):
     with endpoint.connect() as first:
         first.send_json(endpoint.message(1, actor="manager-same"))

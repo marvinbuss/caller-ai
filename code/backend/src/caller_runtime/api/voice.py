@@ -12,7 +12,7 @@ import math
 import re
 import struct
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
@@ -42,6 +42,8 @@ PATH = "/v1/conversations/voice"
 SUBPROTOCOL = "caller.voice.v1"
 # Live sends speech faster than real time; only playback that stalls this long is an overflow.
 PLAYBACK_WAIT_SECONDS = 2.0
+# Live generated a 100-s answer within seconds; reading must not wait for it to play out.
+PLAYBACK_QUEUE_BYTES = 120 * 48000
 
 
 # Live transcript time ran 1.3 % ahead of forwarded audio on int (+3.7 s after 294 s), and its
@@ -63,6 +65,37 @@ class OversizedFrame(PermissionError):
 
 class WirePressure(PermissionError):
     pass
+
+
+class PlaybackQueue:
+    """Live output waiting for playback room, so other Live events are read as they arrive."""
+
+    def __init__(self, limit: int) -> None:
+        self._items: deque[tuple[int, bytes]] = deque()
+        self._bytes, self._limit = 0, limit
+        self._ready = asyncio.Event()
+
+    @property
+    def retained_bytes(self) -> int:
+        return self._bytes
+
+    def put(self, generation: int, pcm: bytes) -> None:
+        if self._items and self._items[0][0] < generation:
+            self._items = deque(item for item in self._items if item[0] >= generation)
+            self._bytes = sum(len(item[1]) for item in self._items)
+        if self._bytes + len(pcm) > self._limit:
+            raise WirePressure("playback_credit_exhausted")
+        self._items.append((generation, pcm))
+        self._bytes += len(pcm)
+        self._ready.set()
+
+    async def get(self) -> tuple[int, bytes]:
+        while not self._items:
+            self._ready.clear()
+            await self._ready.wait()
+        generation, pcm = self._items.popleft()
+        self._bytes -= len(pcm)
+        return generation, pcm
 
 
 def finished_in_priority(
@@ -431,25 +464,27 @@ class VoiceWire:
                 return
             raise
         self._advance(generation)
-        deadline = asyncio.get_running_loop().time() + PLAYBACK_WAIT_SECONDS
-        while True:
-            if self.session is None or generation < self._generation:
-                return
-            extra = self._inflight_audio if self._inflight_generation != generation else 0
-            if len(pcm) + self.audio.pending_bytes + extra <= 24000:
-                break
-            self._room.clear()
+        for offset in range(0, len(pcm), 960):
+            chunk = pcm[offset : offset + 960]
+            deadline = asyncio.get_running_loop().time() + PLAYBACK_WAIT_SECONDS
+            while True:
+                if self.session is None or generation < self._generation:
+                    return
+                extra = self._inflight_audio if self._inflight_generation != generation else 0
+                if len(chunk) + self.audio.pending_bytes + extra <= 24000:
+                    break
+                self._room.clear()
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        await self._room.wait()
+                except TimeoutError:
+                    raise WirePressure("playback_credit_exhausted") from None
+            frames = self.audio.output(chunk, generation=generation)
             try:
-                async with asyncio.timeout_at(deadline):
-                    await self._room.wait()
-            except TimeoutError:
-                raise WirePressure("playback_credit_exhausted") from None
-        frames = self.audio.output(pcm, generation=generation)
-        try:
-            for frame in frames:
-                self._outbound.put_nowait((generation, frame))
-        except asyncio.QueueFull:
-            raise WirePressure("control_queue_full") from None
+                for frame in frames:
+                    self._outbound.put_nowait((generation, frame))
+            except asyncio.QueueFull:
+                raise WirePressure("control_queue_full") from None
 
     async def write(self) -> None:
         while True:
@@ -768,7 +803,7 @@ def create_router(
                         continue
                     kind = event["type"]
                     if kind == "session.output_audio.delta":
-                        await wire.audio_output(event["pcm"], generation=generation)
+                        playback.put(generation, event["pcm"])
                     elif kind in {
                         "session.input_transcript.delta",
                         "session.output_transcript.delta",
@@ -822,8 +857,16 @@ def create_router(
 
             if session.speech_segments is None:
                 raise PermissionError("speech_transition_unavailable")
+            playback = PlaybackQueue(PLAYBACK_QUEUE_BYTES)
+
+            async def play() -> None:
+                while True:
+                    generation, pcm = await playback.get()
+                    await wire.audio_output(pcm, generation=generation)
+
             tasks.add(asyncio.create_task(credit()))
             tasks.add(asyncio.create_task(voice()))
+            tasks.add(asyncio.create_task(play()))
 
             async def read() -> None:
                 while True:

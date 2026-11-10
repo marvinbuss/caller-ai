@@ -360,6 +360,15 @@ real `terraform validate` or first apply.
     agent's next long answer. Speech now counts when it ends within 2 % plus 3 s of the forwarded audio (the
     Live clock also starts at admission, about a second before the first browser frame); a transcript with no
     forwarded audio still never counts.
+  - With that fix the user's first utterances renewed the idle clock, but a later session still ended two minutes
+    after the last renewal while the agent was speaking and the user was talking. The runtime read Live events
+    strictly in order and only at playback pace, and Live delivers a long answer within seconds, so the user's
+    transcripts (and any delegation) waited behind up to a hundred seconds of queued agent audio and arrived too
+    late to count. Live audio now goes into a bounded per-session playback queue (120 s of PCM, dropped on a
+    generation change, overflow ends the session as `audio_credit_exhausted`) that a separate task plays out, so
+    all other Live events are read as they arrive. Playback also refills the 500-ms browser window frame by frame
+    instead of waiting for room for a whole 100-ms delta, which keeps up to 100 ms more audio in the browser and
+    stops transcript and activity writes from pausing output; both reduce the remaining stutter.
 
 ## R-15 Environment check and the functional journey
 
