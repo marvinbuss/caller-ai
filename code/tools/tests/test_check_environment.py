@@ -517,7 +517,11 @@ def management_http(**overrides):
     def handler(request):
         host, path = request.url.host, request.url.path
         seen["calls"].append((request.method, host, path, request.headers.get("authorization")))
-        authorized = request.headers.get("authorization") == f"Bearer {TESTER_TOKEN}"
+        seen.setdefault("cookies", []).append((path, request.headers.get("cookie")))
+        # The live app refuses a bearer token that arrives together with any cookie.
+        authorized = request.headers.get(
+            "authorization"
+        ) == f"Bearer {TESTER_TOKEN}" and not request.headers.get("cookie")
         if path in {"/healthz", "/readyz"}:
             status = overrides.get(host + path, 200)
             return httpx.Response(status, json={"mode": "live", "status": "ready"})
@@ -526,7 +530,11 @@ def management_http(**overrides):
                 "login", f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/authorize"
             )
             return httpx.Response(
-                overrides.get("login_status", 302), headers={"location": location}
+                overrides.get("login_status", 302),
+                headers={
+                    "location": location,
+                    "set-cookie": "__Host-caller-login=flow; Max-Age=300; Path=/; Secure; HttpOnly",
+                },
             )
         if path == "/v2/configuration":
             if not authorized:
@@ -583,6 +591,12 @@ def test_the_functional_journey_passes_and_stops_both_sessions_cleanly(case):
     assert sent == ["authenticate", "text.submit", "stop"]
     assert [message["type"] for message in sockets[1].sent] == ["authenticate", "stop"]
     assert ("GET", "runtime.example.test", "/readyz", None) in seen["calls"]
+
+
+def test_the_sign_in_cookie_never_reaches_an_application_request(case):
+    result, _context, _sockets, seen = journey(case)
+    assert result.status == "pass", result.detail
+    assert [path for path, cookie in seen["cookies"] if cookie] == []
 
 
 def test_the_journey_is_skipped_unless_asked_for_and_only_closed_access_skips_it(case):

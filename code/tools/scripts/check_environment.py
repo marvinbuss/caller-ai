@@ -561,6 +561,8 @@ def journey_request(
     context: Context, step: str, method: str, url: str, **options: Any
 ) -> httpx.Response:
     assert context.http is not None
+    # The management app refuses a bearer token sent with a cookie, such as the sign-in flow's.
+    context.http.cookies.clear()
     try:
         return context.http.request(method, url, follow_redirects=False, **options)
     except httpx.HTTPError:
