@@ -314,6 +314,14 @@ real `terraform validate` or first apply.
     settling, and nothing generated is kept. The test fakes now answer readiness with the capped shape; with
     them the old readiness fails 15 tests. With the owner's approval the stuck slot was removed once by an
     ETag-conditioned operator replace.
+  - The next voice test reached ready and ended within one to two seconds, before anyone spoke (0.8 s of voice,
+    clean `stopped` cleanup, no stuck slot). Live sends the Welcome greeting as 100-ms deltas faster than real
+    time, and the runtime ended the session as soon as the 24000-byte (0.5 s) playback window was full. The
+    window still bounds what is in flight, but the runtime now waits for the browser's `audio.played`
+    acknowledgements (sent per 20-ms frame as it plays), a generation change or disposal, and ends with
+    `audio_credit_exhausted` only when playback stalls for 2 s. Live reads pause during that wait, so the Live
+    pong deadline is 5 s instead of 1 s. A test that sends the burst and acknowledges as it plays fails on the
+    old code; a test that never acknowledges still ends with 4413.
 
 ## R-15 Environment check and the functional journey
 

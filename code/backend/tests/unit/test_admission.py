@@ -1405,6 +1405,8 @@ def test_gpt_live_connection_confirms_intent_and_exact_started_binding_before_au
         assert url == "https://approved-fixture.openai.azure.com/openai/v1"
         assert options["token"] == "synthetic-live-token"
         assert options["max_size"] == 256 * 1024 and options["max_queue"] == 1
+        # Reads pause while playback credit is exhausted, so the pong deadline outlasts that wait.
+        assert options["ping_interval"] == 20 and options["ping_timeout"] == 5
         assert options["proxy"] is None and options["compression"] is None
         assert options["ssl"].check_hostname
         return socket

@@ -40,6 +40,8 @@ from caller_runtime.services.conversation import ConversationExecutor
 
 PATH = "/v1/conversations/voice"
 SUBPROTOCOL = "caller.voice.v1"
+# Live sends speech faster than real time; only playback that stalls this long is an overflow.
+PLAYBACK_WAIT_SECONDS = 2.0
 
 
 class OversizedFrame(PermissionError):
@@ -352,12 +354,18 @@ class VoiceWire:
         self.audio = AudioFlow(generation=1)
         self._inflight_audio = 0
         self._inflight_generation = 1
+        self._room = asyncio.Event()
+
+    def played(self, sequence: int, *, generation: int) -> None:
+        self.audio.played(sequence, generation=generation)
+        self._room.set()
 
     def _advance(self, generation: int) -> None:
         if generation <= self._generation:
             return
         self._generation = generation
         self.audio.reset(generation)
+        self._room.set()
         retained = []
         while not self._outbound.empty():
             item = self._outbound.get_nowait()
@@ -410,9 +418,19 @@ class VoiceWire:
                 return
             raise
         self._advance(generation)
-        extra = self._inflight_audio if self._inflight_generation != generation else 0
-        if len(pcm) + self.audio.pending_bytes + extra > 24000:
-            raise WirePressure("playback_credit_exhausted")
+        deadline = asyncio.get_running_loop().time() + PLAYBACK_WAIT_SECONDS
+        while True:
+            if self.session is None or generation < self._generation:
+                return
+            extra = self._inflight_audio if self._inflight_generation != generation else 0
+            if len(pcm) + self.audio.pending_bytes + extra <= 24000:
+                break
+            self._room.clear()
+            try:
+                async with asyncio.timeout_at(deadline):
+                    await self._room.wait()
+            except TimeoutError:
+                raise WirePressure("playback_credit_exhausted") from None
         frames = self.audio.output(pcm, generation=generation)
         try:
             for frame in frames:
@@ -465,6 +483,7 @@ class VoiceWire:
         self.audio.dispose()
         self._seen.clear()
         self.session = None
+        self._room.set()
 
     def command(self, raw: str) -> tuple[dict[str, Any], bool]:
         if self.session is None:
@@ -841,9 +860,7 @@ def create_router(
                             {"type": "command.ack", "acceptedSequence": message["sequence"]}
                         )
                     elif message["type"] == "audio.played":
-                        wire.audio.played(
-                            message["audioSequence"], generation=message["generation"]
-                        )
+                        wire.played(message["audioSequence"], generation=message["generation"])
                     elif message["type"] == "output.interrupt":
                         current = await session.policy.admission.check_output(
                             session.policy.slot.session_id,

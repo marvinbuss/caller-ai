@@ -312,6 +312,79 @@ def test_saturated_slots_refuse_the_next_session_without_disturbing_active_ones(
     assert not authority_slots(endpoint)
 
 
+def provider_greeting(endpoint, deltas):
+    """Queue Live output the way the int endpoint sent it: 100-ms deltas, faster than real time."""
+    provider = endpoint.provider_sockets[0]
+
+    async def burst():
+        for _ in range(deltas):
+            await provider.events.put(
+                json.dumps(
+                    {
+                        "type": "session.output_audio.delta",
+                        "delta": base64.b64encode(b"\x07\0" * 2400).decode(),
+                    }
+                )
+            )
+
+    endpoint.client.portal.call(burst)
+
+
+def test_a_greeting_burst_waits_for_played_acknowledgements_instead_of_ending(endpoint):
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        provider_greeting(endpoint, 10)
+        received, command = 0, 0
+        while received < 50:
+            frame = socket.receive()
+            if frame.get("bytes") is None:
+                assert json.loads(frame["text"])["type"] == "audio.credit", frame
+                continue
+            _protocol, generation, sequence = struct.unpack(">BII", frame["bytes"][:9])
+            assert sequence == received + 1 and len(frame["bytes"]) == 969
+            received = sequence
+            command += 1
+            socket.send_json(
+                {
+                    "type": "audio.played",
+                    "sequence": command,
+                    "sessionId": ready["sessionId"],
+                    "generation": generation,
+                    "audioSequence": sequence,
+                }
+            )
+        socket.send_json({"type": "stop", "sequence": command + 1, "sessionId": ready["sessionId"]})
+        ended = next_event(socket, "ended")
+        assert ended["code"] == "stopped" and ended["cleanupStatus"] == "complete"
+
+
+def test_playback_that_is_never_acknowledged_still_ends_as_credit_exhausted(endpoint, monkeypatch):
+    from caller_runtime.api import voice
+
+    monkeypatch.setattr(voice, "PLAYBACK_WAIT_SECONDS", 0.2)
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        assert socket.receive_json()["type"] == "ready"
+        provider_greeting(endpoint, 10)
+        frames, errors = 0, []
+        with pytest.raises(WebSocketDisconnect) as closed:
+            while True:
+                frame = socket.receive()
+                if frame.get("bytes") is not None:
+                    frames += 1
+                elif frame.get("text") is not None:
+                    event = json.loads(frame["text"])
+                    if event["type"] == "error":
+                        errors.append(event)
+                else:
+                    raise WebSocketDisconnect(frame.get("code", 1000))
+    assert frames == 25 and closed.value.code == 4413
+    assert errors == [
+        {"type": "error", "code": "limit_exceeded", "reason": "audio_credit_exhausted"}
+    ]
+
+
 def test_a_second_session_for_the_same_manager_is_capacity_unavailable(endpoint):
     with endpoint.connect() as first:
         first.send_json(endpoint.message(1, actor="manager-same"))
