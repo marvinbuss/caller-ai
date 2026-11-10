@@ -84,6 +84,20 @@ def test_the_environment_supplies_the_start_value(
     assert "wss://public.example.net/_event" in script.read_text(encoding="utf-8")
 
 
+def test_an_api_url_equal_to_the_baked_placeholder_falls_back_to_the_public_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = export(tmp_path)
+    baked = tmp_path / "baked-api-url"
+    baked.write_text(BAKED, encoding="utf-8")
+    # The image sets API_URL to the placeholder it was built with.
+    monkeypatch.setenv("API_URL", BAKED)
+    monkeypatch.setenv("CALLER_PUBLIC_ORIGIN", "https://public.example.net")
+    assert apply(tmp_path, baked) == 1
+    text = script.read_text(encoding="utf-8")
+    assert "wss://public.example.net/_event" in text and "caller-api-origin.invalid" not in text
+
+
 def test_socket_origin_maps_the_scheme() -> None:
     assert socket_origin("https://a.example.net") == "wss://a.example.net"
     assert socket_origin("http://a.example.net") == "ws://a.example.net"

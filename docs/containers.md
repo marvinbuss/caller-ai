@@ -41,7 +41,8 @@ worker preserves the foundation's memory state; this is not a production scale-o
 The image build argument `PUBLIC_API_URL` defaults to the placeholder
 `http://caller-api-origin.invalid`, which the export bakes into the frontend. At start the image runs
 `python -m management_app.start`, which rewrites the placeholder (and its socket form) to `API_URL`, or to
-`CALLER_PUBLIC_ORIGIN` when `API_URL` is unset, and then starts the server; one image therefore serves any
+`CALLER_PUBLIC_ORIGIN` when `API_URL` is unset or still the placeholder (the image sets it to the placeholder),
+and then starts the server; one image therefore serves any
 environment (FR-047). Only a plain `http(s)://host[:port]` origin is accepted; anything else stops the start with
 exit code 2. Relative URLs fail the pinned framework's prerender step. The export runs with
 `CALLER_FRONTEND_EXPORT=1`, which registers the editor and test console pages through a build-only stub, so the
