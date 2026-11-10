@@ -231,12 +231,12 @@ def settings_complete(context: Context) -> Check:
         plain = sorted(
             key
             for key in SECRET_SETTINGS & set(env)
-            if "value" in env[key] or not env[key].get("secretRef")
+            if env[key].get("value") or not env[key].get("secretRef")
         )
         if plain:
             problems.append(f"{name}: secret settings not by reference {', '.join(plain)}")
         secrets = resource["properties"].get("configuration", {}).get("secrets") or []
-        if any("value" in secret for secret in secrets):
+        if any(secret.get("value") for secret in secrets):
             problems.append(f"{name}: a secret is stored as a plain value")
     if problems:
         return failed("settings-complete", "container-apps", "; ".join(problems))

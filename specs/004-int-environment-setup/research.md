@@ -103,8 +103,10 @@ real `terraform validate` or first apply.
     sign-in flow to accept `api_audience == client_id` and the full `CALLER_MANAGER_SCOPE`; the contract and tests follow.
   - **Live finding (2026-11-10)**: with one registration the sign-in requests a token for the app itself, and Entra
     refuses `api://<client id>/.default` for that (`AADSTS90009`: only the GUID-based identifier is supported). Entra
-    then posts an error without a code to `/auth/callback`, which answers 401. The sign-in flow now requests
-    `<client id>/.default`; `CALLER_MANAGER_SCOPE` keeps the `api://` form, which the settings check still validates.
+    then posts an error without a code to `/auth/callback`, which answers 401. The GUID form `<client id>/.default`
+    then failed with `AADSTS650057` (the app does not list itself as a required permission). The callback uses only
+    the ID token (audience: the app, roles included), so the sign-in now requests no API scope, only `openid profile`;
+    Entra then returns a code. `CALLER_MANAGER_SCOPE` keeps the `api://` form, which the settings check still validates.
 
 ## R-05 Permit signing key pair
 
