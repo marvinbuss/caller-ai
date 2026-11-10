@@ -909,7 +909,8 @@ def test_foundry_text_uses_explicit_chat_model_and_confirmed_intent_before_http(
                 handoffs=[],
                 tracing=ModelTracing.DISABLED,
             )
-            assert result.output[0].content[0].text == "Synthetic shared reply"
+            message = next(output for output in result.output if output.type == "message")
+            assert message.content[0].text == "Synthetic shared reply"
             assert scopes == ["https://ai.azure.com/.default"] and len(requests) == 1
             observed = (
                 await repository.read(deadline=asyncio.get_running_loop().time() + 1)

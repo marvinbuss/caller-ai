@@ -375,6 +375,14 @@ def test_editor_components_construct_with_typed_reflex_events() -> None:
     assert isinstance(configuration_page(), rx.Component)
 
 
+def test_sign_in_link_loads_the_server_route_instead_of_a_client_page() -> None:
+    from management_app.pages.communities import configuration_page
+
+    tree = json.dumps(configuration_page().render(), default=str)
+    link = tree[tree.index("/auth/login") - 400 : tree.index("/auth/login") + 400]
+    assert "reloadDocument" in link
+
+
 @pytest.mark.parametrize("role", ["welcome", "routing", "goodbye"])
 def test_protected_roles_cannot_be_deleted_disabled_or_moved(draft, role) -> None:
     agent_id = "agent-" + role

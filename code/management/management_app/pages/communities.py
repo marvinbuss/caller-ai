@@ -516,7 +516,7 @@ def configuration_page() -> rx.Component:
                         align="stretch",
                         spacing="8",
                     ),
-                    rx.link("Sign in", href="/auth/login"),
+                    rx.link("Sign in", href="/auth/login", reload_document=True),
                 ),
                 max_width="1200px",
                 margin="0 auto",

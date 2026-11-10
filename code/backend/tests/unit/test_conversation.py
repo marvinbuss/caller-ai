@@ -487,7 +487,14 @@ def text_execution_case(admission_case):
                     "transfer_reason": "Synthetic directed transfer",
                 }
                 call = ("handover_agent", arguments)
-            for chunk in model_stream(None if call else text, call):
+            for chunk in model_stream(
+                "Synthetic greeting that the live model streams before it routes"
+                if call and controls.get("text_with_call")
+                else None
+                if call
+                else text,
+                call,
+            ):
                 yield chunk
 
     async def dispatch(request):
@@ -747,6 +754,35 @@ def test_text_executor_runs_initial_welcome_routing_and_exact_entry_on_one_budge
         ]
         assert all("Synthetic beta request" in json.dumps(request["input"]) for request in requests)
         assert controller.queue.lookup("text-initial") == accepted.receipt
+        assert messages[-1]["type"] == "text.completed"
+        await adapter.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_reply_that_greets_and_routes_in_one_response_continues_to_the_entry(
+    text_execution_case, admission_case, monkeypatch
+):
+    """The live model answers with text and a function call in the same Responses output, and the
+    store answers slowly enough that stream gating overlaps the tool's own transition."""
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    service, repository, container, clock, permit, cache = admission_case
+    read = container.read_item
+
+    async def slow_read(*arguments, **keywords):
+        await asyncio.sleep(0.02)
+        return await read(*arguments, **keywords)
+
+    monkeypatch.setattr(container, "read_item", slow_read)
+
+    async def scenario():
+        controls["initial_flow"] = True
+        controls["text_with_call"] = True
+        controller = await setup()
+        await controller.submit_text("text-greeting", "Synthetic beta request")
+        await controller.process_next(emit=emit)
+        assert not any(message["type"] == "error" for message in messages), messages
+        assert controller.policy.active_agent_id == "b-entry" and len(requests) == 3
         assert messages[-1]["type"] == "text.completed"
         await adapter.close()
 
