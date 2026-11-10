@@ -351,6 +351,15 @@ real `terraform validate` or first apply.
     second after the previous one began; a blocked check still fails closed within the second. Probes ruled out
     the other suspects: a Live connection read at playback pace survived 50 s with and without keepalive, and a
     three-minute, three-turn Live conversation produced no event the validator rejects.
+  - The next sessions still ended at "cleanup pending" while the agent spoke, each about 116 s after ready (120 s
+    after the socket opened), with no authority write in between: the 120-second user-idle clock was never
+    renewed. The runtime counts an input transcript as verified user speech only when its `end_ms` lies inside
+    the audio it forwarded. A five-minute probe showed the Live transcript clock running ahead of the forwarded
+    audio by about 1.3 % (8.4 s against 8.9 s forwarded at 9 s, then +0.9 s at 104 s, +2.3 s at 204 s and +3.7 s at
+    294 s), so after about 40 s every utterance was rejected and the idle limit ended the session during the
+    agent's next long answer. Speech now counts when it ends within 2 % plus 3 s of the forwarded audio (the
+    Live clock also starts at admission, about a second before the first browser frame); a transcript with no
+    forwarded audio still never counts.
 
 ## R-15 Environment check and the functional journey
 

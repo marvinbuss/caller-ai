@@ -1907,6 +1907,32 @@ def test_server_control_field_values_are_closed_not_only_key_names(event):
         server_control(event)
 
 
+@pytest.mark.parametrize(
+    ("end_ms", "forwarded_ms", "verified"),
+    [
+        # Recorded on int: provider transcript time against audio actually forwarded.
+        (8400, 8860, True),
+        (104800, 103880, True),
+        (206200, 203860, True),
+        (297600, 293880, True),
+        # About ten minutes at the observed 1.3 % drift.
+        (608000, 600000, True),
+        # A first utterance shortly after ready, with the Live clock a second ahead.
+        (4600, 2000, True),
+        (4000, 0, False),
+        (8000, 3000, False),
+        (700000, 600000, False),
+    ],
+)
+def test_input_speech_counts_within_the_live_transcript_drift_of_forwarded_audio(
+    end_ms, forwarded_ms, verified
+):
+    from caller_runtime.api.voice import within_forwarded_audio
+
+    # The strict check rejected every utterance after about 40 s, so idle expired mid-answer.
+    assert within_forwarded_audio(end_ms, forwarded_ms * 24) is verified
+
+
 def test_shared_model_readiness_uses_pinned_welcome_before_initial_ready_without_tools(
     text_execution_case, admission_case
 ):
