@@ -40,6 +40,8 @@ from caller_runtime.services.cleanup import CleanupReceiptVerifier
 OperationResult = TypeVar("OperationResult")
 # The contract allows media rechecks at most every second; frames arrive every 20 ms.
 MEDIA_RECHECK_SECONDS = 0.5
+# The watcher rechecks once per second; one check (read plus workload identity) shares this.
+WATCH_CHECK_SECONDS = 0.9
 
 
 class AdmissionError(RuntimeError):
@@ -919,7 +921,9 @@ class TestAdmissionService:
             raise AdmissionError("stale_owner")
         while not stopped.is_set():
             try:
-                deadline = min(self._deadline(), asyncio.get_running_loop().time() + 0.1)
+                started = asyncio.get_running_loop().time()
+                # A 0.1-s budget lost live sessions to one slow read or a signing-key refresh.
+                deadline = min(self._deadline(), started + WATCH_CHECK_SECONDS)
                 current = await self.repository.read(deadline=deadline)
                 slot = self._owned(current, session_id, self.owner_id, owner_epoch)
                 _, now = self._document(current)
@@ -931,7 +935,10 @@ class TestAdmissionService:
                     raise AdmissionError("authority_unavailable") from None
                 if stopped.is_set():
                     return
-                await asyncio.wait_for(stopped.wait(), timeout=0.9)
+                await asyncio.wait_for(
+                    stopped.wait(),
+                    timeout=max(0.0, started + 1 - asyncio.get_running_loop().time()),
+                )
             except TimeoutError:
                 continue
             except AuthorityUnavailable:

@@ -732,8 +732,37 @@ def test_authority_watcher_callback_cannot_block_rechecks_indefinitely(admission
                 service.watch(
                     slot.session_id, slot.owner_epoch, stopped=asyncio.Event(), observed=stalled
                 ),
-                timeout=0.5,
+                timeout=1.5,
             )
+
+    asyncio.run(scenario())
+
+
+def test_authority_watcher_tolerates_a_slow_identity_check_within_its_second(admission_case):
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        await service.mark_ready(slot.session_id, slot.owner_epoch)
+        stopped, checks = asyncio.Event(), []
+
+        # On int a signing-key refresh inside this check ended a live session after 0.1 s.
+        async def slow_identity(observed):
+            await asyncio.sleep(0.3)
+            checks.append(observed.session_id)
+            if len(checks) == 2:
+                stopped.set()
+
+        await asyncio.wait_for(
+            service.watch(
+                slot.session_id, slot.owner_epoch, stopped=stopped, observed=slow_identity
+            ),
+            timeout=3,
+        )
+        assert checks == [slot.session_id, slot.session_id]
 
     asyncio.run(scenario())
 
