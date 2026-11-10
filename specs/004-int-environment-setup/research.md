@@ -332,6 +332,16 @@ real `terraform validate` or first apply.
     0.5 s; any write by this runtime clears it at once, the local terminal fence is still checked on every call,
     and time limits are evaluated against the current clock. Work, transitions and attempts still read fresh.
     With the owner's approval the stuck slot was removed once by an ETag-conditioned operator replace.
+  - After that fix, authority reads fell to about 3 per second, but playback still stuttered and the status
+    flipped between "Playing" and "Idle". The browser worklet started playing at the first 20-ms packet with
+    nothing queued, so every gap in Live's near-real-time delivery became a dropout. It now starts, and after an
+    underrun restarts, only with 200 ms queued or after waiting 200 ms (so a short final phrase still plays),
+    inside the 500-ms playback bound. Twice a session ended as "cleanup pending" without user action: the relay
+    closed the browser with 1011 (`test.relay` failure) and the runtime then cleaned up completely, but the logs
+    carried no cause, and no slow read, key refresh, platform event or CPU pressure lined up with it. The relay's
+    connection to the runtime used a 1-second pong deadline with one queued message, the setting that dropped the
+    Live socket before; it is now 5 s. An unexpected relay failure now also logs its error class and close codes
+    (`test.relay.failure`), and no content, so a remaining cause can be named from the next test.
 
 ## R-15 Environment check and the functional journey
 
