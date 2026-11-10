@@ -104,7 +104,8 @@ jobs:
           uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation plan --environment "$DEPLOY_ENVIRONMENT" --root "$DEPLOY_ROOT" --plan-container "$PLAN_CONTAINER" "${flags[@]}"
 
   apply:
-    if: inputs.apply_changes && needs.plan.result == 'success' && needs.plan.outputs.changes != '0'
+    # An empty plan is applied too, so the environment check still runs.
+    if: inputs.apply_changes && needs.plan.result == 'success'
     needs: plan
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 120
