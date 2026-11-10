@@ -293,6 +293,17 @@ def test_settings_complete_names_missing_settings_and_plain_secrets(case):
     assert "CALLER_SIGNING_KEY_PEM" in result.detail and SENTINEL not in result.detail
 
 
+def test_an_empty_value_next_to_a_secret_reference_is_still_by_reference(case):
+    module, world, _graph, build = case
+    # The Container Apps API returns `value: ""` alongside `secretRef`.
+    for item in world[MANAGEMENT_ID]["properties"]["template"]["containers"][0]["env"]:
+        if item.get("secretRef"):
+            item["value"] = ""
+    for secret in world[MANAGEMENT_ID]["properties"]["configuration"].get("secrets", []):
+        secret["value"] = None
+    assert module.settings_complete(build()).status == "pass"
+
+
 def test_revisions_must_be_healthy_within_five_minutes(case):
     module, world, _graph, build = case
     world[f"{RUNTIME_ID}/revisions/runtime--1"]["properties"] = {
