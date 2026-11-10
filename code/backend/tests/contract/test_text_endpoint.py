@@ -153,7 +153,7 @@ def test_turn_streams_conversation_then_deltas_then_completion(endpoint):
     assert events[0][1]["conversationId"]
     assert "".join(data["text"] for kind, data in events if kind == "text.delta") == REPLY
     assert events[-1][1]["text"] == ""
-    assert endpoint.requests[0]["messages"][0]["content"] == "Synthetic welcome prompt"
+    assert endpoint.requests[0]["instructions"] == "Synthetic welcome prompt"
 
 
 def test_new_conversation_is_stored_for_its_owner_only_with_item_expiry(endpoint):
@@ -172,7 +172,7 @@ def test_follow_up_continues_from_the_stored_history(endpoint):
     second = endpoint.post(2, conversationId=identifier, text="Synthetic second question")
     assert second.status_code == 200
     assert parse_sse(second.text)[0][1]["conversationId"] == identifier
-    sent = json.dumps(endpoint.requests[1]["messages"])
+    sent = json.dumps(endpoint.requests[1]["input"])
     assert "Synthetic first question" in sent and REPLY in sent
     assert "Synthetic second question" in sent
     record = endpoint.history.records[identifier]

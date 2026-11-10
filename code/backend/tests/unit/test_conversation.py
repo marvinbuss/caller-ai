@@ -6,6 +6,7 @@ from datetime import timedelta
 
 import pytest
 
+from tests.doubles import model_reply, model_stream
 from tests.unit.test_admission import admission_case as admission_case
 from tests.unit.test_admission import authority_store as authority_store
 from tests.unit.test_admission import live_case as live_case
@@ -471,50 +472,23 @@ def text_execution_case(admission_case):
 
         async def __aiter__(self):
             text = "x" * 65537 if controls["oversized"] else "Synthetic shared streamed reply"
+            call = None
             if self.action is not None:
                 call_name, arguments = self.action
-                call = {
-                    "index": 0,
-                    "id": "call-wire-" + str(len(requests)),
-                    "type": "function",
-                    "function": {"name": call_name, "arguments": json.dumps(arguments)},
-                }
-                deltas = [({"role": "assistant", "tool_calls": [call]}, None), ({}, "tool_calls")]
+                call = (call_name, arguments)
             elif controls.get("initial_flow") and len(requests) <= 2:
                 name = "enter_routing" if len(requests) == 1 else "route_community"
                 arguments = {} if len(requests) == 1 else {"community_id": "beta"}
-                call = {
-                    "index": 0,
-                    "id": "call-initial-" + str(len(requests)),
-                    "type": "function",
-                    "function": {"name": name, "arguments": json.dumps(arguments)},
-                }
-                deltas = [({"role": "assistant", "tool_calls": [call]}, None), ({}, "tool_calls")]
+                call = (name, arguments)
             elif controls.get("handover") and len(requests) == 1:
                 arguments = {
                     "agent_id": "b-peer",
                     "request_summary": "Synthetic approved summary",
                     "transfer_reason": "Synthetic directed transfer",
                 }
-                call = {
-                    "index": 0,
-                    "id": "call-handover",
-                    "type": "function",
-                    "function": {"name": "handover_agent", "arguments": json.dumps(arguments)},
-                }
-                deltas = [({"role": "assistant", "tool_calls": [call]}, None), ({}, "tool_calls")]
-            else:
-                deltas = [({"role": "assistant", "content": text}, None), ({}, "stop")]
-            for delta, finish in deltas:
-                event = {
-                    "id": "chat-fixture",
-                    "object": "chat.completion.chunk",
-                    "created": 1793318400,
-                    "model": "reasoning-fixture",
-                    "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
-                }
-                yield ("data: " + json.dumps(event) + "\n\n").encode()
-            yield b"data: [DONE]\n\n"
+                call = ("handover_agent", arguments)
+            for chunk in model_stream(None if call else text, call):
+                yield chunk
 
     async def dispatch(request):
         body = json.loads(request.content)
@@ -529,50 +503,14 @@ def text_execution_case(admission_case):
                 )
             if controls.get("prepare_late"):
                 clock.advance(11)
-            return httpx2.Response(
-                200,
-                json={
-                    "id": "chat-prepare",
-                    "object": "chat.completion",
-                    "created": 1793318400,
-                    "model": "reasoning-fixture",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": "Synthetic configured welcome ready",
-                            },
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
-                },
-            )
+            return httpx2.Response(200, json=model_reply("Synthetic configured welcome ready"))
         if "clarity" in controls and not body.get("stream"):
-            assert body["response_format"]["type"] == "json_schema"
+            assert body["text"]["format"]["type"] == "json_schema"
             assert not body.get("tools") and body["store"] is False
             controls.setdefault("timeouts", []).append(request.extensions["timeout"])
             clock.advance(4)
             return httpx2.Response(
-                200,
-                json={
-                    "id": "chat-clarity",
-                    "object": "chat.completion",
-                    "created": 1793318400,
-                    "model": "reasoning-fixture",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": json.dumps({"unambiguous": controls["clarity"]}),
-                            },
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
-                },
+                200, json=model_reply(json.dumps({"unambiguous": controls["clarity"]}))
             )
         assert body["stream"] is True and body["store"] is False
         if "clarity" in controls:
@@ -641,7 +579,7 @@ def test_text_executor_streams_real_sdk_reply_without_live_and_bounds_complete_r
         assert accepted.receipt.work.work_deadline_utc == clock.utc_now() + timedelta(seconds=10)
         await controller.process_next(emit=emit)
         assert len(requests) == 1
-        assert requests[0]["messages"][0]["content"] == "Synthetic prompt for b-entry"
+        assert requests[0]["instructions"] == "Synthetic prompt for b-entry"
         observed = (
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority.slots[0]
@@ -716,8 +654,8 @@ def test_text_executor_applies_directed_tool_handover_with_filtered_context(text
         await controller.process_next(emit=emit)
         assert controller.policy.active_agent_id == "b-peer"
         assert controller.policy.agent_epoch == original_epoch + 1 and len(requests) == 2
-        assert requests[1]["messages"][0]["content"] == "Synthetic prompt for b-peer"
-        target_context = json.dumps(requests[1]["messages"])
+        assert requests[1]["instructions"] == "Synthetic prompt for b-peer"
+        target_context = json.dumps(requests[1]["input"])
         assert "Synthetic approved summary" in target_context
         assert "Synthetic original source-only detail" not in target_context
         assert "Synthetic prompt for b-entry" not in target_context
@@ -774,7 +712,7 @@ def test_speech_delegation_uses_shared_executor_and_exact_id_without_guessing(
         assert len(appended[0]["content"].encode("utf-8")) <= 500
         if clear:
             assert appended[0]["content"] == "Synthetic shared streamed reply"
-            assert requests[0]["messages"][0]["content"] == "Synthetic welcome prompt"
+            assert requests[0]["instructions"] == "Synthetic welcome prompt"
         else:
             assert "clarify" in appended[0]["content"].lower()
         assert not any(event["type"].startswith("text.") for event in messages)
@@ -802,14 +740,12 @@ def test_text_executor_runs_initial_welcome_routing_and_exact_entry_on_one_budge
         accepted = await controller.submit_text("text-initial", "Synthetic beta request")
         await controller.process_next(emit=emit)
         assert controller.policy.active_agent_id == "b-entry" and len(requests) == 3
-        assert [request["messages"][0]["content"] for request in requests] == [
+        assert [request["instructions"] for request in requests] == [
             "Synthetic welcome prompt",
             "Synthetic routing prompt",
             "Synthetic prompt for b-entry",
         ]
-        assert all(
-            "Synthetic beta request" in json.dumps(request["messages"]) for request in requests
-        )
+        assert all("Synthetic beta request" in json.dumps(request["input"]) for request in requests)
         assert controller.queue.lookup("text-initial") == accepted.receipt
         assert messages[-1]["type"] == "text.completed"
         await adapter.close()
@@ -1730,10 +1666,10 @@ def test_correlated_fragments_need_shared_backend_clarity_before_any_actions(
         deadline = accepted.receipt.work.work_deadline_utc
         await controller.process_next(emit=emit)
         assert len(requests) == 1 + int(clear)
-        assert requests[0]["messages"][0]["content"] == "Synthetic welcome prompt"
-        assert "Synthetic correlated fragment text" in json.dumps(requests[0]["messages"])
+        assert requests[0]["instructions"] == "Synthetic welcome prompt"
+        assert "Synthetic correlated fragment text" in json.dumps(requests[0]["input"])
         if clear:
-            assert requests[1]["messages"][0]["content"] == "Synthetic welcome prompt"
+            assert requests[1]["instructions"] == "Synthetic welcome prompt"
             assert max(controls["timeouts"][1].values()) <= 6
         final = [event for event in socket.sent if event["type"] == "session.commentary.append"]
         assert len(final) == 1 and final[0]["delegation_id"] == "delegation-fragments"
@@ -1957,10 +1893,7 @@ def test_shared_model_readiness_uses_pinned_welcome_before_initial_ready_without
         )
         controls["prepare"] = True
         await controller.prepare()
-        assert (
-            len(requests) == 1
-            and requests[0]["messages"][0]["content"] == "Synthetic welcome prompt"
-        )
+        assert len(requests) == 1 and requests[0]["instructions"] == "Synthetic welcome prompt"
         observed = (
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority.slots[0]

@@ -37,7 +37,7 @@ def run_owned_browser_runtime(fixture_path):
     from caller_runtime.adapters.admission_repository import TestAdmissionRepository
     from caller_runtime.composition import ConversationRuntime, RuntimeOptions
     from caller_runtime.main import create_app
-    from tests.doubles import ContainerDouble
+    from tests.doubles import ContainerDouble, model_reply, model_stream, tool_names
 
     path = Path(fixture_path)
     fixture = json.loads(path.read_text())
@@ -88,7 +88,7 @@ def run_owned_browser_runtime(fixture_path):
                 return httpx2.Response(503, json={"error": {"message": "Synthetic unknown result"}})
             body = json.loads(request.content)
             assert body["store"] is False and not body.get("parallel_tool_calls")
-            names = {tool["function"]["name"] for tool in body.get("tools", [])}
+            names = tool_names(body)
             action = (
                 ("enter_routing", {})
                 if "enter_routing" in names
@@ -99,60 +99,12 @@ def run_owned_browser_runtime(fixture_path):
                 )
             )
             if not body.get("stream"):
-                return httpx2.Response(
-                    200,
-                    json={
-                        "id": "fixture-ready",
-                        "object": "chat.completion",
-                        "created": int(time.time()),
-                        "model": "reasoning-fixture",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "message": {"role": "assistant", "content": "Synthetic ready"},
-                                "finish_reason": "stop",
-                            }
-                        ],
-                        "usage": {"prompt_tokens": 8, "completion_tokens": 2, "total_tokens": 10},
-                    },
-                )
+                return httpx2.Response(200, json=model_reply("Synthetic ready"))
 
             class Chunks(httpx2.AsyncByteStream):
                 async def __aiter__(self):
-                    if action is None:
-                        deltas = [
-                            ({"role": "assistant", "content": "Synthetic shared reply"}, None),
-                            ({}, "stop"),
-                        ]
-                    else:
-                        name, arguments = action
-                        call = {
-                            "index": 0,
-                            "id": "fixture-" + uuid4().hex,
-                            "type": "function",
-                            "function": {"name": name, "arguments": json.dumps(arguments)},
-                        }
-                        deltas = [
-                            ({"role": "assistant", "tool_calls": [call]}, None),
-                            ({}, "tool_calls"),
-                        ]
-                    for delta, finish in deltas:
-                        yield (
-                            "data: "
-                            + json.dumps(
-                                {
-                                    "id": "fixture-text",
-                                    "object": "chat.completion.chunk",
-                                    "created": int(time.time()),
-                                    "model": "reasoning-fixture",
-                                    "choices": [
-                                        {"index": 0, "delta": delta, "finish_reason": finish}
-                                    ],
-                                }
-                            )
-                            + "\n\n"
-                        ).encode()
-                    yield b"data: [DONE]\n\n"
+                    for chunk in model_stream(None if action else "Synthetic shared reply", action):
+                        yield chunk
 
             return httpx2.Response(
                 200, headers={"content-type": "text/event-stream"}, stream=Chunks()
@@ -846,10 +798,7 @@ def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanu
             slot = controller.policy.slot
             assert slot.ready_at is not None and slot.active_agent_id == "welcome"
             assert controller.policy.snapshot is runtime.admission.snapshot_for(slot)
-            assert (
-                len(requests) == 1
-                and requests[0]["messages"][0]["content"] == "Synthetic welcome prompt"
-            )
+            assert len(requests) == 1 and requests[0]["instructions"] == "Synthetic welcome prompt"
             assert slot.resources["model"].attempted == slot.resources["model"].settled == 1
             assert slot.resources["capability"].attempted == 0
             assert slot.resources["live"].attempted == (2 if mode == "speech" else 0)

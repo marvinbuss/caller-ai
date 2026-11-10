@@ -7,6 +7,8 @@ from datetime import timedelta
 
 import pytest
 
+from tests.doubles import model_reply, model_stream
+
 
 @pytest.fixture
 def authority_store():
@@ -863,29 +865,13 @@ def test_foundry_text_uses_explicit_chat_model_and_confirmed_intent_before_http(
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority
         assert authority.slots[0].resources["model"].attempt is not None
-        assert request.url == "https://approved-fixture.openai.azure.com/openai/v1/chat/completions"
+        # Reasoning deployments accept function tools only on the Responses API.
+        assert request.url == "https://approved-fixture.openai.azure.com/openai/v1/responses"
         assert request.headers["authorization"] == "Bearer synthetic-foundry-token"
         assert body["model"] == "reasoning-fixture" and body["store"] is False
         assert body.get("parallel_tool_calls") in {False, None}
-        # Reasoning deployments reject max_tokens with 400 unsupported_parameter.
-        assert "max_tokens" not in body and body["max_completion_tokens"] == 512
-        return httpx2.Response(
-            200,
-            json={
-                "id": "chat-fixture",
-                "object": "chat.completion",
-                "created": 1793318400,
-                "model": "reasoning-fixture",
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": "Synthetic shared reply"},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9},
-            },
-        )
+        assert body["max_output_tokens"] == 512 and "max_tokens" not in body
+        return httpx2.Response(200, json=model_reply("Synthetic shared reply"))
 
     adapter = FoundryTextAdapter(
         endpoint="https://approved-fixture.openai.azure.com",
@@ -1125,19 +1111,8 @@ def test_foundry_text_stream_is_gated_and_early_close_never_proves_settlement(
 
     class Chunks(httpx2.AsyncByteStream):
         async def __aiter__(self):
-            for delta, finish in (
-                ({"role": "assistant", "content": "Synthetic streamed reply"}, None),
-                ({}, "stop"),
-            ):
-                event = {
-                    "id": "chat-stream-fixture",
-                    "object": "chat.completion.chunk",
-                    "created": 1793318400,
-                    "model": "reasoning-fixture",
-                    "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
-                }
-                yield ("data: " + json.dumps(event) + "\n\n").encode()
-            yield b"data: [DONE]\n\n"
+            for chunk in model_stream("Synthetic streamed reply"):
+                yield chunk
 
     async def stream(request):
         requests.append(request)
@@ -1204,7 +1179,7 @@ def test_foundry_text_stream_is_gated_and_early_close_never_proves_settlement(
             ).authority.slots[0]
             assert observed.attempted_through == 1 and observed.settled_through == int(complete)
             assert len(requests) == 1 and all(
-                "/chat/completions" in str(request.url) for request in requests
+                str(request.url).endswith("/openai/v1/responses") for request in requests
             )
         finally:
             await adapter.close()
