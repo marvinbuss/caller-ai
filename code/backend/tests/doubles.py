@@ -79,10 +79,30 @@ def parse_sse(body: str) -> list[tuple[str, dict]]:
 
 
 def model_reply(text: str | None = None, call: tuple[str, dict] | None = None) -> dict:
-    """A completed Responses API object with either a text message or one function call."""
+    """A completed Responses API object shaped like the live reasoning model: a reasoning item,
+    then a text message, one function call, or both."""
+    output: list[dict] = [
+        {
+            "type": "reasoning",
+            "id": "rs-fixture",
+            "summary": [],
+            "content": [],
+            "encrypted_content": "synthetic-encrypted-reasoning",
+        }
+    ]
+    if text is not None or call is None:
+        output.append(
+            {
+                "type": "message",
+                "id": "msg-fixture",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": text or "", "annotations": []}],
+            }
+        )
     if call is not None:
         name, arguments = call
-        output = [
+        output.append(
             {
                 "type": "function_call",
                 "id": "fc-fixture",
@@ -91,17 +111,7 @@ def model_reply(text: str | None = None, call: tuple[str, dict] | None = None) -
                 "arguments": json.dumps(arguments),
                 "status": "completed",
             }
-        ]
-    else:
-        output = [
-            {
-                "type": "message",
-                "id": "msg-fixture",
-                "role": "assistant",
-                "status": "completed",
-                "content": [{"type": "output_text", "text": text or "", "annotations": []}],
-            }
-        ]
+        )
     return {
         "id": "resp-fixture",
         "object": "response",
@@ -126,17 +136,23 @@ def model_stream(text: str | None = None, call: tuple[str, dict] | None = None) 
     """The server-sent events of a streamed Responses API reply."""
     reply = model_reply(text, call)
     events: list[dict] = [{"type": "response.created", "response": {**reply, "output": []}}]
-    if call is None:
-        events.append(
-            {
-                "type": "response.output_text.delta",
-                "item_id": "msg-fixture",
-                "output_index": 0,
-                "content_index": 0,
-                "delta": text or "",
-                "logprobs": [],
-            }
-        )
+    for index, item in enumerate(reply["output"]):
+        events.append({"type": "response.output_item.added", "output_index": index, "item": item})
+        if item["type"] == "message":
+            # The live model streams a few characters per delta.
+            content = text or ""
+            for start in range(0, max(len(content), 1), 4):
+                events.append(
+                    {
+                        "type": "response.output_text.delta",
+                        "item_id": item["id"],
+                        "output_index": index,
+                        "content_index": 0,
+                        "delta": content[start : start + 4],
+                        "logprobs": [],
+                    }
+                )
+        events.append({"type": "response.output_item.done", "output_index": index, "item": item})
     events.append({"type": "response.completed", "response": reply})
     return [
         ("data: " + json.dumps({**event, "sequence_number": number}) + "\n\n").encode()

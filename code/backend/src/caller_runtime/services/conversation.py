@@ -29,6 +29,7 @@ from caller_runtime.adapters.gpt_live import GptLiveSession
 from caller_runtime.adapters.strict_json import unique_object
 from caller_runtime.domain.conversation import Metadata, TestSlot, WorkBudget
 from caller_runtime.observability import Telemetry
+from caller_runtime.services.admission import AdmissionError
 from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
 from caller_runtime.services.conversation_agents import build_agents
 from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
@@ -332,10 +333,19 @@ class ConversationExecutor:
         if self._failed:
             raise PermissionError("work_queue_closed")
         item.receipt.work.require(self.utc_now())
-        slot = self.policy.slot
-        current = await self.policy.admission.check_output(
-            slot.session_id, slot.owner_epoch, generation=slot.generation
-        )
+        for _attempt in range(2):
+            slot = self.policy.slot
+            try:
+                current = await self.policy.admission.check_output(
+                    slot.session_id, slot.owner_epoch, generation=slot.generation
+                )
+                break
+            except AdmissionError as error:
+                # This executor's own tool transition can land while the read is in flight.
+                if error.code != "stale_generation" or await self.policy.settled() is slot:
+                    raise
+        else:
+            raise PermissionError("stale_generation")
         if item.generation != current.generation or item.agent_epoch != current.agent_epoch:
             raise PermissionError("stale_generation")
         if initial and (

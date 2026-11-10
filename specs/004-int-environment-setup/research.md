@@ -237,6 +237,9 @@ real `terraform validate` or first apply.
 - **Live finding (2026-11-10)**: the image itself sets `API_URL` to the placeholder, so on `int` the start script
   took the placeholder as the target, rewrote nothing, and the browser tried `ws://caller-api-origin.invalid`. An
   `API_URL` equal to the baked placeholder is now ignored, and `CALLER_PUBLIC_ORIGIN` applies.
+- **Live finding (2026-11-11)**: the first click on "Sign in" showed 404. The link was a client-side router link,
+  so the browser looked for a frontend page `/auth/login`, which does not exist; a reload reached the server
+  route. The link now forces a full page load (`reload_document=True`).
 - **Constraint**: Reflex must stay the frontend framework (Principle V).
 
 ## R-13 Data store and credentials
@@ -284,6 +287,13 @@ real `terraform validate` or first apply.
       nonce or attempt history changed).
   - `max_input_tokens` must be at least 16384: the adapter reserves 4096 plus 1024 per tool, and community
     agents carry at least four policy tools.
+  - After the first reply the test showed "Work unavailable". The live model greets and calls `enter_routing` in
+    the same response, streamed as about 33 events. The executor checked the slot in storage for each event
+    (about 20 ms each), while the SDK ran the tool, whose transition raised the generation. A check that was
+    already reading then saw the new generation and failed with `stale_generation`. The check now waits for the
+    executor's own transition to finish and checks once more against the new slot; a generation change that
+    this executor did not make still stops the output. The test doubles now stream the live event shape and
+    the storage fake adds read latency, which reproduced the failure before the fix.
 
 ## R-15 Environment check and the functional journey
 

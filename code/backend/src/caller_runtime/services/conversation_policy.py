@@ -57,6 +57,11 @@ class ConversationPolicy:
     def agent_epoch(self) -> int:
         return self.slot.agent_epoch
 
+    async def settled(self) -> TestSlot:
+        """Return the slot once any transition this policy is applying has finished."""
+        async with self._lock:
+            return self.slot
+
     def _source(
         self, agent_id: str | None = None, agent_epoch: int | None = None
     ) -> dict[str, Any]:
