@@ -44,6 +44,19 @@ SUBPROTOCOL = "caller.voice.v1"
 PLAYBACK_WAIT_SECONDS = 2.0
 
 
+# Live transcript time ran 1.3 % ahead of forwarded audio on int (+3.7 s after 294 s), and its
+# clock starts at admission, about a second before the browser's first forwarded frame.
+TRANSCRIPT_DRIFT_RATIO = 1.02
+TRANSCRIPT_DRIFT_MS = 3000
+
+
+def within_forwarded_audio(end_ms: float, accepted_samples: int) -> bool:
+    """Whether a provider transcript ends inside audio this session actually forwarded."""
+    if accepted_samples <= 0:
+        return False
+    return end_ms <= accepted_samples / 24 * TRANSCRIPT_DRIFT_RATIO + TRANSCRIPT_DRIFT_MS
+
+
 class OversizedFrame(PermissionError):
     pass
 
@@ -762,7 +775,9 @@ def create_router(
                     }:
                         input_speech = (
                             kind == "session.input_transcript.delta"
-                            and event["end_ms"] <= accepted_samples.get(generation, 0) / 24
+                            and within_forwarded_audio(
+                                event["end_ms"], accepted_samples.get(generation, 0)
+                            )
                             and event["end_ms"] > speech_end.get(generation, -1)
                         )
                         await session.accept_transcript(
