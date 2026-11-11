@@ -386,6 +386,12 @@ real `terraform validate` or first apply.
     check's text journey failed with `empty_reply` because it read the reply from `text.completed`, which by
     contract is an empty end marker; it now joins the `text.delta` events. A failed work item now logs its
     error class and fixed code (`test.work.failure`), never content.
+  - With that logging, the remaining flaky CI start (browser and relay speech tests, a session ending as
+    "cleanup pending" before ready) named itself: `test.admission.failure` with `authority_unavailable`. The
+    work check before a model or Live attempt gave its authority read one second, less than its work budget, so
+    one stalled read on a loaded runner failed the start; the same cap applied to a live start's first read. Both
+    reads now use the remaining work or admission budget (at most 10 s). Failed starts log their error class and
+    fixed code (`test.admission.failure`).
 
 ## R-15 Environment check and the functional journey
 

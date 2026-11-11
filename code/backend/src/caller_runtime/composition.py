@@ -356,7 +356,7 @@ class ConversationRuntime:
                     raise AdmissionError("configuration_unavailable")
                 slot = await admission.reserve(permit)
                 current = await admission.repository.read(
-                    deadline=asyncio.get_running_loop().time() + min(1, remaining)
+                    deadline=asyncio.get_running_loop().time() + remaining
                 )
                 present = {entry.session_id for entry in current.authority.slots}
                 for session_id in tuple(self._sessions):
