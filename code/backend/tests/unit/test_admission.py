@@ -770,6 +770,34 @@ def test_work_check_waits_for_a_slow_authority_read_within_the_work_budget(admis
     asyncio.run(scenario())
 
 
+def test_ten_second_budget_survives_float_rounding_on_a_coarse_clock(admission_case, monkeypatch):
+    from caller_runtime.domain.conversation import SessionLimits, WorkBudget
+
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        limits = SessionLimits(
+            started_at=slot.started_at,
+            admission_deadline_utc=slot.admission_deadline_utc,
+            auth_expires_at=slot.auth_expires_at,
+        )
+        work = WorkBudget.accept(limits, clock.utc_now())
+        # Windows ticks every 15.6 ms; (60.001 + 10) - 60.001 rounds to just over 10 s.
+        frozen = 60.001
+        assert (frozen + 10.0) - frozen > 10
+        monkeypatch.setattr(asyncio.get_running_loop(), "time", lambda: frozen)
+        checked = await service.check_work(
+            slot.session_id, slot.owner_epoch, generation=slot.generation, work=work
+        )
+        assert checked.session_id == slot.session_id
+
+    asyncio.run(scenario())
+
+
 def test_authority_watcher_tolerates_a_slow_identity_check_within_its_second(admission_case):
     service, repository, container, clock, permit, cache = admission_case
 

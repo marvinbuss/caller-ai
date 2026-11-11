@@ -24,6 +24,8 @@ from caller_runtime.domain.text_history import TextConversation
 COSMOS_METADATA = frozenset({"_etag", "_rid", "_self", "_attachments", "_ts"})
 PROBE_ITEM = "history-store-probe"
 MAX_DOCUMENT_BYTES = 512 * 1024
+# 10 s plus rounding: on Windows loop.time() ticks every 15.6 ms, so (t + 10) - t can exceed 10.
+MAX_BUDGET_SECONDS = 10.001
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +50,7 @@ class TextHistoryRepository:
     def _budget(deadline: float) -> None:
         if type(deadline) not in (int, float) or not math.isfinite(deadline):
             raise PermissionError("history_unavailable")
-        if not 0 < deadline - asyncio.get_running_loop().time() <= 10:
+        if not 0 < deadline - asyncio.get_running_loop().time() <= MAX_BUDGET_SECONDS:
             raise PermissionError("history_unavailable")
 
     def _body(self, conversation: TextConversation) -> dict[str, Any]:

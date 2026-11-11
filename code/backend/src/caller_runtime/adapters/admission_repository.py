@@ -24,6 +24,8 @@ from caller_runtime.domain.ports import ContainerPort
 
 AUTHORITY_ID: Final = "browser-test-authority-v1"
 COSMOS_METADATA = frozenset({"_etag", "_rid", "_self", "_attachments", "_ts"})
+# 10 s plus rounding: on Windows loop.time() ticks every 15.6 ms, so (t + 10) - t can exceed 10.
+MAX_BUDGET_SECONDS: Final = 10.001
 
 
 class AuthorityUnavailable(RuntimeError):
@@ -153,7 +155,7 @@ class TestAdmissionRepository:
     def _budget(deadline: float) -> None:
         if type(deadline) not in (int, float) or not math.isfinite(deadline):
             raise AuthorityUnavailable()
-        if not 0 < deadline - asyncio.get_running_loop().time() <= 10:
+        if not 0 < deadline - asyncio.get_running_loop().time() <= MAX_BUDGET_SECONDS:
             raise AuthorityUnavailable()
 
     async def read(self, *, deadline: float) -> AuthoritySnapshot:
