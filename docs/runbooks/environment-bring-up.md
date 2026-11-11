@@ -9,10 +9,10 @@ How to bring up, verify, change, recover and remove an environment such as `int`
 |-------|--------|
 | Environment files, validator, Terraform roots and modules, delivery script, workflows, environment check | Delivered and tested offline |
 | Image publishing workflow | Delivered; first publication and the public package setting are manual |
-| Identity script | Delivered and tested with Pester against a fake Azure CLI; not yet run against a real directory |
-| Application live mode | Delivered and tested with fake clients: settings validation, live composition of both apps, the reviewed fingerprint and the frontend start address (see [Application live mode](application-live-mode.md)); not yet run against Azure |
-| Functional journey in the check (`--functional`) | Delivered; on `int` the probes, sign-in redirect, configuration read and console ticket pass. Text and speech sessions wait for a published configuration with an enabled community (step 5) |
-| Live acceptance on `int` | Not run. Results go to [the acceptance record](../acceptance/int-environment.md) |
+| Identity script | Delivered and tested with Pester against a fake Azure CLI; run against the `int` directory on 2026-11-09 |
+| Application live mode | Delivered and tested with fake clients: settings validation, live composition of both apps, the reviewed fingerprint and the frontend start address (see [Application live mode](application-live-mode.md)); running on `int` since 2026-11-11 |
+| Functional journey in the check (`--functional`) | Delivered; on `int` the probes, sign-in redirect, configuration read, text reply and speech session pass (run 43006092060) |
+| Live acceptance on `int` | Pending, not accepted: every gate passed except destroy and recreate and the second-engineer bring-up, which the owner skipped. Results are in [the acceptance record](../acceptance/int-environment.md) |
 
 ## Prerequisites
 

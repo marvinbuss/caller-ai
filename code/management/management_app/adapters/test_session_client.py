@@ -38,9 +38,6 @@ from management_app.models.test_session import ConsoleSnapshot, StartPermit, utc
 from management_app.observability import Telemetry
 from management_app.security import ServerSession
 
-# 10 s plus rounding: on Windows loop.time() ticks every 15.6 ms, so (t + 10) - t can exceed 10.
-MAX_BUDGET_SECONDS = 10.001
-
 
 class WorkloadCredential(Protocol):
     async def get_token(self, *scopes: str) -> AccessToken: ...
@@ -151,7 +148,7 @@ class TestSessionClient:
             (permit.admission_deadline_utc - now).total_seconds(),
             (permit.auth_expires_at - now).total_seconds(),
         )
-        if not math.isfinite(deadline) or not 0 < remaining <= MAX_BUDGET_SECONDS:
+        if not math.isfinite(deadline) or not 0 < remaining <= 10:
             raise PermissionError("test_deadline_exceeded")
         return remaining
 
@@ -470,8 +467,9 @@ class TestSessionClient:
             stopped.set()
             for task in tasks:
                 task.cancel()
+            # Not gather: it re-raises a child's bare CancelledError, which hides a server cancel.
             if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.wait(tasks)
             seen.clear()
             frames.clear()
 

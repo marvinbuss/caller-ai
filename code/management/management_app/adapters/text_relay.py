@@ -391,4 +391,5 @@ class TextRelay:
             ended.set()
             for task in tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # Not gather: it re-raises a child's bare CancelledError, which hides a server cancel.
+            await asyncio.wait(tasks)

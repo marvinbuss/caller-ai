@@ -662,7 +662,8 @@ def create_router(
             if state == WebSocketState.CONNECTED:
                 for task in tasks:
                     task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+                if tasks:
+                    await asyncio.wait(tasks)
                 try:
                     async with asyncio.timeout(1):
                         await socket.send_text(
@@ -984,7 +985,7 @@ def create_router(
             for task in background:
                 task.cancel()
             if background:
-                await asyncio.gather(*background, return_exceptions=True)
+                await asyncio.wait(background)
             released = await session.close()
             await wire.emit(
                 {
@@ -1007,8 +1008,9 @@ def create_router(
             release_pre_auth()
             for task in tasks:
                 task.cancel()
+            # Not gather: it re-raises a child's bare CancelledError, which hides a server cancel.
             if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.wait(tasks)
             wire.dispose()
             if session is not None:
                 await session.close()

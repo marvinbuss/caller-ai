@@ -1,8 +1,10 @@
 """The console reaches the backend only through the two public endpoints, built in one place."""
 
 import asyncio
+import contextlib
 import json
 from datetime import timedelta
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -229,6 +231,68 @@ def run_text_session(handler, texts, *, validate=None):
 def sse(*events):
     body = "".join(f"event: {kind}\ndata: {json.dumps(data)}\n\n" for kind, data in events)
     return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, content=body)
+
+
+@pytest.mark.parametrize("steps", range(8))
+def test_text_session_teardown_keeps_a_server_cancel_that_lands_during_it(steps):
+    import anyio
+    from starlette.websockets import WebSocketDisconnect
+
+    from management_app.adapters.backend_connection import TurnPermits
+    from management_app.adapters.test_session_client import TestSessionClient
+    from management_app.adapters.text_relay import ActiveRevision
+    from management_app.models.test_session import StartPermit
+
+    permit = StartPermit.model_validate_json(json.dumps(permit_document() | {"mode": "text"}))
+    scopes = []
+
+    class LeavingBrowser(Browser):
+        async def receive(self):
+            # The server cancel lands `steps` loop steps after the browser leaves.
+            loop = asyncio.get_running_loop()
+            cancel = scopes[0].cancel
+            for _ in range(steps):
+                cancel = partial(loop.call_soon, cancel)
+            loop.call_soon(cancel)
+            raise WebSocketDisconnect(1001)
+
+    async def revision():
+        return ActiveRevision("published-fixture", 7, "welcome")
+
+    browser = LeavingBrowser([])
+    client = TestSessionClient(
+        endpoint="https://runtime.fixture.example",
+        audience="11111111-2222-4333-8444-555555555555",
+        approved_hosts=frozenset({"runtime.fixture.example"}),
+        credential=SimpleNamespace(get_token=AsyncMock()),
+        utc_now=lambda: permit.issued_at,
+        monotonic=lambda: 2.0,
+        max_clock_skew_seconds=0,
+        permits=TurnPermits(
+            SimpleNamespace(sign=lambda claims: "signed"), lambda: permit.issued_at
+        ),
+        active_revision=revision,
+        http_transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+
+    async def scenario():
+        # A bare CancelledError from teardown escapes the scope and ends the server's task group.
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            with contextlib.suppress(Exception):
+                await client.run(
+                    browser,
+                    permit=permit,
+                    signed_permit="synthetic-ticket-permit",
+                    validate_current=lambda: SimpleNamespace(
+                        expires_at=permit.auth_expires_at.timestamp()
+                    ),
+                    deadline=asyncio.get_running_loop().time() + 8,
+                )
+            await asyncio.Event().wait()
+
+    anyio.run(scenario)
+    assert scopes[0].cancelled_caught
 
 
 def reply(conversation="conversation-1", text="Synthetic reply"):
