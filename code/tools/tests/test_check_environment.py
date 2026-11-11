@@ -523,10 +523,13 @@ class Console:
             if self.behaviour == "model-error":
                 self.queue.append({"type": "error", "code": "upstream_unavailable"})
             elif self.behaviour == "empty-reply":
-                self.queue.append({"type": "text.completed", "messageId": "m1", "text": " "})
+                self.queue.append({"type": "text.delta", "messageId": "m1", "text": " "})
+                self.queue.append({"type": "text.completed", "messageId": "m1", "text": ""})
             elif self.behaviour != "no-reply":
+                # As the runtime sends it: the reply in deltas, an empty end marker.
                 self.queue.append({"type": "text.delta", "messageId": "m1", "text": "Hel"})
-                self.queue.append({"type": "text.completed", "messageId": "m1", "text": "Hello"})
+                self.queue.append({"type": "text.delta", "messageId": "m1", "text": "lo"})
+                self.queue.append({"type": "text.completed", "messageId": "m1", "text": ""})
         elif kind == "stop":
             status = "pending" if self.behaviour == "stop-pending" else "complete"
             self.queue.append({"type": "ended", "cleanupStatus": status})

@@ -379,6 +379,13 @@ real `terraform validate` or first apply.
     plus 10 s of the time since the first forwarded frame; transcripts are still never counted without forwarded
     audio or out of order. The first rejected transcript of a generation now logs its timing, never content
     (`test.speech.unobserved`). In the same probe Live delivered a long answer at real time, not faster.
+  - Text tests then went straight to "cleanup pending" without reaching the runtime. The relay stamps a text
+    session's expiry as its own clock plus exactly ten minutes, and the browser rejected a `ready` whose expiry
+    lay more than ten minutes ahead of the browser's clock, so any browser clock running behind the server made
+    every text start a protocol error. The browser now allows 30 s of clock difference. The environment
+    check's text journey failed with `empty_reply` because it read the reply from `text.completed`, which by
+    contract is an empty end marker; it now joins the `text.delta` events. A failed work item now logs its
+    error class and fixed code (`test.work.failure`), never content.
 
 ## R-15 Environment check and the functional journey
 

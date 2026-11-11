@@ -3,7 +3,7 @@
 Real code runs end to end: settings validation, both compositions, the reviewed fingerprint, workload
 token verification on both sides, the configuration pull, the signed start permit, the console socket,
 the text turn, history storage and the shared correlation id. Only Azure is replaced: the stores, the
-identity authority (a local signing key and key set) and the model (a streamed chat completion).
+identity authority (a local signing key and key set) and the model (a streamed Responses API reply).
 Browser sign-in is not driven here; the tester application path stands in for the signed-in tester.
 """
 
@@ -128,21 +128,53 @@ class Hosts:
 
 
 def model_transport(requests: list[dict[str, Any]]) -> httpx2.MockTransport:
+    message = {
+        "type": "message",
+        "id": "msg-e2e",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": MODEL_REPLY, "annotations": []}],
+    }
+    reply = {
+        "id": "resp-e2e",
+        "object": "response",
+        "created_at": 1793318400,
+        "model": "text-e2e",
+        "status": "completed",
+        "output": [message],
+        "parallel_tool_calls": False,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+            "input_tokens": 8,
+            "output_tokens": 3,
+            "total_tokens": 11,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens_details": {"reasoning_tokens": 0},
+        },
+    }
+    events = [
+        {"type": "response.created", "response": {**reply, "output": []}},
+        {"type": "response.output_item.added", "output_index": 0, "item": message},
+        {
+            "type": "response.output_text.delta",
+            "item_id": "msg-e2e",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": MODEL_REPLY,
+            "logprobs": [],
+        },
+        {"type": "response.output_item.done", "output_index": 0, "item": message},
+        {"type": "response.completed", "response": reply},
+    ]
+
     class Chunks(httpx2.AsyncByteStream):
         async def __aiter__(self):
-            for delta, finish in (
-                ({"role": "assistant", "content": MODEL_REPLY}, None),
-                ({}, "stop"),
-            ):
-                event = {
-                    "id": "chat-e2e",
-                    "object": "chat.completion.chunk",
-                    "created": 1793318400,
-                    "model": "text-e2e",
-                    "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
-                }
-                yield ("data: " + json.dumps(event) + "\n\n").encode()
-            yield b"data: [DONE]\n\n"
+            # The runtime calls the Responses API, streamed as server-sent events.
+            for number, event in enumerate(events):
+                yield (
+                    "data: " + json.dumps({**event, "sequence_number": number}) + "\n\n"
+                ).encode()
 
     async def dispatch(request: httpx2.Request) -> httpx2.Response:
         requests.append(json.loads(request.content))
@@ -392,7 +424,7 @@ def test_a_tester_gets_a_model_reply_through_both_apps_and_one_correlation_id(
         for event in runtime_events
     )
     assert len(world.model_requests) == 1
-    assert PUBLISHED_PROMPT in json.dumps(world.model_requests[0]["messages"])
+    assert PUBLISHED_PROMPT in json.dumps(world.model_requests[0]["instructions"])
     stored = world.runtime_stores["text-conversations"].records
     assert len(stored) == 1 and [t["role"] for t in next(iter(stored.values()))["turns"]] == [
         "user",

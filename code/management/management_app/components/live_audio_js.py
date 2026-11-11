@@ -188,6 +188,7 @@ CONTROL_CODE = r"""
             const bounds = {controlBytes: 8192, textBytes: 4096, replyBytes: 65536,
                 captureBytes: 12000, playbackBytes: 24000, inputFrameBytes: 1920};
             const expiry = Date.parse(value.expiresAt), idle = Date.parse(value.idleExpiresAt);
+            // The relay sets text expiry to its clock plus exactly 10 minutes; allow 30 s of skew.
             if (this.snapshot.status !== "starting" || performance.now() >= this.deadline ||
                 value.sequence !== 1 || value.mode !== this.mode ||
                 Object.keys(value).length !== expected.length ||
@@ -196,7 +197,7 @@ CONTROL_CODE = r"""
                 !value.bounds || Object.keys(value.bounds).length !== 6 ||
                 Object.entries(bounds).some(([key, count]) => value.bounds[key] !== count) ||
                 !Number.isFinite(expiry) || !Number.isFinite(idle) || expiry <= Date.now() ||
-                expiry - Date.now() > 600000 || idle > expiry)
+                expiry - Date.now() > 630000 || idle > expiry)
                 throw Error("invalid_ready");
             if (this.mode === "speech" && (!value.audioFormat ||
                 Object.keys(value.audioFormat).length !== 3 ||

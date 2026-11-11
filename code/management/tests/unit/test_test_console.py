@@ -1125,6 +1125,47 @@ console.log("published-end-pass");
     assert result.stdout.strip() == "published-end-pass" and not result.stderr
 
 
+@pytest.mark.parametrize(("ahead_ms", "accepted"), [(602000, True), (700000, False)])
+def test_browser_accepts_a_text_ready_from_a_relay_clock_slightly_ahead(ahead_ms, accepted):
+    import shutil
+    import subprocess
+
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    # The relay stamps expiry as its clock plus 600 s; a browser 2 s behind saw 602 s and stopped.
+    scenario = f"""
+const document = {{getElementById: () => null}};
+class WebSocket {{ static OPEN = 1; }}
+const engine = new CallerTestEngine({{begin: () => {{}}, control: () => {{}}}});
+engine.terminal = false; engine.epoch = 1; engine.mode = "text";
+engine.deadline = performance.now() + 10000;
+engine.snapshot = {{status: "starting", mode: "text"}}; engine.authenticated = true;
+engine.socket = {{readyState: 1, bufferedAmount: 0, send: () => {{}}, close: () => {{}}}};
+const expiresAt = new Date(Date.now() + {ahead_ms}).toISOString();
+const idleExpiresAt = new Date(Date.now() + 120000).toISOString();
+try {{
+    engine.message(JSON.stringify({{type: "ready", sequence: 1, generation: 1,
+        sessionId: "session-fixture", mode: "text", revisionId: "published-fixture",
+        revisionNumber: 7, agentId: "welcome", expiresAt, idleExpiresAt,
+        bounds: {{controlBytes: 8192, textBytes: 4096, replyBytes: 65536,
+            captureBytes: 12000, playbackBytes: 24000, inputFrameBytes: 1920}}}}), 1);
+}} catch {{}}
+console.log(engine.snapshot.status);
+process.exit(0);
+"""
+    result = subprocess.run(
+        [node],
+        input=BUDGET_CODE + ENGINE_CODE + scenario,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=True,
+    )
+    assert result.stdout.strip() == ("ready" if accepted else "starting"), result.stderr
+
+
 def test_browser_stop_reaches_the_server_even_when_audio_is_queued():
     import shutil
     import subprocess
