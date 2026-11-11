@@ -422,3 +422,82 @@ def test_history_store_event_carries_only_outcome_and_latency():
             telemetry.event("history.store", "success", measurement="work_seconds", value=1)
     finally:
         telemetry.close()
+
+
+def test_diagnostic_events_follow_the_event_schema_and_drop_free_text(caplog):
+    telemetry = Telemetry("caller-runtime", "live")
+    try:
+        with caplog.at_level("WARNING", logger="caller-runtime.events"):
+            telemetry.diagnostic(
+                "test.work.failure", mode="text", error="PermissionError", code="model_unavailable"
+            )
+            telemetry.diagnostic(
+                "test.admission.failure",
+                mode="speech",
+                error="RuntimeError",
+                code="Synthetic provider said: caller name is Alice",
+            )
+            telemetry.diagnostic(
+                "test.speech.unobserved",
+                mode="speech",
+                numbers={
+                    "end_ms": 25400,
+                    "since_first_frame_ms": 46348,
+                    "since_last_frame_ms": None,
+                },
+            )
+        work, admission, speech = telemetry.events[-3:]
+        for event in (work, admission, speech):
+            assert {
+                "timestamp",
+                "severity",
+                "service",
+                "environment",
+                "event",
+                "outcome",
+                "correlation_id",
+                "trace_id",
+                "span_id",
+            } <= event.keys()
+            assert event["severity"] == "WARNING" and event["outcome"] == "failure"
+        assert (
+            work["error_class"] == "PermissionError" and work["error_code"] == "model_unavailable"
+        )
+        # Anything outside the closed shape of a fixed code is dropped, never logged.
+        assert "error_code" not in admission and "Alice" not in caplog.text
+        assert speech["end_ms"] == "25400" and "since_last_frame_ms" not in speech
+        assert [json.loads(record.message)["event"] for record in caplog.records] == [
+            "test.work.failure",
+            "test.admission.failure",
+            "test.speech.unobserved",
+        ]
+        for name, keywords in (
+            ("test.unknown", {}),
+            ("test.work.failure", {"numbers": {"end_ms": 1}}),
+            ("test.speech.unobserved", {"numbers": {"end_ms": 1.5}}),
+        ):
+            with pytest.raises(ValueError, match="unsafe_diagnostic"):
+                telemetry.diagnostic(name, mode="speech", **keywords)
+        with pytest.raises(ValueError, match="unsafe_diagnostic"):
+            telemetry.diagnostic("test.work.failure", mode="video")
+    finally:
+        telemetry.close()
+
+
+def test_library_request_logs_stay_out_of_the_structured_application_log():
+    import logging
+
+    telemetry = Telemetry("caller-runtime", "live")
+    try:
+        # On int each authority read logged about forty unstructured header lines at INFO.
+        for name in (
+            "azure.core.pipeline.policies.http_logging_policy",
+            "azure.identity",
+            "httpx",
+            "uvicorn.access",
+        ):
+            assert not logging.getLogger(name).isEnabledFor(logging.INFO)
+            assert logging.getLogger(name).isEnabledFor(logging.WARNING)
+        assert logging.getLogger("caller-runtime.events").isEnabledFor(logging.INFO)
+    finally:
+        telemetry.close()

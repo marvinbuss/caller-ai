@@ -395,3 +395,12 @@ Join: T089, T090, T091, T092 in parallel, then T093 to T098
 - Do not commit anything created under `code/.local/` (the hand-over secret and the mirror feeds).
 - Commit after each task or logical group, following the `speckit-git-commit` hook.
 - The live release-gate tasks T116 to T120 need the owner's subscription and model account.
+
+---
+
+## Phase 13: Convergence
+
+- [X] T139 CRITICAL: Emit the diagnostic events `test.relay.failure` (`code/management/management_app/adapters/test_session_client.py`), `test.speech.unobserved` (`code/backend/src/caller_runtime/api/voice.py`), `test.work.failure` (`code/backend/src/caller_runtime/services/conversation.py`) and `test.admission.failure` (`code/backend/src/caller_runtime/composition.py`) through each application's documented structured event schema (timestamp, severity, service, environment, correlation ID, fixed error category) instead of raw JSON on plain loggers, add them to the documented event catalog, and extend the privacy tests so they carry no content per Constitution VII (contradicts)
+- [ ] T140 Make Foundation CI pass reliably on `main`: `tests/contract/test_browser_tests.py::test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots` still fails with `1011 upstream_unavailable` on a speech start (run on `8570189`); print the runtime fixture's diagnostics on failure, name the cause and fix it per FR-035 (partial)
+- [X] T141 Lower the Azure SDK HTTP logging policy and `httpx` request logs to warning in both applications, so `int` logs hold only structured application events instead of unstructured request and header lines for every authority read per FR-033 (partial)
+- [ ] T142 Run the environment check with `--test-alert` against `int`, confirm the named owner receives the action group notification, and record the result in `docs/acceptance/int-environment.md` per FR-028 and Constitution VII (partial)

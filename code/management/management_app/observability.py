@@ -44,6 +44,10 @@ TEST_MEASUREMENTS = {
     )
 }
 TEST_MODES = frozenset({"text", "speech"})
+# Warning-level events that name why a test failed: class names and WebSocket close codes.
+DIAGNOSTICS = {"test.relay.failure": frozenset({"received_close", "sent_close", "browser_close"})}
+DIAGNOSTIC_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+LIBRARY_LOGGERS = ("azure", "httpx", "httpcore")
 TEST_PHASES = frozenset({"starting", "ready", "active", "ending", "terminal", "cleanup_pending"})
 TEST_REASONS = frozenset(
     {
@@ -175,6 +179,9 @@ class Telemetry:
         self._cleanup_timers: dict[str, asyncio.TimerHandle] = {}
         self._alerted: dict[tuple[str, str], float] = {}
         logging.basicConfig(level=logging.INFO, format="%(message)s")
+        # Library request lines (Azure SDK headers, httpx) are unstructured; keep their warnings.
+        for library in LIBRARY_LOGGERS:
+            logging.getLogger(library).setLevel(logging.WARNING)
         self._logger = logging.getLogger(f"{service}.events")
         self._logger.setLevel(logging.INFO)
 
@@ -296,6 +303,49 @@ class Telemetry:
                     pass
         elif name in TEST_OPERATIONS and mode is not None:
             self._observe_test(event, mode, measurement, value)
+
+    def diagnostic(
+        self,
+        name: str,
+        *,
+        mode: str,
+        correlation_id: str | None = None,
+        error: str | None = None,
+        code: object = None,
+        numbers: Mapping[str, int | None] | None = None,
+    ) -> None:
+        """Record why a test failed; an error or code outside the closed shape is dropped."""
+        allowed = DIAGNOSTICS.get(name)
+        if allowed is None or mode not in TEST_MODES:
+            raise ValueError("unsafe_diagnostic")
+        values = dict(numbers or {})
+        if not values.keys() <= allowed or any(
+            value is not None and (type(value) is not int or not -(2**31) <= value <= 2**31)
+            for value in values.values()
+        ):
+            raise ValueError("unsafe_diagnostic")
+        if self._closed:
+            return
+        context = trace.get_current_span().get_span_context()
+        event = {
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "severity": "WARNING",
+            "service": self.service,
+            "environment": self.mode,
+            "event": name,
+            "outcome": "failure",
+            "correlation_id": sanitize_correlation_id(correlation_id),
+            "trace_id": format(context.trace_id, "032x") if context.is_valid else "",
+            "span_id": format(context.span_id, "016x") if context.is_valid else "",
+            "mode": mode,
+        }
+        for field, value in (("error_class", error), ("error_code", code)):
+            if isinstance(value, str) and DIAGNOSTIC_NAME.fullmatch(value):
+                event[field] = value
+        event.update({key: str(value) for key, value in values.items() if value is not None})
+        with self._event_lock:
+            self._events.append(event)
+        self._logger.warning(json.dumps(event))
 
     def _alert_now(self) -> float:
         now = self._alert_clock()

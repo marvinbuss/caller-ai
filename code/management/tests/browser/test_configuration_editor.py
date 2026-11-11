@@ -121,8 +121,8 @@ def runtime_events(host: dict, limit: int = 16) -> list[str]:
                         "outcome",
                         "reason_code",
                         "value",
-                        "error",
-                        "code",
+                        "error_class",
+                        "error_code",
                     )
                 ).strip()
             )

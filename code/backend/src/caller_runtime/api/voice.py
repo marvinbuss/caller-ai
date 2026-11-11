@@ -8,7 +8,6 @@ first message. Rejections before the upgrade are plain HTTP denials; later failu
 import asyncio
 import hashlib
 import json
-import logging
 import math
 import re
 import struct
@@ -41,7 +40,6 @@ from caller_runtime.services.conversation import ConversationExecutor
 
 PATH = "/v1/conversations/voice"
 SUBPROTOCOL = "caller.voice.v1"
-diagnostics = logging.getLogger("caller-runtime.voice")
 # Live sends speech faster than real time; only playback that stalls this long is an overflow.
 PLAYBACK_WAIT_SECONDS = 2.0
 # Live generated a 100-s answer within seconds; reading must not wait for it to play out.
@@ -831,19 +829,18 @@ def create_router(
                         ):
                             # Timing only, never content, so the next unrenewed idle can be named.
                             unobserved_logged.add(generation)
-                            diagnostics.warning(
-                                json.dumps(
-                                    {
-                                        "event": "test.speech.unobserved",
-                                        "end_ms": round(event["end_ms"]),
-                                        "since_first_frame_ms": round((now - frames[0]) * 1000)
-                                        if frames
-                                        else None,
-                                        "since_last_frame_ms": round((now - frames[1]) * 1000)
-                                        if frames
-                                        else None,
-                                    }
-                                )
+                            activity.diagnostic(
+                                "test.speech.unobserved",
+                                mode="speech",
+                                numbers={
+                                    "end_ms": round(event["end_ms"]),
+                                    "since_first_frame_ms": round((now - frames[0]) * 1000)
+                                    if frames
+                                    else None,
+                                    "since_last_frame_ms": round((now - frames[1]) * 1000)
+                                    if frames
+                                    else None,
+                                },
                             )
                         await session.accept_transcript(
                             event, generation=generation, input_audio_accepted=input_speech

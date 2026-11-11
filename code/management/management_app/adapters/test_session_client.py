@@ -126,7 +126,6 @@ class TestSessionClient:
         self._telemetry = telemetry
         self._logger = logging.getLogger("management.test-relay.transport")
         self._logger.disabled = True
-        self._diagnostics = logging.getLogger("management.test-relay")
 
     def _time(self) -> datetime:
         now, tick = utc(self._utc_now()), self._monotonic()
@@ -597,18 +596,17 @@ class TestSessionClient:
                     reason="unavailable",
                     correlation_id=correlation_for(permit.request_id),
                 )
-                # Class name and close codes only, so the next failure can be named.
                 closed = error if isinstance(error, ConnectionClosed) else None
-                self._diagnostics.warning(
-                    json.dumps(
-                        {
-                            "event": "test.relay.failure",
-                            "error": type(error).__name__,
-                            "received": closed.rcvd.code if closed and closed.rcvd else None,
-                            "sent": closed.sent.code if closed and closed.sent else None,
-                            "browser": code,
-                        }
-                    )
+                self._telemetry.diagnostic(
+                    "test.relay.failure",
+                    mode=permit.mode,
+                    correlation_id=correlation_for(permit.request_id),
+                    error=type(error).__name__,
+                    numbers={
+                        "received_close": closed.rcvd.code if closed and closed.rcvd else None,
+                        "sent_close": closed.sent.code if closed and closed.sent else None,
+                        "browser_close": code,
+                    },
                 )
             try:
                 async with asyncio.timeout(1):

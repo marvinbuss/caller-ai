@@ -9,8 +9,6 @@ serves only health.
 """
 
 import asyncio
-import json
-import logging
 import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -46,8 +44,6 @@ from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanup
 from caller_runtime.services.conversation import ConversationExecutor
 from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 from caller_runtime.services.text_conversation import TextConversationService
-
-diagnostics = logging.getLogger("caller-runtime.admission")
 
 AUTHORITY_CONTAINER: Final = "call-sessions"
 HISTORY_PROBE_SECONDS: Final = 10
@@ -440,18 +436,13 @@ class ConversationRuntime:
                 or error.code in {"configuration_unavailable", "test_runtime_unavailable"}
             ):
                 telemetry.event("test.admission", "failure", mode=permit.mode, reason="unavailable")
-                # Class and fixed code only, never content, so the next failed start can be named.
-                code = (
-                    error.args[0] if isinstance(error, (PermissionError, AdmissionError)) else None
-                )
-                diagnostics.warning(
-                    json.dumps(
-                        {
-                            "event": "test.admission.failure",
-                            "error": type(error).__name__,
-                            "code": code if isinstance(code, str) and len(code) <= 64 else None,
-                        }
-                    )
+                telemetry.diagnostic(
+                    "test.admission.failure",
+                    mode=permit.mode,
+                    error=type(error).__name__,
+                    code=error.args[0]
+                    if isinstance(error, (PermissionError, AdmissionError))
+                    else None,
                 )
             if controller is not None:
                 self._schedule_cleanup(controller)

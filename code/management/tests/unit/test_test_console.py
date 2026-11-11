@@ -283,20 +283,30 @@ def test_unexpected_relay_failure_logs_only_its_class_and_close_codes(caplog):
             timeout=5,
         )
 
-    with caplog.at_level("WARNING", logger="management.test-relay"):
+    with caplog.at_level("WARNING", logger="management.events"):
         asyncio.run(scenario())
     lines = [
-        record.getMessage() for record in caplog.records if record.name == "management.test-relay"
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "management.events" and record.levelname == "WARNING"
     ]
-    assert [json.loads(line) for line in lines] == [
+    events = [json.loads(line) for line in lines]
+    assert [
+        {key: event.get(key) for key in ("event", "severity", "mode", "error_class")}
+        | {key: event.get(key) for key in ("received_close", "sent_close", "browser_close")}
+        for event in events
+    ] == [
         {
             "event": "test.relay.failure",
-            "error": "ConnectionClosedError",
-            "received": None,
-            "sent": 1011,
-            "browser": 1011,
+            "severity": "WARNING",
+            "mode": "speech",
+            "error_class": "ConnectionClosedError",
+            "received_close": None,
+            "sent_close": "1011",
+            "browser_close": "1011",
         }
     ]
+    assert events[0]["correlation_id"] and events[0]["timestamp"]
     assert "synthetic" not in lines[0] and envelope["sessionId"] not in lines[0]
     browser.close.assert_awaited_with(code=1011, reason="test_unavailable")
 
