@@ -12,19 +12,22 @@ end to end. Commands run from the repository root in PowerShell 7. Interfaces ar
 | Directory rights | An administrator able to create app registrations, roles and role assignments and to consent to Graph application permissions (Privileged Role Administrator or Global Administrator) for the identity script (FR-040, FR-053), and a group that will hold the editor and tester roles (`identity.user_group_id`). |
 | Model | Model quota in the subscription for the text model and `gpt-live-1` under the deployment type in `app_environment.model`, in an allowed region. The app environment deployment creates the Foundry account and both deployments (FR-039). |
 | GitHub | Environment `int` with required reviewers, and secrets and variables set per [tooling-and-workflows.md](contracts/tooling-and-workflows.md). |
-| Local | Terraform 1.17.0, Python through `uv`, PowerShell 7, Azure CLI, Trivy. |
+| Local | Terraform 1.17.0, Python through `uv`, PowerShell 7, Azure CLI, Docker running Linux containers (the pinned Trivy scan and the image tests), Node.js (frontend builds and the diagram check in `verify_docs.py`). |
 | Open items | The owner answers the items at the end of [plan.md](plan.md) before step 3. |
 
 ## 1. Offline checks (no Azure access)
 
 ```powershell
 . .\code\.local\feeds.ps1   # only in the mirror-feed development setup
+# `--locked` compares the lock with PyPI; with the mirror feed as the default index it refuses to run.
+Remove-Item Env:UV_DEFAULT_INDEX -ErrorAction SilentlyContinue
 uv run --project code/tools --locked python code/tools/scripts/validate_environment.py
 uv run --project code/tools --locked python code/tools/scripts/check_terraform_structure.py
 uv run --project code/tools --locked python code/tools/scripts/ci.py check
 ```
 
-Expected: environment valid, structure valid, all tests pass, no Terraform test needs credentials
+Expected: environment valid (with the `open_range` warning for `int`), structure valid, all tests pass, no
+Terraform test needs credentials
 (SC-001, SC-006, SC-007). Application tests for the live composition, the editor and the console pass with
 fake ports.
 
@@ -41,9 +44,11 @@ the anonymous pull check passes. Copy the `sha-<40 hex>` tags into `app_environm
 2. State, run locally once:
    ```powershell
    az login --tenant <tenant-id>
-   uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation state-create --environment int --confirm-apply
+   uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation state-create --environment int --root state --plan-container tfplans
+   uv run --project code/tools --locked python code/tools/scripts/terraform_delivery.py --operation state-create --environment int --root state --plan-container tfplans --confirm-apply
    ```
-   Expected: storage account created, state migrated to `int/state.tfstate`, local copy removed (FR-006, FR-007).
+   Expected: the first command plans only; the second creates the storage account, migrates the state to
+   `int/state.tfstate` and removes the local copy (FR-006, FR-007).
 3. Run the `terraform-bootstrap` workflow for `int`. Approve the apply. Expected: network, one NSG with default
    rules only, one route table without routes, DNS zones; outputs listed in
    [deployment-interfaces.md](contracts/deployment-interfaces.md).
@@ -121,6 +126,7 @@ reports existing objects and creates nothing new.
 ## 9. Documentation (SC-009, SC-010)
 
 ```powershell
+$env:PATH = "<node install directory>;$env:PATH"   # the diagram check needs `npx`
 uv run --project code/tools --locked python code/tools/scripts/verify_docs.py
 ```
 

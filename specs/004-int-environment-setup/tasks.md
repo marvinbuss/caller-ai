@@ -271,12 +271,12 @@ Every document links to the relevant official Terraform and Azure guidance (FR-0
 - [X] T115 Compute the settings fingerprint with the T086 tool, review the non-secret settings and record `CALLER_REVIEWED_FINGERPRINT` and the review reference in `code/infra/environments/int/int.tfvars.json`.
 - [X] T116 Run the `terraform-app-environment` workflow and approve the apply; on this first run the job's environment check is expected to fail only at `signin-redirect-matches`, because the callback address exists only after the apps do. Confirm the verify items R-01, R-02, R-07 and R-14 (subnet delegation, in-place public access toggle, management-plane secret write, model role names) and record the results in `docs/acceptance/int-environment.md`.
 - [X] T117 Run `Initialize-Identity.ps1 -Environment int -Phase redirect`, then rerun the environment check (workflow or `check_environment.py --environment int --test-alert`) and confirm every check passes (SC-012).
-- [ ] T118 Run `terraform-app-environment` and `terraform-bootstrap` with `expect_no_changes: true` and record zero planned changes (SC-002), including the secret resources (research R-07).
-- [ ] T119 Toggle `environment.public_access.enabled` to false in `code/infra/environments/int/int.tfvars.json`, apply, confirm the apps refuse the allowed source and only access settings changed, then set it back and confirm (SC-005, FR-020).
-- [ ] T120 Walk the editor in a browser as a signed-in group member (sign-in, publish a configuration, audit entries, a user without the role refused) and confirm the pipeline's `--functional` result for the text and speech journey (FR-048, SC-015); restart both apps and move to a second image version and confirm configuration, audit and text history persist (SC-016).
-- [ ] T121 Destroy `app_environment` and `bootstrap` with the `destroy` input, confirm state storage and identity objects remain, recreate from the same files and re-run the check; confirm the identity script creates nothing new (FR-027, SC-003, SC-013).
-- [ ] T122 A second engineer who did not build `int` follows `docs/runbooks/environment-bring-up.md` and the identity guide to a verified environment (or a documented dry run), and records the elapsed time and every gap in `docs/acceptance/int-environment.md` (SC-001, SC-010).
-- [ ] T123 Record the date, version tags, results and any deviation for T110 to T122 in `docs/acceptance/int-environment.md`.
+- [X] T118 Run `terraform-app-environment` and `terraform-bootstrap` with `expect_no_changes: true` and record zero planned changes (SC-002), including the secret resources (research R-07).
+- [X] T119 Toggle `environment.public_access.enabled` to false in `code/infra/environments/int/int.tfvars.json`, apply, confirm the apps refuse the allowed source and only access settings changed, then set it back and confirm (SC-005, FR-020).
+- [X] T120 Walk the editor in a browser as a signed-in group member (sign-in, publish a configuration, audit entries, a user without the role refused) and confirm the pipeline's `--functional` result for the text and speech journey (FR-048, SC-015); restart both apps and move to a second image version and confirm configuration, audit and text history persist (SC-016).
+- [X] T121 (Skipped by the owner on 2026-11-11; the resource locks were checked separately.) Destroy `app_environment` and `bootstrap` with the `destroy` input, confirm state storage and identity objects remain, recreate from the same files and re-run the check; confirm the identity script creates nothing new (FR-027, SC-003, SC-013).
+- [X] T122 (Skipped by the owner on 2026-11-11.) A second engineer who did not build `int` follows `docs/runbooks/environment-bring-up.md` and the identity guide to a verified environment (or a documented dry run), and records the elapsed time and every gap in `docs/acceptance/int-environment.md` (SC-001, SC-010).
+- [X] T123 (Skipped by the owner on 2026-11-11; the acceptance record holds the results so far.) Record the date, version tags, results and any deviation for T110 to T122 in `docs/acceptance/int-environment.md`.
 
 ---
 
@@ -285,7 +285,7 @@ Every document links to the relevant official Terraform and Azure guidance (FR-0
 - [X] T124 [P] Search the repository for retired terms (`aks`, `acr`, `firewall`, `App Service`, `platform` as a deployment name, `dev`, `test`, `prod` stage names, `terraform-infrastructure`) in `code/`, `docs/`, `.github/` and `README.md`, and remove or rewrite every leftover (FR-015).
 - [X] T125 [P] Run `code/tools/scripts/check_secrets.py` and `code/tools/scripts/check_whitespace.py` and confirm 0 secrets, state or plan files in the repository, environment files and logs (FR-012, SC-008).
 - [X] T126 Run `. .\code\.local\feeds.ps1; uv run --project code/tools --locked python code/tools/scripts/ci.py check` and fix any failure.
-- [ ] T127 Walk through [quickstart.md](quickstart.md) sections 1 to 9 against the finished tooling and correct any command or expected result that no longer matches.
+- [X] T127 Walk through [quickstart.md](quickstart.md) sections 1 to 9 against the finished tooling and correct any command or expected result that no longer matches.
 - [X] T128 [P] Confirm the Mermaid diagrams in `docs/environments.md`, `docs/security.md` and the runbooks match the delivered topology, and run `verify_docs.py` once more.
 
 ---
