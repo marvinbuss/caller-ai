@@ -3,6 +3,7 @@
 import json
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, Request
@@ -197,7 +198,19 @@ def test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots(edito
             finally:
                 await asyncio.gather(*(socket.close() for socket in sockets))
 
-        asyncio.run(scenario())
+        try:
+            asyncio.run(scenario())
+        except BaseException:
+            # The runtime's own failure events name a refused start, which the socket close cannot.
+            failures = [
+                line
+                for line in Path(host["log"])
+                .read_text(encoding="utf-8", errors="replace")
+                .splitlines()
+                if '"outcome": "failure"' in line
+            ]
+            print({"runtime_failures": failures[-12:]})
+            raise
 
 
 @pytest.fixture

@@ -45,6 +45,24 @@ metadata, queue-full containment and no post-shutdown invocation in both service
 These ports create no collector, endpoint, credential discovery or default worker, and their
 presence does not complete the actual delivery/recipient/recovery gate.
 
+## Diagnostic Events
+
+Four warning-level events name why a test session failed. They use the same structured schema as the other
+events (UTC timestamp, severity `WARNING`, service, environment, event, outcome `failure`, correlation, trace and
+span ids, mode) and add only a class name, a fixed code or bounded numbers. A class or code outside the closed
+shape `[A-Za-z][A-Za-z0-9_]{0,63}` is dropped rather than logged. They never carry content, and they do not
+feed the `test.alert` classification.
+
+| Event | Service | Fields | Read it when |
+|-------|---------|--------|--------------|
+| `test.admission.failure` | Runtime | `error_class`, `error_code` | A session start failed: for example `authority_unavailable` names a stalled authority read |
+| `test.work.failure` | Runtime | `error_class`, `error_code` | A text or speech work item failed: for example `model_unavailable` names a failed model call |
+| `test.speech.unobserved` | Runtime | `end_ms`, `since_first_frame_ms`, `since_last_frame_ms` | Speech did not renew the idle limit: the first rejected transcript of a generation |
+| `test.relay.failure` | Management | `error_class`, `received_close`, `sent_close`, `browser_close` | The browser saw "cleanup pending" after an unexpected relay close |
+
+Library request logs (Azure SDK HTTP lines with headers, `httpx`, the runtime's access log) are kept at warning
+level, so the container logs hold the structured application events and library warnings only.
+
 ## Environment alerts
 
 Each environment deploys its monitoring with the `monitoring` module (see [Platform](platform.md)): a Log Analytics

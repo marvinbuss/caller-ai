@@ -1,8 +1,10 @@
 """Bounded console/relay contracts; no device, provider or credential discovery."""
 
 import asyncio
+import contextlib
 import json
 from datetime import timedelta
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -122,6 +124,31 @@ def test_relay_connect_and_first_ready_share_original_signed_deadline():
     # Reads pause while a browser send is pending, so a 1-s pong deadline dropped live sessions.
     assert options["ping_interval"] == 20 and options["ping_timeout"] == 5
     assert options["additional_headers"]["Authorization"] == "Bearer synthetic-workload-token"
+
+
+def test_relay_startup_budget_is_capped_by_the_permit_when_the_loop_clock_rounds(monkeypatch):
+    from management_app.adapters.test_session_client import TestSessionClient
+    from management_app.models.test_session import StartPermit
+
+    permit = StartPermit.model_validate_json(json.dumps(permit_document()))
+    client = TestSessionClient(
+        endpoint="https://runtime.fixture.example",
+        audience="11111111-2222-4333-8444-555555555555",
+        approved_hosts=frozenset({"runtime.fixture.example"}),
+        credential=SimpleNamespace(get_token=AsyncMock()),
+        utc_now=lambda: permit.issued_at,
+        monotonic=lambda: 0.0,
+        max_clock_skew_seconds=0,
+    )
+
+    async def scenario():
+        # Windows ticks every 15.6 ms; (60.001 + 10) - 60.001 rounds to just over 10 s.
+        frozen = 60.001
+        assert (frozen + 10.0) - frozen > 10
+        monkeypatch.setattr(asyncio.get_running_loop(), "time", lambda: frozen)
+        return client._startup(permit, frozen + 10.0)
+
+    assert asyncio.run(scenario()) == (permit.admission_deadline_utc - permit.issued_at).seconds
 
 
 def ready_envelope(permit):
@@ -250,6 +277,46 @@ def active_relay_case():
     return build_active_relay_case()
 
 
+@pytest.mark.parametrize("steps", range(8))
+def test_voice_relay_teardown_keeps_a_server_cancel_that_lands_during_it(steps):
+    import anyio
+
+    client, browser, runtime, permit, credentials, sent, displayed, clock, ticks, envelope = (
+        build_active_relay_case()
+    )
+    scopes = []
+
+    async def leave():
+        # The server cancel lands `steps` loop steps after the browser leaves.
+        loop = asyncio.get_running_loop()
+        cancel = scopes[0].cancel
+        for _ in range(steps):
+            cancel = partial(loop.call_soon, cancel)
+        loop.call_soon(cancel)
+        return {"type": "websocket.disconnect", "code": 1001}
+
+    browser.receive = leave
+
+    async def scenario():
+        # A bare CancelledError from teardown escapes the scope and ends the server's task group.
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            with contextlib.suppress(Exception):
+                await client.run(
+                    browser,
+                    permit=permit,
+                    signed_permit="synthetic-signed-permit",
+                    validate_current=lambda: SimpleNamespace(
+                        expires_at=permit.auth_expires_at.timestamp()
+                    ),
+                    deadline=asyncio.get_running_loop().time() + 8,
+                )
+            await asyncio.Event().wait()
+
+    anyio.run(scenario)
+    assert scopes[0].cancelled_caught
+
+
 def test_unexpected_relay_failure_logs_only_its_class_and_close_codes(caplog):
     from websockets.exceptions import ConnectionClosedError
     from websockets.frames import Close
@@ -283,20 +350,30 @@ def test_unexpected_relay_failure_logs_only_its_class_and_close_codes(caplog):
             timeout=5,
         )
 
-    with caplog.at_level("WARNING", logger="management.test-relay"):
+    with caplog.at_level("WARNING", logger="management.events"):
         asyncio.run(scenario())
     lines = [
-        record.getMessage() for record in caplog.records if record.name == "management.test-relay"
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "management.events" and record.levelname == "WARNING"
     ]
-    assert [json.loads(line) for line in lines] == [
+    events = [json.loads(line) for line in lines]
+    assert [
+        {key: event.get(key) for key in ("event", "severity", "mode", "error_class")}
+        | {key: event.get(key) for key in ("received_close", "sent_close", "browser_close")}
+        for event in events
+    ] == [
         {
             "event": "test.relay.failure",
-            "error": "ConnectionClosedError",
-            "received": None,
-            "sent": 1011,
-            "browser": 1011,
+            "severity": "WARNING",
+            "mode": "speech",
+            "error_class": "ConnectionClosedError",
+            "received_close": None,
+            "sent_close": "1011",
+            "browser_close": "1011",
         }
     ]
+    assert events[0]["correlation_id"] and events[0]["timestamp"]
     assert "synthetic" not in lines[0] and envelope["sessionId"] not in lines[0]
     browser.close.assert_awaited_with(code=1011, reason="test_unavailable")
 

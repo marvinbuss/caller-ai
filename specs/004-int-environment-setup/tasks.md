@@ -395,3 +395,27 @@ Join: T089, T090, T091, T092 in parallel, then T093 to T098
 - Do not commit anything created under `code/.local/` (the hand-over secret and the mirror feeds).
 - Commit after each task or logical group, following the `speckit-git-commit` hook.
 - The live release-gate tasks T116 to T120 need the owner's subscription and model account.
+
+---
+
+## Phase 13: Convergence
+
+- [X] T139 CRITICAL: Emit the diagnostic events `test.relay.failure` (`code/management/management_app/adapters/test_session_client.py`), `test.speech.unobserved` (`code/backend/src/caller_runtime/api/voice.py`), `test.work.failure` (`code/backend/src/caller_runtime/services/conversation.py`) and `test.admission.failure` (`code/backend/src/caller_runtime/composition.py`) through each application's documented structured event schema (timestamp, severity, service, environment, correlation ID, fixed error category) instead of raw JSON on plain loggers, add them to the documented event catalog, and extend the privacy tests so they carry no content per Constitution VII (contradicts)
+- [X] T140 Make Foundation CI pass reliably on `main`: `tests/contract/test_browser_tests.py::test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots` still fails with `1011 upstream_unavailable` on a speech start (run on `8570189`); print the runtime fixture's diagnostics on failure, name the cause and fix it per FR-035 (partial) (Cause: `test.work.failure PermissionError authority_unavailable` on Windows, run 43020990159; the 15.6-ms Windows clock let `(t + 10) - t` round past the 10-s budget limit, so the authority read was refused at once; the limit now allows 1 ms of rounding)
+- [X] T141 Lower the Azure SDK HTTP logging policy and `httpx` request logs to warning in both applications, so `int` logs hold only structured application events instead of unstructured request and header lines for every authority read per FR-033 (partial)
+- [X] T142 Run the environment check with `--test-alert` against `int`, confirm the named owner receives the action group notification, and record the result in `docs/acceptance/int-environment.md` per FR-028 and Constitution VII (partial)
+
+---
+
+## Phase 14: Convergence
+
+- [X] T143 Make Foundation CI green on both OS jobs: `code/backend/tests/contract/test_voice_endpoint.py::test_live_events_behind_queued_speech_are_read_before_that_speech_plays` failed with `CancelledError` on Ubuntu (run 43023945243); name the cause, fix it with a test, and confirm a green Foundation CI run that includes the T140 fix per FR-035 (partial) (Cause: the handler teardown awaited its cancelled child tasks with `asyncio.gather`, which turns a cancel arriving during teardown into a raised `CancelledError` that escaped to the client; teardown now uses `asyncio.wait` in the voice handler, the relay and the text relay. The test failed 7 of 300 repeats before the fix and 0 of 300 after; run 43025757945 with the T140 fix was green on both OS jobs)
+- [X] T144 Update the "Status of the pieces" table in `docs/runbooks/environment-bring-up.md` to match `docs/acceptance/int-environment.md` (identity script and live mode run against `int`, text and speech journeys passing, live acceptance recorded with the owner's skips) per FR-034 (contradicts)
+- [X] T145 Add a test in `code/management/tests/` that the test session client accepts a 10-second deadline when `loop.time()` rounds `(t + 10) - t` past 10 per FR-035 (partial) (The signed permit's 10-s admission window always caps the budget at or below 10.0, so the client needs no rounding allowance; the test pins this and the T140 constant was removed from the client)
+
+---
+
+## Phase 15: Convergence
+
+- [X] T146 Update the "Live composition of both apps" status row in `docs/runbooks/application-live-mode.md`, which still says "not yet run against Azure", to match `docs/acceptance/int-environment.md` (both apps running on `int`, run 43006092060) per FR-034 (contradicts)
+- [X] T147 Add a deterministic test that a handler teardown which cancels its child tasks while its own cancel scope is being cancelled ends without a stray `CancelledError` (the order a `gather` teardown fails on), covering the voice handler, the relay and the text relay per FR-035 (partial) (Each test lands the server cancel 0 to 7 loop steps after the client leaves; steps 1 and 2 fail with the old `gather` teardown and all pass with `asyncio.wait`: `code/backend/tests/contract/test_voice_endpoint.py::test_handler_teardown_keeps_a_server_cancel_that_lands_during_it`, `code/management/tests/unit/test_test_console.py::test_voice_relay_teardown_keeps_a_server_cancel_that_lands_during_it`, `code/management/tests/unit/test_backend_connection.py::test_text_session_teardown_keeps_a_server_cancel_that_lands_during_it`)

@@ -26,6 +26,9 @@ from caller_runtime.domain.conversation import (
     utc,
 )
 
+# 10 s plus rounding: on Windows loop.time() ticks every 15.6 ms, so (t + 10) - t can exceed 10.
+MAX_BUDGET_SECONDS = 10.001
+
 
 class CleanupReceiptVerifier(Protocol):
     async def verify(
@@ -172,7 +175,7 @@ class ResourceCleanupVerifier:
     ) -> Literal["verified", "unknown", "rejected"]:
         if (
             not math.isfinite(deadline)
-            or not 0 < deadline - asyncio.get_running_loop().time() <= 10
+            or not 0 < deadline - asyncio.get_running_loop().time() <= MAX_BUDGET_SECONDS
         ):
             return "unknown"
         expected = (

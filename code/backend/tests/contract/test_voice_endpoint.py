@@ -10,6 +10,7 @@ import json
 import struct
 import time
 from contextlib import ExitStack
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -328,6 +329,61 @@ def provider_greeting(endpoint, deltas):
             )
 
     endpoint.client.portal.call(burst)
+
+
+@pytest.mark.parametrize("steps", range(8))
+def test_handler_teardown_keeps_a_server_cancel_that_lands_during_it(endpoint, steps):
+    import anyio
+
+    ready, scopes = asyncio.Event(), []
+    inbound = [
+        {"type": "websocket.connect"},
+        {"type": "websocket.receive", "text": json.dumps(endpoint.message(1))},
+    ]
+
+    async def receive():
+        if inbound:
+            return inbound.pop(0)
+        await ready.wait()
+        # The server cancel lands `steps` loop steps after the client leaves.
+        loop = asyncio.get_running_loop()
+        cancel = scopes[0].cancel
+        for _ in range(steps):
+            cancel = partial(loop.call_soon, cancel)
+        loop.call_soon(cancel)
+        return {"type": "websocket.disconnect", "code": 1001}
+
+    async def send(message):
+        if message["type"] == "websocket.send" and '"ready"' in (message.get("text") or ""):
+            ready.set()
+
+    scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0"},
+        "scheme": "wss",
+        "server": ("runtime.fixture.example", 443),
+        "path": "/v1/conversations/voice",
+        "raw_path": b"/v1/conversations/voice",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"host", b"runtime.fixture.example"),
+            (b"authorization", WORKLOAD["Authorization"].encode()),
+            (b"sec-websocket-protocol", SUBPROTOCOL.encode()),
+        ],
+        "subprotocols": [SUBPROTOCOL],
+        "state": {},
+    }
+
+    async def session():
+        # A bare CancelledError from teardown escapes the scope and ends the server's task group.
+        with anyio.CancelScope() as cancel_scope:
+            scopes.append(cancel_scope)
+            await endpoint.client.app(scope, receive, send)
+            await asyncio.Event().wait()
+        return cancel_scope.cancelled_caught
+
+    assert endpoint.client.portal.call(session)
 
 
 def test_a_greeting_burst_waits_for_played_acknowledgements_instead_of_ending(endpoint):

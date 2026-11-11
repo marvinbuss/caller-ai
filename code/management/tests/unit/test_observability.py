@@ -261,3 +261,39 @@ def test_exception_content_excluded_and_capture_bounded() -> None:
     assert len(telemetry.events) <= 512
     telemetry.close()
     telemetry.close()
+
+
+def test_relay_failure_diagnostic_carries_class_and_close_codes_only(caplog):
+    telemetry = Telemetry("management", "live")
+    try:
+        with caplog.at_level("WARNING", logger="management.events"):
+            telemetry.diagnostic(
+                "test.relay.failure",
+                mode="speech",
+                correlation_id="relay-correlation",
+                error="BackendRefusal",
+                numbers={"received_close": 4503, "sent_close": None, "browser_close": 1011},
+            )
+        event = telemetry.events[-1]
+        assert event["event"] == "test.relay.failure" and event["severity"] == "WARNING"
+        assert event["correlation_id"] == "relay-correlation" and event["mode"] == "speech"
+        assert event["error_class"] == "BackendRefusal" and "error_code" not in event
+        assert event["received_close"] == "4503" and "sent_close" not in event
+        assert json.loads(caplog.records[-1].message) == event
+        with pytest.raises(ValueError, match="unsafe_diagnostic"):
+            telemetry.diagnostic("test.relay.failure", mode="speech", numbers={"reason": 1})
+    finally:
+        telemetry.close()
+
+
+def test_library_request_logs_stay_out_of_the_structured_application_log():
+    import logging
+
+    telemetry = Telemetry("management", "live")
+    try:
+        for name in ("azure.core.pipeline.policies.http_logging_policy", "azure.identity", "httpx"):
+            assert not logging.getLogger(name).isEnabledFor(logging.INFO)
+            assert logging.getLogger(name).isEnabledFor(logging.WARNING)
+        assert logging.getLogger("management.events").isEnabledFor(logging.INFO)
+    finally:
+        telemetry.close()

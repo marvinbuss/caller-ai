@@ -8,8 +8,8 @@ not been run says so. Nothing here is claimed from an offline test.
 
 **Pending, not accepted.** The offline checks pass. The app environment is applied, its environment check
 passes, a repeat run plans no changes, and the owner tested the public access toggle and the editor and test
-console (T116 to T120). The alert test has not been run; destroy and recreate and the second-engineer bring-up
-were skipped by the owner on 2026-11-11.
+console (T116 to T120), and the alert test notification reached the named owner (T142). Destroy and recreate and
+the second-engineer bring-up were skipped by the owner on 2026-11-11.
 
 ## Offline results
 
@@ -38,6 +38,6 @@ Fill in the date, version tags, result and any deviation as each gate is run.
 | Zero planned changes on a repeat run (`expect_no_changes`) for `app_environment` and `bootstrap` | 2026-11-11 | `sha-60f740e063a55f3dd0e9e1ae000094bb8a1030e6` | Passed: `app_environment` run 43009610966 and `bootstrap` run 43009557422 each planned 0 changes, secret resources included; no apply ran | |
 | Public access disabled, refusal confirmed, enabled again | 2026-11-11 | `sha-60f740e063a55f3dd0e9e1ae000094bb8a1030e6` | Passed: tested by the owner | Run by hand; no run IDs recorded |
 | Editor and test console walked in a browser by a signed-in group member | 2026-11-11 | `sha-60f740e063a55f3dd0e9e1ae000094bb8a1030e6` | Passed: tested by the owner; text and speech conversations work, and the pipeline's functional journey passed in run 43006092060 | Run by hand |
-| Alert test notification received by the named owner | Not run | | | |
+| Alert test notification received by the named owner | 2026-11-11 | `sha-60f740e063a55f3dd0e9e1ae000094bb8a1030e6` | Passed: `check_environment.py --test-alert` reported `alert-test` passed and the owner confirmed the test notification arrived | Run by hand from a workstation |
 | Destroy and recreate `app_environment` and `bootstrap` | Skipped | | Not run: skipped by the owner on 2026-11-11 | The owner checked the resource locks separately |
 | A second engineer follows the runbook to a verified environment | Skipped | | Not run: skipped by the owner on 2026-11-11 | |

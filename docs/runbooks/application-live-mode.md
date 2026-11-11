@@ -11,7 +11,7 @@ gives each container a fixed set of settings and the app refuses to start unless
 | Settings contract | Delivered: [application settings](../../specs/004-int-environment-setup/contracts/application-settings.md) |
 | Settings validation with fixed reason codes in both apps | Delivered and tested |
 | Terraform gives each app exactly the contract's settings | Delivered; a test compares the names in the contract, the deployment and the applications |
-| Live composition of both apps (managed identity and data store clients, reviewed runtime options, workload and sign-in identity, permit keys, management fingerprint authority) | Delivered and tested with fake clients; not yet run against Azure |
+| Live composition of both apps (managed identity and data store clients, reviewed runtime options, workload and sign-in identity, permit keys, management fingerprint authority) | Delivered and tested with fake clients; running on `int` since 2026-11-11, where the environment check's functional journey passed (run 43006092060, see [the acceptance record](../acceptance/int-environment.md)) |
 | Frontend address at start (the exported frontend follows `CALLER_PUBLIC_ORIGIN` or `API_URL`) | Delivered; container test in `code/tools/tests/test_management_image.py` |
 
 ## The settings
