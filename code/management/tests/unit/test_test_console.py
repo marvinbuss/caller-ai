@@ -1164,6 +1164,53 @@ console.log("stop-under-backlog-pass");
     assert not result.stderr
 
 
+def test_browser_shows_playback_idle_only_after_a_second_without_audio():
+    import shutil
+    import subprocess
+
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    scenario = """
+const shown = {};
+const document = {getElementById: name => ({set textContent(value) { shown[name] = value; }})};
+const timers = new Map(); let timerId = 0;
+function setTimeout(callback, delay) { timers.set(++timerId, {callback, delay}); return timerId; }
+function clearTimeout(identifier) { timers.delete(identifier); }
+const fire = () => {
+    for (const [id, timer] of [...timers]) { timers.delete(id); timer.callback(); }
+};
+const engine = new CallerTestEngine({begin: () => {}, control: () => {}});
+engine.terminal = false;
+engine.budget.output.set(1, 960);
+engine.playing(true);
+engine.budget.output.clear();
+engine.playing(false);
+if (shown["test-playback"] !== "Playing" || [...timers.values()][0]?.delay !== 1000)
+    throw Error("idle_shown_at_a_packet_gap");
+engine.budget.output.set(2, 960);
+engine.playing(true);
+fire();
+if (shown["test-playback"] !== "Playing") throw Error("idle_after_audio_resumed");
+engine.budget.output.clear();
+engine.playing(false);
+fire();
+if (shown["test-playback"] !== "Idle") throw Error("idle_not_shown_after_a_second");
+console.log("idle-delay-pass");
+"""
+    result = subprocess.run(
+        [node],
+        input=BUDGET_CODE + ENGINE_CODE + scenario,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.stdout.strip() == "idle-delay-pass", result.stderr
+    assert not result.stderr
+
+
 @pytest.mark.parametrize("callback", ["close", "error", "message"])
 def test_browser_stale_socket_callbacks_cannot_stop_explicit_replacement(callback):
     import shutil
