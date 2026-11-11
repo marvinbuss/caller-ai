@@ -168,7 +168,7 @@ CONTROL_CODE = r"""
             const packet = this.budget.receive(raw);
             if (packet) {
                 this.node.port.postMessage({type: "play", ...packet}, [packet.pcm]);
-                this.write("playback", "Playing");
+                this.playing(true);
             }
             return;
         }
@@ -387,6 +387,7 @@ CONTROL_CODE = r"""
     }
     interrupt() {
         if (this.terminal || this.mode !== "speech" || !this.node) return;
+        clearTimeout(this.idleTimer);
         this.gain.gain.value = 0; this.budget.interrupt(); this.budget.reserved = 0;
         this.queue = this.queue.filter(entry => typeof entry.value === "string");
         this.clearWorklet();
@@ -506,6 +507,14 @@ class CallerTestEngine {
         }
     }
     current(epoch) { return !this.terminal && epoch === this.epoch; }
+    playing(active) {
+        clearTimeout(this.idleTimer);
+        if (active) { this.write("playback", "Playing"); return; }
+        // Gaps between Live packets are not idle; only a second without audio is.
+        this.idleTimer = setTimeout(() => {
+            if (!this.terminal && !this.budget.playbackBytes) this.write("playback", "Idle");
+        }, 1000);
+    }
     async readJSON(response) {
         if (!response.ok) throw Error("test_unavailable");
         const reader = response.body.getReader(), parts = []; let count = 0;
@@ -584,7 +593,7 @@ class CallerTestEngine {
                     this.budget.played(value.sequence, value.generation)) {
                     this.command("audio.played", {generation: value.generation,
                         audioSequence: value.sequence});
-                    this.write("playback", this.budget.playbackBytes ? "Playing" : "Idle");
+                    this.playing(this.budget.playbackBytes > 0);
                 } else if (value.type === "cleared" &&
                     value.clearSequence === this.flushSequence) {
                     if (!this.budget.blocked) this.gain.gain.value = 1;
@@ -792,7 +801,7 @@ class CallerTestEngine {
         }
         this.terminal = true; this.epoch++;
         this.abort?.abort();
-        for (const timer of [this.startTimer, this.writerTimer, this.watchTimer])
+        for (const timer of [this.startTimer, this.writerTimer, this.watchTimer, this.idleTimer])
             clearTimeout(timer);
         this.disposeMedia(); this.purge();
         if (!this.authenticated || !this.snapshot.sessionId ||
