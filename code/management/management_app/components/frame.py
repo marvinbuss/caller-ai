@@ -114,7 +114,8 @@ function CallerLoginNotice() {
             setMessage("Your session ended. Unpublished changes were discarded.");
         }
     }, []);
-    return message ? createElement("p", {role: "alert", className: "caller-notice"}, message) : null;
+    if (!message) return null;
+    return createElement("p", {role: "alert", className: "caller-notice"}, message);
 }
 function callerSignOut() {
     const session = callerSessionStore.value;

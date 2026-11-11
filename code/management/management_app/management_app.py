@@ -104,7 +104,7 @@ def _signed_in_overlay(stateful: bool) -> rx.Component | None:
 
     if not stateful:
         return None
-    return rx.fragment(gate("signed_in", default_overlay_component()))
+    return cast(rx.Component, rx.fragment(gate("signed_in", default_overlay_component())))
 
 
 async def create_managed_app(

@@ -23,7 +23,6 @@ from reflex.config import get_config
 from starlette.responses import JSONResponse, RedirectResponse
 
 import management_app.security as management_security
-
 from management_app.adapters.audit_repository import LocalAuditRepository
 from management_app.adapters.backend_connection import TurnPermits
 from management_app.adapters.configuration_repository import (

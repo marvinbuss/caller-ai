@@ -7,7 +7,7 @@ numbered; the active pointer is a separate document.
 """
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import Field, StringConstraints, field_validator
 
@@ -101,8 +101,8 @@ class ConversationSettings(ConfigurationModel):
     )
 
 
-EMPTY_LAYOUT = {"communities": [], "agentsByCommunity": {}}
-SCHEMA_VERSION = "2.1.0"
+EMPTY_LAYOUT: Final[dict[str, Any]] = {"communities": [], "agentsByCommunity": {}}
+SCHEMA_VERSION: Final = "2.1.0"
 
 
 class ConfigurationGraph(ConfigurationModel):

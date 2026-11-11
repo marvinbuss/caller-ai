@@ -41,7 +41,7 @@ def _name(item: Mapping[str, Any], fallback: str) -> str:
 
 
 def default_community_of(agent: Mapping[str, Any]) -> str | None:
-    for identifier, _name_, role in DEFAULT_COMMUNITIES:
+    for identifier, _label, role in DEFAULT_COMMUNITIES:
         if agent.get("role") == role:
             return identifier
     return None
@@ -259,7 +259,9 @@ def connections_touching(graph: Mapping[str, Any], community_id: str) -> list[st
     """Names of the community links removed together with a community, for the confirmation."""
     names = {community["communityId"]: community["name"] for community in graph["communities"]}
     return [
-        f"{names.get(edge['sourceCommunityId'], '?')} to {names.get(edge['targetCommunityId'], '?')}"
+        names.get(edge["sourceCommunityId"], "?")
+        + " to "
+        + names.get(edge["targetCommunityId"], "?")
         for edge in graph["communityConnections"]
         if community_id in {edge["sourceCommunityId"], edge["targetCommunityId"]}
     ]

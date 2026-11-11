@@ -75,7 +75,9 @@ class EditorDraft:
         cls, revision: Document, etag: str, *, reviewed: ApprovedCapabilities | None = None
     ) -> Self:
         graph = {
-            key: copy.deepcopy(value) for key, value in revision.items() if key in GRAPH_FIELDS
+            key: copy.deepcopy(value)
+            for key, value in revision.items()
+            if key in GRAPH_FIELDS and key != "conversationSettings"
         }
         graph["schemaVersion"] = SCHEMA_VERSION
         for community in graph["communities"]:

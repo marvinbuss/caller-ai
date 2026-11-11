@@ -1,5 +1,7 @@
 """Sign-in return paths, role-aware sessions, the session profile and session extension."""
 
+# ruff: noqa: F811 - pytest injects the fixtures imported from test_security
+
 import time
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
