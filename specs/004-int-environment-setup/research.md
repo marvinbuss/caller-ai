@@ -369,6 +369,16 @@ real `terraform validate` or first apply.
     all other Live events are read as they arrive. Playback also refills the 500-ms browser window frame by frame
     instead of waiting for room for a whole 100-ms delta, which keeps up to 100 ms more audio in the browser and
     stops transcript and activity writes from pausing output; both reduce the remaining stutter.
+  - With that fix a session still ended two minutes after the last renewal, about 7 s after ready, while the user
+    kept acknowledging a long story. Two probes showed that Live's transcript clock does not count forwarded
+    audio: with the microphone paused for 25 s it ran 4 s past the 21.4 s forwarded, and with continuous audio
+    it ran up to 2.4 s ahead of the time since the first frame within 75 s. The browser forwards nothing while
+    its capture credit arrives late, and the Live clock starts about a second before the browser's first frame,
+    so the 3-s tolerance on forwarded samples was used up early and every later utterance was rejected. Speech
+    now counts while the session is forwarding audio (a frame within the last 10 s) and when it ends within 2 %
+    plus 10 s of the time since the first forwarded frame; transcripts are still never counted without forwarded
+    audio or out of order. The first rejected transcript of a generation now logs its timing, never content
+    (`test.speech.unobserved`). In the same probe Live delivered a long answer at real time, not faster.
 
 ## R-15 Environment check and the functional journey
 

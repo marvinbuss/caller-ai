@@ -8,6 +8,7 @@ first message. Rejections before the upgrade are plain HTTP denials; later failu
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import re
 import struct
@@ -40,23 +41,31 @@ from caller_runtime.services.conversation import ConversationExecutor
 
 PATH = "/v1/conversations/voice"
 SUBPROTOCOL = "caller.voice.v1"
+diagnostics = logging.getLogger("caller-runtime.voice")
 # Live sends speech faster than real time; only playback that stalls this long is an overflow.
 PLAYBACK_WAIT_SECONDS = 2.0
 # Live generated a 100-s answer within seconds; reading must not wait for it to play out.
 PLAYBACK_QUEUE_BYTES = 120 * 48000
 
 
-# Live transcript time ran 1.3 % ahead of forwarded audio on int (+3.7 s after 294 s), and its
-# clock starts at admission, about a second before the browser's first forwarded frame.
+# Live's transcript clock is not the forwarded audio: with the microphone paused for 25 s it ran 4 s
+# past it on int, and the browser drops capture whenever its credit arrives late. Against time since
+# the first forwarded frame it ran up to 2.4 s ahead within 75 s and 3.7 s after 294 s on int, and
+# it starts at admission, about a second before the browser's first frame.
 TRANSCRIPT_DRIFT_RATIO = 1.02
-TRANSCRIPT_DRIFT_MS = 3000
+TRANSCRIPT_DRIFT_MS = 10000
+# Live transcribed within about 3 s of the audio on int.
+SPEECH_RECENCY_SECONDS = 10.0
 
 
-def within_forwarded_audio(end_ms: float, accepted_samples: int) -> bool:
-    """Whether a provider transcript ends inside audio this session actually forwarded."""
-    if accepted_samples <= 0:
+def observed_speech(end_ms: float, frames: tuple[float, float] | None, now: float) -> bool:
+    """Whether a provider transcript belongs to audio this session forwarded.
+
+    `frames` holds the loop times of the first and the latest forwarded frame.
+    """
+    if frames is None or now - frames[1] > SPEECH_RECENCY_SECONDS:
         return False
-    return end_ms <= accepted_samples / 24 * TRANSCRIPT_DRIFT_RATIO + TRANSCRIPT_DRIFT_MS
+    return end_ms <= (now - frames[0]) * 1000 * TRANSCRIPT_DRIFT_RATIO + TRANSCRIPT_DRIFT_MS
 
 
 class OversizedFrame(PermissionError):
@@ -774,8 +783,9 @@ def create_router(
                 )
             )
             tasks.add(watcher)
-            accepted_samples: dict[int, int] = {}
+            forwarded: dict[int, tuple[float, float]] = {}
             speech_end: dict[int, float] = {}
+            unobserved_logged: set[int] = set()
 
             async def credit() -> None:
                 while True:
@@ -808,13 +818,33 @@ def create_router(
                         "session.input_transcript.delta",
                         "session.output_transcript.delta",
                     }:
-                        input_speech = (
-                            kind == "session.input_transcript.delta"
-                            and within_forwarded_audio(
-                                event["end_ms"], accepted_samples.get(generation, 0)
-                            )
-                            and event["end_ms"] > speech_end.get(generation, -1)
+                        now = asyncio.get_running_loop().time()
+                        frames = forwarded.get(generation)
+                        observed = kind == "session.input_transcript.delta" and observed_speech(
+                            event["end_ms"], frames, now
                         )
+                        input_speech = observed and event["end_ms"] > speech_end.get(generation, -1)
+                        if (
+                            kind == "session.input_transcript.delta"
+                            and not observed
+                            and generation not in unobserved_logged
+                        ):
+                            # Timing only, never content, so the next unrenewed idle can be named.
+                            unobserved_logged.add(generation)
+                            diagnostics.warning(
+                                json.dumps(
+                                    {
+                                        "event": "test.speech.unobserved",
+                                        "end_ms": round(event["end_ms"]),
+                                        "since_first_frame_ms": round((now - frames[0]) * 1000)
+                                        if frames
+                                        else None,
+                                        "since_last_frame_ms": round((now - frames[1]) * 1000)
+                                        if frames
+                                        else None,
+                                    }
+                                )
+                            )
                         await session.accept_transcript(
                             event, generation=generation, input_audio_accepted=input_speech
                         )
@@ -881,12 +911,12 @@ def create_router(
                         if current_segment.intent.generation != wire.audio.generation:
                             raise PermissionError("stale_generation")
                         await current_segment.send_audio(pcm)
-                        if wire.audio.generation not in accepted_samples:
-                            accepted_samples.clear()
+                        arrived = asyncio.get_running_loop().time()
+                        if wire.audio.generation not in forwarded:
+                            forwarded.clear()
                             speech_end.clear()
-                        accepted_samples[wire.audio.generation] = (
-                            accepted_samples.get(wire.audio.generation, 0) + len(pcm) // 2
-                        )
+                        first = forwarded.get(wire.audio.generation, (arrived, arrived))[0]
+                        forwarded[wire.audio.generation] = (first, arrived)
                         continue
                     raw = frame.get("text")
                     if not isinstance(raw, str):
