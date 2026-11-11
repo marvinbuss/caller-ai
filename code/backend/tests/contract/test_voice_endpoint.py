@@ -422,6 +422,38 @@ def test_live_events_behind_queued_speech_are_read_before_that_speech_plays(endp
         assert frames <= 25
 
 
+def test_user_speech_renews_idle_although_capture_forwarded_less_audio_than_live_counted(endpoint):
+    # Live's transcript clock ran seconds past the forwarded audio once browser capture had gaps.
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        assert ready["type"] == "ready"
+        socket.send_bytes(struct.pack(">BII", 1, ready["generation"], 1) + b"\x05\0" * 480)
+        provider = endpoint.provider_sockets[0]
+        while not [e for e in provider.sent if e["type"] == "session.input_audio.append"]:
+            next_event(socket, "audio.credit")
+        assert authority_slots(endpoint)[0].last_user_at is None
+
+        async def speech():
+            await provider.events.put(
+                json.dumps(
+                    {
+                        "type": "session.input_transcript.delta",
+                        "delta": "Synthetic caller words",
+                        "start_ms": 3800,
+                        "end_ms": 4000,
+                        "event_id": "event_input",
+                    }
+                )
+            )
+
+        endpoint.client.portal.call(speech)
+        assert next_event(socket, "transcript.delta")["speaker"] == "user"
+        assert authority_slots(endpoint)[0].last_user_at is not None
+        socket.send_json({"type": "stop", "sequence": 1, "sessionId": ready["sessionId"]})
+        assert next_event(socket, "ended")["cleanupStatus"] == "complete"
+
+
 def test_a_second_session_for_the_same_manager_is_capacity_unavailable(endpoint):
     with endpoint.connect() as first:
         first.send_json(endpoint.message(1, actor="manager-same"))

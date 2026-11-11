@@ -1908,29 +1908,32 @@ def test_server_control_field_values_are_closed_not_only_key_names(event):
 
 
 @pytest.mark.parametrize(
-    ("end_ms", "forwarded_ms", "verified"),
+    ("end_ms", "since_first_s", "since_last_s", "verified"),
     [
-        # Recorded on int: provider transcript time against audio actually forwarded.
-        (8400, 8860, True),
-        (104800, 103880, True),
-        (206200, 203860, True),
-        (297600, 293880, True),
-        # About ten minutes at the observed 1.3 % drift.
-        (608000, 600000, True),
+        # Recorded on int: Live transcript time against time since the first forwarded frame.
+        (8400, 8.86, 0.4, True),
+        (75800, 73.38, 0.4, True),
+        (297600, 293.88, 0.4, True),
+        # Microphone paused for 25 s: Live ran 4 s past the 21.4 s actually forwarded.
+        (25400, 46.35, 0.4, True),
         # A first utterance shortly after ready, with the Live clock a second ahead.
-        (4600, 2000, True),
-        (4000, 0, False),
-        (8000, 3000, False),
-        (700000, 600000, False),
+        (4600, 2.0, 0.4, True),
+        # About ten minutes with Live's clock 12 s ahead.
+        (612000, 600.0, 0.4, True),
+        # Speech after the microphone stopped forwarding, and speech past the forwarded time.
+        (8000, 20.0, 10.5, False),
+        (14000, 3.0, 0.4, False),
+        (700000, 600.0, 0.4, False),
     ],
 )
-def test_input_speech_counts_within_the_live_transcript_drift_of_forwarded_audio(
-    end_ms, forwarded_ms, verified
+def test_input_speech_counts_while_audio_is_forwarded_and_within_the_live_clock_drift(
+    end_ms, since_first_s, since_last_s, verified
 ):
-    from caller_runtime.api.voice import within_forwarded_audio
+    from caller_runtime.api.voice import observed_speech
 
-    # The strict check rejected every utterance after about 40 s, so idle expired mid-answer.
-    assert within_forwarded_audio(end_ms, forwarded_ms * 24) is verified
+    # Counting forwarded samples rejected speech once capture had gaps, so idle expired mid-answer.
+    assert observed_speech(end_ms, (100.0 - since_first_s, 100.0 - since_last_s), 100.0) is verified
+    assert observed_speech(end_ms, None, 100.0) is False
 
 
 def test_shared_model_readiness_uses_pinned_welcome_before_initial_ready_without_tools(
