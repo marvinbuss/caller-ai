@@ -105,7 +105,7 @@ class ConsoleServices:
                 "type": "http",
                 "method": "GET",
                 "scheme": "https",
-                "path": "/configuration/test",
+                "path": "/test",
                 "query_string": b"",
                 "headers": [
                     (name.lower().encode("ascii"), value.encode("ascii"))

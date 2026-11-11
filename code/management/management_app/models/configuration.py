@@ -7,9 +7,9 @@ numbered; the active pointer is a separate document.
 """
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, StringConstraints, field_validator
 
 from management_app.models.capabilities import (
     CapabilityAssignment,
@@ -44,6 +44,7 @@ class Community(ConfigurationModel):
     routing_description: str = Field(alias="routingDescription")
     enabled: bool
     entry_agent_id: Identifier = Field(alias="entryAgentId")
+    routable: bool = True
 
     @field_validator("routing_description")
     @classmethod
@@ -82,8 +83,30 @@ class GraphLayout(ConfigurationModel):
     agents_by_community: dict[Identifier, list[GraphPosition]] = Field(alias="agentsByCommunity")
 
 
+def _absent(value: object) -> bool:
+    return value is None
+
+
+class ConversationSettings(ConfigurationModel):
+    """Per-conversation values; an absent field means the runtime's environment default."""
+
+    voice: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,63}$")] | None = Field(
+        default=None, exclude_if=_absent
+    )
+    max_output_tokens: int | None = Field(
+        default=None, alias="maxOutputTokens", ge=1, le=4096, exclude_if=_absent
+    )
+    idle_timeout_seconds: int | None = Field(
+        default=None, alias="idleTimeoutSeconds", ge=30, le=120, exclude_if=_absent
+    )
+
+
+EMPTY_LAYOUT = {"communities": [], "agentsByCommunity": {}}
+SCHEMA_VERSION = "2.1.0"
+
+
 class ConfigurationGraph(ConfigurationModel):
-    schema_version: Literal["2.0.0"] = Field(alias="schemaVersion")
+    schema_version: Literal["2.0.0", "2.1.0"] = Field(alias="schemaVersion")
     agents: list[Agent] = Field(max_length=200)
     communities: list[Community] = Field(max_length=50)
     relationships: list[Relationship] = Field(max_length=1000)
@@ -93,6 +116,9 @@ class ConfigurationGraph(ConfigurationModel):
     layout: GraphLayout
     tools: list[ToolDefinition] = Field(max_length=256)
     mcp_connections: list[MCPConnection] = Field(alias="mcpConnections", max_length=128)
+    conversation_settings: ConversationSettings | None = Field(
+        default=None, alias="conversationSettings", exclude_if=_absent
+    )
 
 
 class ConfigurationRevision(ConfigurationGraph):

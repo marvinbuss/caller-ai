@@ -441,7 +441,14 @@ async def compose_management(
                     audit_retention_seconds=request.audit_retention_seconds,
                 )
             )
-            api.include_router(create_auth_router(identity=identity, oidc=resolved.oidc))
+            api.include_router(
+                create_auth_router(
+                    identity=identity,
+                    oidc=resolved.oidc,
+                    test_role=request.tests.test_role if request.tests is not None else None,
+                    telemetry=telemetry,
+                )
+            )
             editor = EditorServices(
                 api=api, guard=ReflexEventGuard(identity=identity), reviewed=resolved.reviewed
             )

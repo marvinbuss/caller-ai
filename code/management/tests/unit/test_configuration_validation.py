@@ -657,3 +657,88 @@ def test_opaque_unknown_property_names_are_not_echoed_as_field_paths(
     configuration_graph[candidate] = "Synthetic unused value"
     errors = validator.validate(configuration_graph)
     assert_safe(errors, candidate)
+
+
+def rules(errors: list[dict]) -> set[str]:
+    return {error["rule_id"] for error in errors}
+
+
+def test_schema_two_one_accepts_routable_and_conversation_settings(validator, configuration_graph):
+    from management_app.models.configuration import ConfigurationGraph
+
+    assert configuration_graph["schemaVersion"] == "2.1.0"
+    configuration_graph["communities"][1]["routable"] = False
+    configuration_graph["conversationSettings"] = {
+        "voice": "marin",
+        "maxOutputTokens": 800,
+        "idleTimeoutSeconds": 90,
+    }
+    assert validator.validate(configuration_graph) == []
+    model = ConfigurationGraph.model_validate(configuration_graph)
+    assert model.model_dump(mode="json", by_alias=True) == configuration_graph
+    assert model.communities[1].routable is False
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [{}, {"voice": "cove"}, {"maxOutputTokens": 1}, {"idleTimeoutSeconds": 120}],
+)
+def test_conversation_settings_fields_are_optional(validator, configuration_graph, settings):
+    from management_app.models.configuration import ConfigurationGraph
+
+    configuration_graph["conversationSettings"] = settings
+    assert validator.validate(configuration_graph) == []
+    dumped = ConfigurationGraph.model_validate(configuration_graph).model_dump(
+        mode="json", by_alias=True
+    )
+    assert dumped["conversationSettings"] == settings
+
+
+def test_conversation_settings_unknown_fields_are_schema_errors(validator, configuration_graph):
+    configuration_graph["conversationSettings"] = {"voice": "marin", "temperature": 1}
+    errors = validator.validate(configuration_graph)
+    assert_safe(errors)
+    assert "schema" in rules(errors)
+
+
+def test_schema_two_zero_document_reads_with_routable_true(validator, configuration_graph):
+    from management_app.models.configuration import ConfigurationGraph
+
+    configuration_graph["schemaVersion"] = "2.0.0"
+    for community in configuration_graph["communities"]:
+        community.pop("routable")
+    assert validator.validate(configuration_graph) == []
+    model = ConfigurationGraph.model_validate(configuration_graph)
+    assert all(community.routable for community in model.communities)
+    assert model.conversation_settings is None
+    assert "conversationSettings" not in model.model_dump(mode="json", by_alias=True)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("communityId", "default-billing"),
+        ("communityId", "default-welcome"),
+        ("name", "Welcome"),
+        ("name", "routing"),
+        ("name", "GOODBYE"),
+        ("name", " Goodbye "),
+    ],
+)
+def test_reserved_community_ids_and_names_are_refused(validator, configuration_graph, field, value):
+    community = configuration_graph["communities"][0]
+    if field == "communityId":
+        for agent in configuration_graph["agents"]:
+            if agent["communityId"] == community["communityId"]:
+                agent["communityId"] = value
+    community[field] = value
+    errors = validator.validate(configuration_graph)
+    assert_safe(errors)
+    assert "reserved_name" in rules(errors)
+    assert value.strip() not in json.dumps(errors)
+
+
+@pytest.mark.parametrize("name", ["Welcome desk", "Routings", "Goodbyes", "Default"])
+def test_names_near_reserved_ones_are_allowed(validator, configuration_graph, name):
+    configuration_graph["communities"][0]["name"] = name
+    assert validator.validate(configuration_graph) == []

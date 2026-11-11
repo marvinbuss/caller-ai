@@ -20,7 +20,7 @@ import httpx
 from fastapi import FastAPI
 
 from management_app.models.capabilities import ApprovedCapabilities
-from management_app.models.configuration import GraphPosition
+from management_app.models.configuration import SCHEMA_VERSION, GraphPosition
 from management_app.reflex_security import ReflexEventGuard
 from management_app.services.configuration_validation import (
     GRAPH_FIELDS,
@@ -74,8 +74,14 @@ class EditorDraft:
     def from_revision(
         cls, revision: Document, etag: str, *, reviewed: ApprovedCapabilities | None = None
     ) -> Self:
+        graph = {
+            key: copy.deepcopy(value) for key, value in revision.items() if key in GRAPH_FIELDS
+        }
+        graph["schemaVersion"] = SCHEMA_VERSION
+        for community in graph["communities"]:
+            community.setdefault("routable", True)
         return cls(
-            {key: copy.deepcopy(value) for key, value in revision.items() if key in GRAPH_FIELDS},
+            graph,
             etag,
             labels={agent["agentId"]: agent["name"] for agent in revision["agents"]},
             reviewed=reviewed if reviewed is not None else ApprovedCapabilities(),
@@ -243,6 +249,7 @@ class EditorDraft:
                 "routingDescription": description,
                 "enabled": True,
                 "entryAgentId": "pending-entry",
+                "routable": True,
             }
         )
         entry_id = self.add_agent(identifier, entry_name, prompt)

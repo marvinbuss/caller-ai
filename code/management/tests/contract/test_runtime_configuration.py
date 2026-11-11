@@ -19,7 +19,7 @@ def test_v2_runtime_projection_has_independent_hash_and_no_layout(runtime_config
     response = client.get("/v2/runtime/configuration", headers=headers)
     assert response.status_code == 200
     projection = response.json()
-    assert projection["schemaVersion"] == "2.0.0" and "layout" not in projection
+    assert projection["schemaVersion"] == "2.1.0" and "layout" not in projection
     assert (
         projection["graphHash"]
         == hashlib.sha256(encoded(graph_document(repository.snapshot))).hexdigest()
@@ -148,7 +148,7 @@ def test_snapshot_is_exact_integrity_checked_revision_with_private_cache_headers
     assert response.headers["etag"] == repository.etag
     assert response.headers["cache-control"] == "private, no-cache"
     assert response.headers["vary"] == "Authorization"
-    assert response.json()["schemaVersion"] == "2.0.0"
+    assert response.json()["schemaVersion"] == "2.1.0"
     assert (
         response.json()["graphHash"]
         == hashlib.sha256(encoded(graph_document(repository.snapshot))).hexdigest()

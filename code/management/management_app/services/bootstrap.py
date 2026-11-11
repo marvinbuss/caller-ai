@@ -37,7 +37,7 @@ def protected_graph() -> Document:
         "goodbye": "Give a concise farewell and end the call.",
     }
     return {
-        "schemaVersion": "2.0.0",
+        "schemaVersion": "2.1.0",
         "agents": [
             {
                 "agentId": identifiers[role],

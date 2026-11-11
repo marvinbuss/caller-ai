@@ -3,23 +3,26 @@
 import asyncio
 import json
 import os
+import secrets
 import ssl
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
 import httpx
+import jwt
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 from fastapi import HTTPException
 from reflex.config import get_config
-from starlette.responses import RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse
+
+import management_app.security as management_security
 
 from management_app.adapters.audit_repository import LocalAuditRepository
 from management_app.adapters.backend_connection import TurnPermits
@@ -40,7 +43,9 @@ from management_app.reflex_security import ReflexEventGuard
 from management_app.security import (
     EntraPolicy,
     IdentityService,
+    LoginFlow,
     Principal,
+    ServerSession,
     SessionStore,
     TestPermitSigner,
     TokenVerifier,
@@ -74,23 +79,77 @@ policy = EntraPolicy(
 )
 
 
-class NoNetworkKeys:
+identity_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+class FixtureKeys:
+    """The fixture's own signing key; the test host never reaches an identity provider."""
+
     async def signing_keys(self):
-        raise RuntimeError("test_host_has_no_identity_discovery")
+        public = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(identity_key.public_key()))
+        public.update({"kid": "fixture-identity-key", "use": "sig", "alg": "RS256"})
+        return {"keys": [public]}
 
 
-class NoOidc:
+class FixtureOidc:
+    """Sign-in double: the browser test answers the authorize URL with a form post.
+
+    The `code` names the fixture user and roles as `<name>:<roles>` (roles joined by `+`,
+    `none` for neither); `fail` makes the exchange fail like a cancelled sign-in.
+    """
+
     async def begin(self, state):
-        raise RuntimeError("test_host_has_no_live_oidc")
+        nonce = secrets.token_urlsafe(16)
+        return LoginFlow(
+            url=f"https://login.microsoftonline.com/{policy.tenant_id}/oauth2/v2.0/authorize"
+            f"?state={state}&client_id={policy.client_id}",
+            state=state,
+            private=nonce,
+        )
 
     async def finish(self, flow, response):
-        raise RuntimeError("test_host_has_no_live_oidc")
+        name, _, roles = response.get("code", "").partition(":")
+        if name not in fixture["identities"] or roles == "fail":
+            raise ValueError("fixture_sign_in_failed")
+        now = int(time.time())
+        token = jwt.encode(
+            {
+                "iss": policy.issuer,
+                "tid": policy.tenant_id,
+                "aud": policy.client_id,
+                "oid": str(uuid5(fixture_namespace, "manager/" + name)),
+                "sub": "fixture-" + name,
+                "iat": now - 5,
+                "nbf": now - 5,
+                "exp": now + 3600,
+                "ver": "2.0",
+                "nonce": flow.private,
+                "roles": fixture_roles(roles),
+                "name": "Fixture " + name,
+                "preferred_username": name + "@fixture.example",
+            },
+            identity_key,
+            algorithm="RS256",
+            headers={"kid": "fixture-identity-key"},
+        )
+        return token, flow.private
+
+
+test_role = "Conversation.Tester"
+
+
+def fixture_roles(value: str) -> list[str]:
+    names = {"editor": policy.manager_role, "tester": test_role}
+    requested = [] if value in {"", "none"} else value.split("+")
+    if any(name not in names for name in requested):
+        raise HTTPException(400, "unknown_fixture_role")
+    return [names[name] for name in requested]
 
 
 sessions = SessionStore(policy=policy)
 reviewed = ApprovedCapabilities.from_reviewed(capability_graph_document())
 identity = IdentityService(
-    policy=policy, verifier=TokenVerifier(policy=policy, keys=NoNetworkKeys()), sessions=sessions
+    policy=policy, verifier=TokenVerifier(policy=policy, keys=FixtureKeys()), sessions=sessions
 )
 validator = ConfigurationValidator(
     policy=json.loads(
@@ -111,8 +170,43 @@ api.include_router(
         audit=AuditService(repository=LocalAuditRepository()),
     )
 )
-api.include_router(create_auth_router(identity=identity, oidc=NoOidc()))
-test_role = "Conversation.Tester"
+test_telemetry = Telemetry("management", "local")
+api.include_router(
+    create_auth_router(
+        identity=identity, oidc=FixtureOidc(), test_role=test_role, telemetry=test_telemetry
+    )
+)
+faults: dict[str, dict[str, float]] = {}
+
+
+@api.middleware("http")
+async def fixture_faults(request, call_next):
+    # Delayed or failing responses for the page loading and error states.
+    fault = faults.get(request.url.path)
+    if fault and request.method == "GET":
+        await asyncio.sleep(fault.get("delay", 0))
+        if fault.get("fail"):
+            return JSONResponse({"code": "fixture_failure"}, status_code=503)
+    return await call_next(request)
+
+
+@api.get("/_test/fault")
+async def fixture_fault(path: str, delay: float = 0, fail: bool = False):
+    if path not in {"/v2/configuration", "/v1/status"} or not 0 <= delay <= 10:
+        raise HTTPException(400, "unknown_fixture_fault")
+    if delay == 0 and not fail:
+        faults.pop(path, None)
+    else:
+        faults[path] = {"delay": delay, "fail": float(fail)}
+    return {"faults": faults}
+
+
+@api.get("/_test/tester-only/{enabled}")
+async def fixture_tester_only(enabled: bool):
+    management_security.TESTER_ONLY_TESTS = enabled
+    return {"testerOnlyTests": enabled}
+
+
 test_key_path = fixture_path.parent / "test-signing.pem"
 test_key = (
     serialization.load_pem_private_key(test_key_path.read_bytes(), password=None)
@@ -218,18 +312,37 @@ api.include_router(
 
 
 @api.get("/_test/login/{name}")
-async def fixture_login(name: str, target: Literal["editor", "test"] = "editor"):
+async def fixture_login(
+    name: str,
+    target: str = "/communities",
+    roles: str = "editor+tester",
+    session_seconds: int = 900,
+    token_seconds: int = 3600,
+):
     if name not in fixture["identities"]:
         raise HTTPException(404, "unknown_fixture_manager")
+    if management_security.return_path(target) is None and target != "/login":
+        raise HTTPException(400, "unknown_fixture_target")
+    if not 1 <= session_seconds <= 900 or not 1 <= token_seconds <= 7200:
+        raise HTTPException(400, "invalid_fixture_expiry")
     actor = str(uuid5(fixture_namespace, "manager/" + name))
-    ticket = sessions.issue(
-        Principal(
-            actor, policy.tenant_id, int(time.time()) + 3600, (policy.manager_role, test_role)
+    principal = Principal(
+        actor,
+        policy.tenant_id,
+        int(time.time()) + token_seconds,
+        tuple(fixture_roles(roles)),
+        "Fixture " + name,
+        name + "@fixture.example",
+    )
+    ticket = sessions.issue(principal)
+    if session_seconds < 900:
+        # A short fixture session for the expiry warning; the store keeps the same cookie.
+        digest = sessions.digest(ticket.cookie)
+        stored = sessions._sessions[digest]
+        sessions._sessions[digest] = ServerSession(
+            stored.principal, time.time() + session_seconds, stored.csrf_digest
         )
-    )
-    response = RedirectResponse(
-        "/configuration/test" if target == "test" else "/configuration", status_code=303
-    )
+    response = RedirectResponse(target, status_code=303)
     identity.sessions.set_cookie(response, ticket)
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -301,7 +414,12 @@ for name in fixture["identities"]:
     actor = str(uuid5(fixture_namespace, "manager/" + name))
     ticket = sessions.issue(
         Principal(
-            actor, policy.tenant_id, int(time.time()) + 3600, (policy.manager_role, test_role)
+            actor,
+            policy.tenant_id,
+            int(time.time()) + 3600,
+            (policy.manager_role, test_role),
+            "Fixture " + name,
+            name + "@fixture.example",
         )
     )
     browser_sessions[name] = [

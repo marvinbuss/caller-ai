@@ -242,11 +242,10 @@ def test_us1_child_entry_preserves_shared_unsaved_draft_without_reloading(draft,
         error="",
         errors={},
         generation=7,
-        selected_community_id="",
+        selected_community_id=selected,
         selection_error="",
         _services=services,
         load=AsyncMock(),
-        router=SimpleNamespace(page=SimpleNamespace(params={"community_id": selected})),
     )
     asyncio.run(ConfigurationEditorState.enter_view.fn(state))
     state.load.assert_not_awaited()
@@ -254,8 +253,8 @@ def test_us1_child_entry_preserves_shared_unsaved_draft_without_reloading(draft,
     assert state._draft is draft and draft.etag == '"etag-one"'
     assert draft.graph["agents"][3]["prompt"] == "Synthetic retained navigation edit"
     assert state.status == "Unsaved" and state.generation == 7
-    assert state.selected_community_id == selected
-    assert state.selection_error == ("Community unavailable" if selected == "missing" else "")
+    assert state.selected_community_id == ("" if selected == "missing" else selected)
+    assert state.selection_error == ""
 
 
 def test_us1_child_entry_rechecks_authorization_before_exposing_shared_draft(draft):
@@ -370,17 +369,16 @@ def test_draft_is_detached_and_conflict_retains_unsaved_values(draft, configurat
 def test_editor_components_construct_with_typed_reflex_events() -> None:
     import reflex as rx
 
-    from management_app.pages.communities import configuration_page
+    from management_app.pages.community_agent import community_agent_page
 
-    assert isinstance(configuration_page(), rx.Component)
+    assert isinstance(community_agent_page(), rx.Component)
 
 
 def test_sign_in_link_loads_the_server_route_instead_of_a_client_page() -> None:
-    from management_app.pages.communities import configuration_page
+    from management_app.components.frame import FRAME_CODE
 
-    tree = json.dumps(configuration_page().render(), default=str)
-    link = tree[tree.index("/auth/login") - 400 : tree.index("/auth/login") + 400]
-    assert "reloadDocument" in link
+    # A plain anchor, so the browser loads the server route instead of a client page.
+    assert 'createElement("a", {' in FRAME_CODE and "/auth/login?returnTo=" in FRAME_CODE
 
 
 @pytest.mark.parametrize("role", ["welcome", "routing", "goodbye"])

@@ -12,7 +12,12 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from management_app.models.configuration import ConfigurationGraph, ConfigurationRevision
+from management_app.models.configuration import (
+    EMPTY_LAYOUT,
+    SCHEMA_VERSION,
+    ConfigurationGraph,
+    ConfigurationRevision,
+)
 from management_app.models.permissions import AUTHORITY_LIMIT, PermissionAuthority
 from management_app.services.configuration_validation import (
     BATCH_LIMIT,
@@ -64,6 +69,8 @@ def publication(
     if errors:
         raise ConfigurationRejected(errors)
     graph = ConfigurationGraph.model_validate(payload).model_dump(mode="json", by_alias=True)
+    # Positions live in the browser now; a revision keeps only the empty 2.1.0 layout.
+    graph |= {"schemaVersion": SCHEMA_VERSION, "layout": copy.deepcopy(EMPTY_LAYOUT)}
     now = datetime.now(UTC)
     number = previous["revisionNumber"] + 1 if previous else 1
     snapshot = ConfigurationRevision.model_validate(

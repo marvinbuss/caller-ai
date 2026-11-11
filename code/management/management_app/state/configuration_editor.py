@@ -485,31 +485,30 @@ class ConfigurationEditorState(rx.State):
                 await cast(EventHandler, ConfigurationEditorState.load).fn(self)
             if not self.authorized or self._draft is None:
                 return
-            selected = self.router.page.params.get("community_id", "")
-            if not isinstance(selected, str):
-                self.selected_community_id = ""
-                self.selection_error = "Community unavailable"
-                return
-            self.selected_community_id = selected
-            self.selection_error = ""
-            if selected and not any(
-                community["communityId"] == selected
+            if self.selected_community_id and not any(
+                community["communityId"] == self.selected_community_id
                 for community in self._draft.graph["communities"]
             ):
-                self.selection_error = "Community unavailable"
+                self.selected_community_id = ""
+            self.selection_error = ""
         except Exception:
             self.authorized = False
             self._draft = None
             self.selection_error = "Configuration unavailable"
 
     @rx.event
-    def open_community(self, identifier: str) -> EventSpec | None:
+    def open_community(self, identifier: str) -> None:
         try:
             self._editing()._community(identifier)
-            return rx.redirect("/configuration/communities/" + identifier)
+            self.selected_community_id = identifier
+            self.selection_error = ""
         except ValueError:
             self.selection_error = "Community unavailable"
-            return None
+
+    @rx.event
+    def close_community(self) -> None:
+        self.selected_community_id = ""
+        self.selection_error = ""
 
     @rx.event
     def select_community_entry(self, identifier: str) -> None:

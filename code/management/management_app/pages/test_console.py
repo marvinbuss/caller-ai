@@ -250,44 +250,19 @@ def console_controls() -> rx.Component:
     )
 
 
-def test_console_page() -> rx.Component:
+def test_console_content() -> rx.Component:
     return cast(
         rx.Component,
         rx.box(
-            rx.el.header(
-                rx.hstack(
-                    rx.icon("headset", size=22, color="#197767"),
-                    rx.text("CALLER / CONTROL", size="2", weight="bold"),
-                    rx.spacer(),
-                    rx.link(
-                        rx.icon("network", size=18),
-                        href="/configuration",
-                        aria_label="Configuration",
-                        title="Configuration",
-                    ),
-                    align="center",
-                    width="100%",
-                    max_width="960px",
-                    margin="0 auto",
-                ),
-                padding=["18px 20px", "18px 32px"],
-                border_bottom="1px solid #dce1df",
-                background="#f4f7f6",
-            ),
-            rx.el.main(
-                rx.heading("Test Console", size="5", margin_bottom="24px"),
-                rx.cond(
-                    Console.authorized, console_controls(), rx.text("Unavailable", role="status")
-                ),
-                padding=["28px 20px", "40px 32px"],
-                max_width="960px",
-                width="100%",
-                margin="0 auto",
-            ),
-            min_height="100vh",
-            background="#ffffff",
-            color="#242925",
-            font_family="Trebuchet MS, sans-serif",
-            letter_spacing="0",
+            rx.heading("Test", size="7", margin_bottom="24px"),
+            rx.cond(Console.authorized, console_controls(), rx.text("Unavailable", role="status")),
+            max_width="960px",
+            width="100%",
         ),
     )
+
+
+def test_console_page() -> rx.Component:
+    from management_app.components.frame import frame
+
+    return frame("test", test_console_content)

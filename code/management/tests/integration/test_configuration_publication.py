@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 
-def test_v2_layout_publication_keeps_atomic_authority_and_full_hash(publication_store, graph_v2):
+def test_v2_publication_keeps_atomic_authority_and_full_hash(publication_store, graph_v2):
     from management_app.adapters.configuration_repository import graph_document
     from management_app.services.configuration_validation import encoded
 
@@ -17,9 +17,11 @@ def test_v2_layout_publication_keeps_atomic_authority_and_full_hash(publication_
 
     async def scenario():
         before, etag = await repository.initialize(graph_v2, actor_id="manager-fixture")
+        assert before["schemaVersion"] == "2.1.0"
+        assert before["layout"] == {"communities": [], "agentsByCommunity": {}}
         authority = await repository.read_authority()
         changed = copy.deepcopy(graph_v2)
-        changed["layout"]["communities"][0]["x"] += 100
+        changed["agents"][3]["prompt"] += " changed"
         saved = await repository.publish(changed, if_match=etag, actor_id="manager-fixture")
         assert saved is not None and saved[1] != etag
         assert saved[0]["graphHash"] != before["graphHash"]
@@ -59,7 +61,7 @@ def test_v2_manager_conditions_and_legacy_route_rejection(editor_test_app, graph
                 assert (await client.get("/v2/configuration")).status_code == 401
                 await client.get("/_test/login/manager-one")
                 current = await client.get("/v2/configuration")
-                assert current.status_code == 200 and current.json()["schemaVersion"] == "2.0.0"
+                assert current.status_code == 200 and current.json()["schemaVersion"] == "2.1.0"
                 assert (
                     current.headers["etag"] == (await editor_test_app.repository.read_active())[1]
                 )
@@ -79,7 +81,7 @@ def test_v2_manager_conditions_and_legacy_route_rejection(editor_test_app, graph
                 ).status_code == 409
                 headers["If-Match"] = current.headers["etag"]
                 changed = copy.deepcopy(graph_v2)
-                changed["layout"]["communities"][0]["x"] += 100
+                changed["agents"][3]["prompt"] += " changed"
                 saved = await client.put("/v2/configuration", json=changed, headers=headers)
                 assert saved.status_code == 200 and saved.headers["etag"] != current.headers["etag"]
                 assert saved.json()["revisionNumber"] == current.json()["revisionNumber"] + 1

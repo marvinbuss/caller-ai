@@ -169,7 +169,7 @@ class CommunityVisibility:
 
     def _browser_graph(self) -> Document:
         graph = self._graph()
-        if graph.get("schemaVersion") != "2.0.0":
+        if graph.get("schemaVersion") not in {"2.0.0", "2.1.0"}:
             raise PermissionError("handover_not_allowed")
         return graph
 

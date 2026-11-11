@@ -91,6 +91,20 @@ def test_us2_browser_policy_has_no_legacy_schema_fallback(visibility):
         visibility.initial_entry("routing", "beta")
 
 
+@pytest.mark.parametrize("version", ["2.0.0", "2.1.0"])
+def test_browser_policy_accepts_both_schema_two_versions(community_configuration_v2, version):
+    from caller_runtime.domain.visibility import CommunityVisibility
+
+    graph = community_configuration_v2 | {"schemaVersion": version, "revisionId": "revision-v"}
+    policy = CommunityVisibility(graph)
+    assert policy.initial_entry("routing", "beta")["agentId"] == "b-entry"
+    assert policy.handover_target("a-source", "a-entry")["agentId"] == "a-entry"
+    assert {row["communityId"] for row in policy.view_for("routing")["communities"]} == {
+        "alpha",
+        "beta",
+    }
+
+
 def test_ordinary_discovery_is_complete_enabled_and_community_local(visibility) -> None:
     view = visibility.view_for("a-source")
     assert {peer["agentId"] for peer in view["peers"]} == {"a-entry", "a-peer"}

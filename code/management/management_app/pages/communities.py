@@ -36,7 +36,8 @@ def community_row(community: ObjectVar[dict[str, Any]]) -> rx.Component:
             rx.flex(
                 rx.link(
                     rx.heading(community["name"].to(str), size="4", overflow_wrap="anywhere"),
-                    href="/configuration/communities/" + identifier,
+                    href="#",
+                    on_click=[rx.prevent_default, Editor.open_community(identifier)],
                     min_width="0",
                 ),
                 rx.spacer(),
@@ -362,7 +363,7 @@ def communities() -> rx.Component:
     )
 
 
-def configuration_page() -> rx.Component:
+def configuration_body() -> rx.Component:
     from management_app.pages.agents import agents
     from management_app.pages.relationships import relationships
     from management_app.pages.tools import tools
@@ -374,34 +375,9 @@ def configuration_page() -> rx.Component:
                 Editor.selected_community_id != "",
                 ConfigurationLeaveGuard.create(dirty=Editor.dirty),
             ),
-            rx.el.header(
+            rx.box(
                 rx.flex(
-                    rx.icon("headset", size=22, color="#197767"),
-                    rx.text("CALLER / CONTROL", weight="bold"),
-                    rx.spacer(),
-                    rx.tooltip(
-                        rx.link(
-                            rx.icon("messages-square", size=18),
-                            href="/configuration/test",
-                            aria_label="Test published configuration",
-                            title="Test published configuration",
-                        ),
-                        content="Test published configuration",
-                    ),
-                    rx.link("System status", href="/"),
-                    align="center",
-                    max_width="1200px",
-                    margin="0 auto",
-                    gap="10px",
-                ),
-                padding="20px",
-                border_bottom="1px solid #dce1df",
-                background="#f4f7f6",
-                role="banner",
-            ),
-            rx.el.main(
-                rx.flex(
-                    rx.heading("Configuration", size="7"),
+                    rx.heading("Community and Agent", size="7"),
                     rx.spacer(),
                     rx.cond(
                         Editor.authorized,
@@ -485,10 +461,11 @@ def configuration_page() -> rx.Component:
                                 spacing="6",
                             ),
                             rx.vstack(
-                                rx.link(
+                                rx.button(
                                     rx.icon("arrow-left", size=16),
                                     "Communities",
-                                    href="/configuration",
+                                    on_click=Editor.close_community,
+                                    variant="ghost",
                                 ),
                                 rx.cond(
                                     Editor.selection_error != "",
@@ -516,18 +493,11 @@ def configuration_page() -> rx.Component:
                         align="stretch",
                         spacing="8",
                     ),
-                    rx.link("Sign in", href="/auth/login", reload_document=True),
+                    rx.text(Editor.selection_error, role="alert"),
                 ),
                 max_width="1200px",
-                margin="0 auto",
-                padding=["28px 20px", "36px 32px"],
                 width="100%",
-                role="main",
             ),
-            min_height="100vh",
-            background="#ffffff",
-            color="#242925",
-            font_family="Trebuchet MS, sans-serif",
-            letter_spacing="0",
+            width="100%",
         ),
     )

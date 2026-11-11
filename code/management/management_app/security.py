@@ -19,7 +19,7 @@ import secrets
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, Self
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
@@ -35,9 +35,40 @@ from management_app.models.test_session import StartPermit, utc
 
 COOKIE = "__Host-caller-session"
 OPAQUE = re.compile(r"^[A-Za-z0-9_-]{43}$")
+SESSION_SECONDS = 900
+# Tester-only test access; turned on only by a reviewed change that records the security review.
+TESTER_ONLY_TESTS: bool = False
+# Sidebar order; `returnTo` accepts exactly these paths.
+PAGE_ROUTES: dict[str, str] = {
+    "dashboard": "/",
+    "communities": "/communities",
+    "test": "/test",
+    "status": "/status",
+    "settings": "/settings",
+}
+
+
+def allowed_pages(*, editor: bool, tester: bool, tester_only_tests: bool) -> list[str]:
+    """Pages a role mix opens; the server enforces the same checks on every data call."""
+    allowed = set()
+    if editor or tester:
+        allowed |= {"dashboard", "status"}
+    if editor:
+        allowed |= {"communities", "settings"}
+    if tester and (editor or tester_only_tests):
+        allowed.add("test")
+    return [page for page in PAGE_ROUTES if page in allowed]
+
+
+def return_path(value: str | None) -> str | None:
+    """An exact page route, or nothing: no scheme, host, `//`, `\\`, query or fragment."""
+    if not isinstance(value, str) or value not in PAGE_ROUTES.values():
+        return None
+    return value
+
 
 if TYPE_CHECKING:
-    pass
+    from management_app.observability import Telemetry
 
 
 def unauthorized() -> HTTPException:
@@ -94,6 +125,15 @@ class Principal:
     tenant_id: str
     expires_at: int
     roles: tuple[str, ...]
+    # Shown only to the signed-in user; never logged.
+    display_name: str = field(default="", repr=False)
+    account: str = field(default="", repr=False)
+
+
+def _profile_text(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "".join(character for character in value if character.isprintable())[:256]
 
 
 class TokenVerifier:
@@ -110,6 +150,7 @@ class TokenVerifier:
         application_clients: frozenset[str] | None = None,
         application_role: str | None = None,
         application_only: bool = False,
+        any_role: bool = False,
     ) -> Principal:
         if not isinstance(token, str) or not 1 <= len(token) <= 16384:
             raise unauthorized()
@@ -199,13 +240,22 @@ class TokenVerifier:
         except Exception:
             raise unauthorized() from None
         roles = claims.get("roles")
+        if any_role and roles is None:
+            roles = []
         if (
             not isinstance(roles, list)
             or not all(isinstance(role, str) for role in roles)
-            or (application_role or self.policy.manager_role) not in roles
+            or (not any_role and (application_role or self.policy.manager_role) not in roles)
         ):
             raise HTTPException(403, "permission_denied")
-        return Principal(actor, self.policy.tenant_id, claims["exp"], tuple(roles))
+        return Principal(
+            actor,
+            self.policy.tenant_id,
+            claims["exp"],
+            tuple(roles),
+            _profile_text(claims.get("name")) if any_role else "",
+            _profile_text(claims.get("preferred_username")) if any_role else "",
+        )
 
     async def verify_access(self, token: str) -> Principal:
         return await self._verify(token, audience=self.policy.api_audience, nonce=None)
@@ -223,9 +273,10 @@ class TokenVerifier:
         )
 
     async def verify_identity(self, token: str, *, nonce: str) -> Principal:
+        """Sign-in accepts any role mix; each page and API checks the roles it needs."""
         if not nonce:
             raise unauthorized()
-        return await self._verify(token, audience=self.policy.client_id, nonce=nonce)
+        return await self._verify(token, audience=self.policy.client_id, nonce=nonce, any_role=True)
 
 
 class RuntimeIdentity:
@@ -303,19 +354,25 @@ class SessionStore:
 
     def issue(self, principal: Principal) -> SessionTicket:
         self._purge()
-        if (
-            principal.tenant_id != self.policy.tenant_id
-            or principal.expires_at <= self.clock()
-            or self.policy.manager_role not in principal.roles
-        ):
+        if principal.tenant_id != self.policy.tenant_id or principal.expires_at <= self.clock():
             raise unauthorized()
         if len(self._sessions) >= self.capacity:
             raise HTTPException(503, "identity_capacity_unavailable")
         cookie = secrets.token_urlsafe(32)
         csrf = self._csrf(cookie)
-        expires = min(self.clock() + 900, principal.expires_at)
+        expires = min(self.clock() + SESSION_SECONDS, principal.expires_at)
         self._sessions[self.digest(cookie)] = ServerSession(principal, expires, self.digest(csrf))
         return SessionTicket(cookie, csrf, expires)
+
+    def extend(self, cookie: str) -> SessionTicket:
+        """Another 15 minutes, never past the sign-in token's own expiry."""
+        session = self.resolve(cookie)
+        expires = min(self.clock() + SESSION_SECONDS, session.principal.expires_at)
+        expires = max(expires, session.expires_at)
+        self._sessions[self.digest(cookie)] = ServerSession(
+            session.principal, expires, session.csrf_digest
+        )
+        return SessionTicket(cookie, self._csrf(cookie), expires)
 
     def resolve(self, cookie: str) -> ServerSession:
         self._purge()
@@ -559,9 +616,13 @@ class IdentityService:
             if scheme.lower() != "bearer" or not separator or not token or token.strip() != token:
                 raise unauthorized()
             return (await self.verifier.verify_access(token)).actor_id
-        return self.browser_session(
+        session = self.browser_session(
             request, mutation=request.method not in {"GET", "HEAD", "OPTIONS"}
-        ).principal.actor_id
+        )
+        if self.policy.manager_role not in session.principal.roles:
+            # Sign-in accepts any role mix, so the editor role is checked here.
+            raise HTTPException(403, "permission_denied")
+        return session.principal.actor_id
 
     @staticmethod
     def _bearer(request: Request | WebSocket) -> str:
@@ -628,6 +689,10 @@ class LoginFlow:
     private: Any = field(repr=False)
 
 
+def _instant(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, UTC).isoformat().replace("+00:00", "Z")
+
+
 class OidcFlow(Protocol):
     async def begin(self, state: str) -> LoginFlow: ...
 
@@ -635,22 +700,31 @@ class OidcFlow(Protocol):
 
 
 def create_auth_router(
-    *, identity: IdentityService, oidc: OidcFlow, operation_budget: float = 5
+    *,
+    identity: IdentityService,
+    oidc: OidcFlow,
+    operation_budget: float = 5,
+    test_role: str | None = None,
+    telemetry: "Telemetry | None" = None,
 ) -> APIRouter:
     if not 0 < operation_budget <= 5:
         raise ValueError("invalid_identity_operation_budget")
     router = APIRouter()
-    pending: dict[str, tuple[float, LoginFlow]] = {}
+    pending: dict[str, tuple[float, LoginFlow, str]] = {}
     inflight = 0
     login_cookie = "__Host-caller-login"
 
+    def record(name: str, **fields: str) -> None:
+        if telemetry is not None:
+            telemetry.record(name, **fields)
+
     def purge() -> None:
-        for key, (expires, _flow) in tuple(pending.items()):
+        for key, (expires, _flow, _target) in tuple(pending.items()):
             if expires <= time.monotonic():
                 del pending[key]
 
     @router.get("/auth/login")
-    async def login() -> Response:
+    async def login(returnTo: str | None = None) -> Response:  # noqa: N803
         nonlocal inflight
         purge()
         if len(pending) + inflight >= 100:
@@ -674,7 +748,11 @@ def create_auth_router(
             raise HTTPException(503, "identity_authority_unavailable") from None
         finally:
             inflight -= 1
-        pending[identity.sessions.digest(cookie)] = (time.monotonic() + 300, flow)
+        pending[identity.sessions.digest(cookie)] = (
+            time.monotonic() + 300,
+            flow,
+            return_path(returnTo) or "/",
+        )
         response = RedirectResponse(flow.url, status_code=303)
         response.set_cookie(
             login_cookie, cookie, secure=True, httponly=True, samesite="none", max_age=300, path="/"
@@ -684,6 +762,30 @@ def create_auth_router(
 
     @router.post("/auth/callback")
     async def callback(request: Request) -> Response:
+        try:
+            response = await finish_sign_in(request)
+        except HTTPException as refused:
+            record(
+                "auth.sign_in",
+                outcome="failure",
+                reason="invalid_response"
+                if refused.status_code == 401
+                else "capacity"
+                if refused.detail == "identity_capacity_unavailable"
+                else "unavailable",
+            )
+            if refused.status_code != 401:
+                raise
+        else:
+            record("auth.sign_in", outcome="success", reason="none")
+            return response
+        # A cancelled or failed sign-in returns to the login page and creates no session.
+        failed = RedirectResponse("/login?signin=failed", status_code=303)
+        failed.delete_cookie(login_cookie, secure=True, httponly=True, samesite="none", path="/")
+        failed.headers.update({"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+        return failed
+
+    async def finish_sign_in(request: Request) -> Response:
         deadline = asyncio.get_running_loop().time() + operation_budget
         purge()
         cookie = request.cookies.get(login_cookie, "")
@@ -732,18 +834,67 @@ def create_auth_router(
             raise
         except Exception:
             raise unauthorized() from None
-        response = RedirectResponse("/configuration", status_code=303)
+        response = RedirectResponse(item[2], status_code=303)
         identity.sessions.set_cookie(response, ticket)
         response.delete_cookie(login_cookie, secure=True, httponly=True, samesite="none", path="/")
         response.headers.update({"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
         return response
 
+    def profile(stored: ServerSession, cookie: str) -> dict[str, Any]:
+        roles = stored.principal.roles
+        editor = identity.policy.manager_role in roles
+        tester = test_role is not None and test_role in roles
+        return {
+            "actor_ref": stored.principal.actor_id,
+            "csrf": identity.sessions.csrf_for(cookie),
+            "roles": [name for name, held in (("editor", editor), ("tester", tester)) if held],
+            "pages": allowed_pages(
+                editor=editor, tester=tester, tester_only_tests=TESTER_ONLY_TESTS
+            ),
+            "displayName": stored.principal.display_name,
+            "account": stored.principal.account,
+            "expiresAt": _instant(stored.expires_at),
+            "tokenExpiresAt": _instant(stored.principal.expires_at),
+        }
+
     @router.get("/auth/session")
-    async def session(request: Request) -> Response:
-        stored = identity.browser_session(request, mutation=False)
-        cookie = request.cookies[COOKIE]
-        csrf = identity.sessions.csrf_for(cookie)
-        response = JSONResponse({"actor_ref": stored.principal.actor_id, "csrf": csrf})
+    async def session(request: Request, page: str | None = None) -> Response:
+        viewed = page if page in PAGE_ROUTES or page == "login" else None
+        try:
+            stored = identity.browser_session(request, mutation=False)
+        except HTTPException:
+            if viewed is not None:
+                record("ui.page_view", page=viewed, outcome="login")
+            raise
+        body = profile(stored, request.cookies[COOKIE])
+        if viewed is not None and viewed != "login":
+            record(
+                "ui.page_view",
+                page=viewed,
+                outcome="no_access"
+                if not body["pages"]
+                else "shown"
+                if viewed in body["pages"]
+                else "role_required",
+            )
+        response = JSONResponse(body)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @router.post("/auth/session/extend")
+    async def extend(request: Request) -> Response:
+        try:
+            identity.browser_session(request, mutation=True)
+            ticket = identity.sessions.extend(request.cookies[COOKIE])
+        except HTTPException as refused:
+            record("auth.session_extend", outcome="failure")
+            if refused.status_code == 401:
+                raise HTTPException(401, "session_expired") from None
+            raise
+        record("auth.session_extend", outcome="success")
+        stored = identity.sessions.resolve(ticket.cookie)
+        response = JSONResponse(profile(stored, ticket.cookie))
+        identity.sessions.set_cookie(response, ticket)
         response.headers["Cache-Control"] = "no-store"
         return response
 

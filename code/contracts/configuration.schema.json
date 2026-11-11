@@ -131,6 +131,11 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
           "title": "Entryagentid",
           "type": "string"
+        },
+        "routable": {
+          "default": true,
+          "title": "Routable",
+          "type": "boolean"
         }
       },
       "required": [
@@ -181,6 +186,55 @@
         "allowedContextFields"
       ],
       "title": "CommunityConnection",
+      "type": "object"
+    },
+    "ConversationSettings": {
+      "additionalProperties": false,
+      "description": "Per-conversation values; an absent field means the runtime's environment default.",
+      "properties": {
+        "voice": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voice"
+        },
+        "maxOutputTokens": {
+          "anyOf": [
+            {
+              "maximum": 4096,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxoutputtokens"
+        },
+        "idleTimeoutSeconds": {
+          "anyOf": [
+            {
+              "maximum": 120,
+              "minimum": 30,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idletimeoutseconds"
+        }
+      },
+      "title": "ConversationSettings",
       "type": "object"
     },
     "GraphLayout": {
@@ -468,7 +522,10 @@
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
-      "const": "2.0.0",
+      "enum": [
+        "2.0.0",
+        "2.1.0"
+      ],
       "title": "Schemaversion",
       "type": "string"
     },
@@ -522,6 +579,17 @@
       "maxItems": 128,
       "title": "Mcpconnections",
       "type": "array"
+    },
+    "conversationSettings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConversationSettings"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "id": {
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",

@@ -29,8 +29,11 @@ GRAPH_FIELDS = frozenset(
         "layout",
         "tools",
         "mcpConnections",
+        "conversationSettings",
     }
 )
+RESERVED_PREFIX = "default-"
+RESERVED_NAMES = frozenset({"welcome", "routing", "goodbye"})
 
 
 def encoded(value: object) -> bytes:
@@ -212,6 +215,10 @@ class ConfigurationValidator:
                         reject(assignment_path, rule="capability_review")
 
         for index, community in enumerate(graph.communities):
+            if community.community_id.startswith(RESERVED_PREFIX):
+                reject(f"communities[{index}].communityId", rule="reserved_name")
+            if community.name.strip().casefold() in RESERVED_NAMES:
+                reject(f"communities[{index}].name", rule="reserved_name")
             entry = agents.get(community.entry_agent_id)
             if (
                 entry is None
