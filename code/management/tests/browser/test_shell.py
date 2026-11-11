@@ -13,9 +13,11 @@ def test_responsive_login_without_session(page: Page, shell_url: str, width: int
     data: list[str] = []
     page.on(
         "request",
-        lambda request: data.append(request.url)
-        if "/v2/configuration" in request.url or "/v1/status" in request.url
-        else None,
+        lambda request: (
+            data.append(request.url)
+            if "/v2/configuration" in request.url or "/v1/status" in request.url
+            else None
+        ),
     )
     page.set_viewport_size({"width": width, "height": 900})
     page.goto(shell_url, wait_until="networkidle")

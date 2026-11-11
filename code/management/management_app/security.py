@@ -607,6 +607,15 @@ class IdentityService:
             raise HTTPException(403, "test_permission_denied")
         return session
 
+    def display_name(self, request: Request) -> str:
+        """The signed-in browser user's display name, or nothing for a bearer token."""
+        if request.headers.getlist("authorization") or COOKIE not in request.cookies:
+            return ""
+        try:
+            return self.sessions.resolve(request.cookies[COOKIE]).principal.display_name
+        except HTTPException:
+            return ""
+
     async def require_manager(self, request: Request) -> str:
         authorization = request.headers.getlist("authorization")
         if authorization:

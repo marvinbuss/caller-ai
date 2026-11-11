@@ -8,7 +8,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from tests.unit.test_security import CLIENT, ORIGIN, TENANT, signed
+from tests.unit.test_security import (  # noqa: F401 - shared fixtures
+    CLIENT,
+    ORIGIN,
+    TENANT,
+    security,
+    signed,
+    signing_key,
+)
 
 TESTER = "Conversation.Tester"
 
@@ -39,7 +46,8 @@ def sign_in_app(identity, signing_key, *, roles, telemetry=None, **claims):
 
 def complete(client, return_to=None):
     started = client.get(
-        "/auth/login", params={"returnTo": return_to} if return_to is not None else None,
+        "/auth/login",
+        params={"returnTo": return_to} if return_to is not None else None,
         follow_redirects=False,
     )
     state = parse_qs(urlsplit(started.headers["Location"]).query)["state"][0]
@@ -183,9 +191,7 @@ def test_frontend_events_carry_no_names_accounts_or_tokens(security, signing_key
     identity, _keys = security
     telemetry = Telemetry("management", "local")
     claims = {"name": "Private Person", "preferred_username": "private@example.invalid"}
-    app = sign_in_app(
-        identity, signing_key, roles=[TESTER], telemetry=telemetry, **claims
-    )
+    app = sign_in_app(identity, signing_key, roles=[TESTER], telemetry=telemetry, **claims)
     with TestClient(app, base_url=ORIGIN) as client:
         assert client.get("/auth/session", params={"page": "status"}).status_code == 401
         complete(client)

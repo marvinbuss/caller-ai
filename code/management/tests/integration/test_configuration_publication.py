@@ -44,6 +44,47 @@ def test_v2_publication_keeps_atomic_authority_and_full_hash(publication_store, 
     asyncio.run(scenario())
 
 
+def test_agent_stamps_follow_changes_across_three_publications(publication_store, graph_v2):
+    from management_app.adapters.configuration_repository import graph_document
+    from management_app.services.configuration_validation import encoded
+
+    repository, _container = publication_store
+
+    async def scenario():
+        first, etag = await repository.initialize(graph_v2, actor_id="bootstrap-fixture")
+        stamps = first["publication"]["agentStamps"]
+        assert {stamp["revisionNumber"] for stamp in stamps.values()} == {1}
+        changed = copy.deepcopy(graph_v2)
+        changed["agents"][3]["prompt"] += " second"
+        second, etag = await repository.publish(
+            changed, if_match=etag, actor_id="actor-two", actor_name="Second Editor"
+        )
+        stamps = second["publication"]["agentStamps"]
+        assert stamps["agent-alpha"] == {
+            "revisionNumber": 2,
+            "changedAt": second["publication"]["publishedAt"],
+            "changedBy": "actor-two",
+            "changedByName": "Second Editor",
+        }
+        assert stamps["agent-beta"] == first["publication"]["agentStamps"]["agent-beta"]
+        assert second["publication"]["publishedByName"] == "Second Editor"
+        third_graph = copy.deepcopy(changed)
+        third_graph["agents"].append(
+            {**third_graph["agents"][4], "agentId": "agent-beta-new", "name": "Beta new"}
+        )
+        third, _etag = await repository.publish(
+            third_graph, if_match=etag, actor_id="actor-three", actor_name="Third Editor"
+        )
+        stamps = third["publication"]["agentStamps"]
+        assert stamps["agent-beta-new"]["revisionNumber"] == 3
+        assert stamps["agent-alpha"]["revisionNumber"] == 2
+        assert stamps["agent-beta"]["revisionNumber"] == 1
+        # Stamps sit outside the graph hash.
+        assert third["graphHash"] == hashlib.sha256(encoded(graph_document(third))).hexdigest()
+
+    asyncio.run(scenario())
+
+
 def test_v2_manager_conditions_and_legacy_route_rejection(editor_test_app, graph_v2):
     from management_app.health import lifecycle
 

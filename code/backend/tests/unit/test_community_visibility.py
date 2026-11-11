@@ -223,3 +223,20 @@ def test_disabled_community_and_entry_cannot_be_materialized(community_configura
     ]
     with pytest.raises(PermissionError):
         visibility.resolve_handover("routing", "b-entry")
+
+
+def test_routing_offers_only_routable_enabled_communities_with_an_enabled_entry(
+    community_configuration_v2,
+):
+    from caller_runtime.domain.visibility import CommunityVisibility
+
+    graph = community_configuration_v2 | {"schemaVersion": "2.1.0", "revisionId": "revision-r"}
+    for community in graph["communities"]:
+        community["routable"] = community["communityId"] == "alpha"
+    policy = CommunityVisibility(graph)
+    assert [row["communityId"] for row in policy.view_for("routing")["communities"]] == ["alpha"]
+    assert policy.initial_entry("routing", "alpha")["agentId"] == "a-entry"
+    with pytest.raises(PermissionError, match="handover_not_allowed"):
+        policy.initial_entry("routing", "beta")
+    # A connection still reaches a community that Routing does not offer.
+    assert policy.community_transfer("a-source", "beta")["entry"]["agentId"] == "b-entry"

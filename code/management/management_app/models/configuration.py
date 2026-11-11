@@ -121,6 +121,24 @@ class ConfigurationGraph(ConfigurationModel):
     )
 
 
+class AgentStamp(ConfigurationModel):
+    """When and by whom an agent last changed in a published revision."""
+
+    revision_number: int = Field(alias="revisionNumber", ge=1)
+    changed_at: str = Field(alias="changedAt", max_length=64)
+    changed_by: Identifier = Field(alias="changedBy")
+    changed_by_name: str = Field(alias="changedByName", max_length=256)
+
+
+class PublicationRecord(ConfigurationModel):
+    """Editor-only publication metadata; outside both hashes and the runtime projection."""
+
+    published_at: str = Field(alias="publishedAt", max_length=64)
+    published_by: Identifier = Field(alias="publishedBy")
+    published_by_name: str = Field(alias="publishedByName", max_length=256)
+    agent_stamps: dict[Identifier, AgentStamp] = Field(alias="agentStamps", max_length=200)
+
+
 class ConfigurationRevision(ConfigurationGraph):
     id: Identifier
     organization_id: Literal["default"] = Field(alias="organizationId")
@@ -128,6 +146,7 @@ class ConfigurationRevision(ConfigurationGraph):
     created_at: datetime = Field(alias="createdAt")
     created_by: Identifier = Field(alias="createdBy")
     graph_hash: str = Field(alias="graphHash", pattern=r"^[0-9a-f]{64}$")
+    publication: PublicationRecord | None = Field(default=None, exclude_if=_absent)
 
     @field_validator("created_at")
     @classmethod

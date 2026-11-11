@@ -32,6 +32,7 @@ REVISION_FIELDS = {
     "createdAt",
     "createdBy",
     "graphHash",
+    "warnings",
     *COLLECTIONS,
 }
 
@@ -111,7 +112,7 @@ class RepositoryDouble:
         return copy.deepcopy(self.snapshot), self.etag
 
     async def publish(
-        self, payload: dict, *, if_match: str, actor_id: str
+        self, payload: dict, *, if_match: str, actor_id: str, actor_name: str = ""
     ) -> tuple[dict, str] | None:
         if if_match != self.etag:
             return None
@@ -159,7 +160,7 @@ def test_authorized_get_returns_complete_revision_and_strong_etag(configuration_
     assert response.status_code == 200
     assert response.headers["ETag"] == ETAG
     assert set(response.json()) == REVISION_FIELDS
-    assert response.json() == repository.snapshot
+    assert response.json() == repository.snapshot | {"warnings": []}
     assert response.json()["organizationId"] == "default"
     assert len(response.json()["communities"]) == 2
     assert identity.calls == 1 and repository.publications == 0
@@ -243,7 +244,7 @@ def test_two_managers_cannot_silently_overwrite_shared_revision(
     stale_payload["agents"][4]["name"] = "Manager two unsaved update"
     identity.actor = "manager-two"
     problem(client.put(PATH, json=stale_payload, headers={"If-Match": second.headers["ETag"]}), 409)
-    assert repository.publications == 1 and repository.snapshot == saved.json()
+    assert repository.publications == 1 and repository.snapshot | {"warnings": []} == saved.json()
 
 
 @pytest.mark.parametrize("character", ["x", "\u00e9"], ids=["ascii", "utf8"])
@@ -327,7 +328,7 @@ def test_audit_failure_acknowledges_commit_and_marks_recovery_pending(
     response = client.put(PATH, json=configuration_graph, headers={"If-Match": ETAG})
     assert response.status_code == 200 and repository.publications == 1
     assert response.headers["X-Audit-Status"] == "pending"
-    assert response.json() == repository.snapshot
+    assert response.json() == repository.snapshot | {"warnings": []}
     assert "synthetic-private-audit-details" not in response.text
 
 
@@ -364,7 +365,9 @@ def test_publication_audit_uses_original_deadline_after_controlled_elapsed_work(
     monkeypatch.setattr(repository.audit, "recover_publication", blocked_audit)
     response = client.put(PATH, json=configuration_graph, headers={"If-Match": ETAG})
     assert response.status_code == 200 and response.headers["X-Audit-Status"] == "pending"
-    assert repository.publications == 1 and response.json() == repository.snapshot
+    assert repository.publications == 1 and response.json() == repository.snapshot | {
+        "warnings": []
+    }
     assert deadlines == [clock.origin + 10, clock.origin + 10]
 
 
@@ -372,3 +375,50 @@ def test_invalid_save_has_no_publication_audit(configuration_api) -> None:
     client, identity, validator, repository = configuration_api
     problem(client.put(PATH, content=b"invalid", headers={"If-Match": ETAG}), 422)
     assert repository.audit.revisions == []
+
+
+def test_unreachable_communities_are_warnings_that_never_block(
+    configuration_api, configuration_graph
+) -> None:
+    client, _identity, _validator, repository = configuration_api
+    configuration_graph["communities"][1]["routable"] = False
+    response = client.put(PATH, json=configuration_graph, headers={"If-Match": ETAG})
+    assert response.status_code == 200 and repository.publications == 1
+    assert response.json()["warnings"] == [
+        {"code": "community_unreachable", "communityId": "community-beta"}
+    ]
+    assert client.get(PATH).json()["warnings"] == response.json()["warnings"]
+
+
+def test_publication_metadata_is_returned_to_editors_only(configuration_graph) -> None:
+    from management_app.api.configuration import create_router
+
+    class ReaderIdentity(IdentityDouble):
+        async def require_reader(self, request, *, reader_role):
+            return "tester-application"
+
+    stamped = revision(configuration_graph, 1, "bootstrap-fixture") | {
+        "publication": {
+            "publishedAt": "2026-11-11T10:00:00Z",
+            "publishedBy": "actor-one",
+            "publishedByName": "Example Editor",
+            "agentStamps": {},
+        }
+    }
+    identity = ReaderIdentity()
+    repository = RepositoryDouble(stamped)
+    app = FastAPI()
+    app.include_router(
+        create_router(
+            repository=repository,
+            identity=identity,
+            validator=ValidatorDouble(),
+            audit=repository.audit,
+            reader_role="Conversation.Tester",
+        )
+    )
+    with TestClient(app) as client:
+        assert client.get(PATH).json()["publication"]["publishedByName"] == "Example Editor"
+        identity.mode = "forbidden"
+        reader = client.get(PATH)
+    assert reader.status_code == 200 and "publication" not in reader.json()
