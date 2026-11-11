@@ -346,7 +346,9 @@ def _messages() -> rx.Component:
                 Editor.graph_errors,
                 lambda line: rx.el.div(line, role="alert", color=COLORS["danger"]),
             ),
-            rx.el.span(Editor.status, role="status", color=COLORS["brand"]),
+            rx.el.span(
+                Editor.status, role="status", color=COLORS["brand"], data_testid="editor-status"
+            ),
             min_height="28px",
             padding="8px 0",
             display="flex",

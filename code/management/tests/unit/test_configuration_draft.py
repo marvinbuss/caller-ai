@@ -257,7 +257,6 @@ def test_us1_save_acknowledgement_tracks_logical_draft_across_framework_copies(d
 
 @pytest.mark.parametrize("selected", ["community-alpha", "community-beta", "missing"])
 def test_us1_child_entry_preserves_shared_unsaved_draft_without_reloading(draft, selected):
-    from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
     from management_app.state.configuration_editor import ConfigurationEditorState

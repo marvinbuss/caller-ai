@@ -823,6 +823,10 @@ class CallerTestEngine {
             code, cleanupStatus);
     }
     dispose() {
+        if (!this.terminal) {
+            // The frame tells the user on the next page that leaving stopped the test.
+            try { window.sessionStorage.setItem("caller-test-left", "1"); } catch (error) {}
+        }
         this.stop(); this.detached = true;
         this.events = {begin: () => {}, control: () => {}};
     }

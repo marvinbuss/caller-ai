@@ -206,7 +206,7 @@ class ConfigurationEditorState(rx.State):
                     "selected": self.selected_community_id == community["communityId"]
                     and not self.selected_agent_id,
                     "deletable": False,
-                    "ariaLabel": "Community " + community["name"],
+                    "ariaLabel": community["name"] + " community node",
                     "data": {
                         "kind": "community",
                         "variant": kind,
@@ -241,7 +241,7 @@ class ConfigurationEditorState(rx.State):
                         "style": {"width": AGENT_WIDTH, "height": AGENT_HEIGHT},
                         "selected": self.selected_agent_id == agent_id,
                         "deletable": False,
-                        "ariaLabel": "Agent " + (agent["name"] or "Unnamed agent"),
+                        "ariaLabel": (agent["name"] or "Unnamed agent") + " agent node",
                         "data": {
                             "kind": "agent",
                             "variant": agent_kind,

@@ -601,7 +601,7 @@ class IdentityService:
             not isinstance(test_role, str)
             or not test_role
             or len(test_role) > 128
-            or self.policy.manager_role not in session.principal.roles
+            or (not TESTER_ONLY_TESTS and self.policy.manager_role not in session.principal.roles)
             or test_role not in session.principal.roles
         ):
             raise HTTPException(403, "test_permission_denied")

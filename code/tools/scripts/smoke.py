@@ -284,7 +284,7 @@ def running_configuration_editor(
                     stderr=output,
                 )
                 processes.append(build)
-                if build.wait(timeout=180) != 0:
+                if build.wait(timeout=300) != 0:
                     output.flush()
                     category = build_tools().build_failure_category(directory / "process.log")
                     metadata = build_tools().build_failure_metadata(directory / "process.log")

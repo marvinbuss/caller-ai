@@ -153,6 +153,26 @@ function CallerMenu({label, children}) {
             "aria-label": "Main"
         }, children));
 }
+function CallerLeaveNotice() {
+    const [shown, setShown] = useState(false);
+    useEffect(() => {
+        const check = () => {
+            try {
+                if (window.sessionStorage.getItem("caller-test-left") === "1") {
+                    window.sessionStorage.removeItem("caller-test-left");
+                    setShown(true);
+                }
+            } catch (error) {}
+        };
+        check();
+        const timer = setInterval(check, 500);
+        return () => clearInterval(timer);
+    }, []);
+    if (!shown) return null;
+    return createElement("p", {role: "status", "data-testid": "test-left-notice",
+        className: "caller-leave-notice"},
+        "The running test was stopped because you left the Test page.");
+}
 function CallerDelayed({active, delay = 1000, children}) {
     const [late, setLate] = useState(false);
     useEffect(() => {
@@ -187,6 +207,8 @@ FRAME_CSS = f"""
   color: {COLORS["on-brand"]}; font-weight: 600; }}
 .caller-notice {{ color: {COLORS["danger"]}; background: {COLORS["danger-fill"]};
   padding: 10px 12px; border-radius: 6px; }}
+.caller-leave-notice {{ color: {COLORS["warning"]}; background: {COLORS["warning-fill"]};
+  padding: 10px 12px; border-radius: 6px; margin: 0 0 16px; }}
 @media (max-width: {NARROW_BREAKPOINT_PX - 1}px) {{
   .caller-frame {{ grid-template-columns: minmax(0, 1fr); }}
   .caller-menu-button {{ display: inline-flex; align-items: center; justify-content: center;
@@ -261,6 +283,10 @@ class Delayed(_FrameComponent):
     tag = "CallerDelayed"
     active: rx.Var[bool]
     delay: rx.Var[int]
+
+
+class LeaveNotice(_FrameComponent):
+    tag = "CallerLeaveNotice"
 
 
 def gate(when: str, *children: rx.Component, page: str = "") -> rx.Component:
@@ -383,6 +409,7 @@ def frame(page: str, content: Callable[[], rx.Component], *, on_resign: Any = No
                     _top_bar(),
                     _sidebar(page),
                     rx.el.main(
+                        LeaveNotice.create(),
                         gate(
                             "role_required",
                             message_page(
