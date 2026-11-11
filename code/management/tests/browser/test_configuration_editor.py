@@ -108,11 +108,22 @@ def runtime_events(host: dict, limit: int = 16) -> list[str]:
             value = json.loads(line)
         except ValueError:
             continue
-        if isinstance(value, dict) and value.get("event") in keep:
+        if isinstance(value, dict) and (
+            value.get("event") in keep or str(value.get("event", "")).endswith(".failure")
+        ):
             rows.append(
                 " ".join(
                     str(value.get(key, ""))
-                    for key in ("timestamp", "service", "event", "outcome", "reason", "value")
+                    for key in (
+                        "timestamp",
+                        "service",
+                        "event",
+                        "outcome",
+                        "reason_code",
+                        "value",
+                        "error",
+                        "code",
+                    )
                 ).strip()
             )
     return rows[-limit:]

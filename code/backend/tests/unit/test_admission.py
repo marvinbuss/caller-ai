@@ -738,6 +738,38 @@ def test_authority_watcher_callback_cannot_block_rechecks_indefinitely(admission
     asyncio.run(scenario())
 
 
+def test_work_check_waits_for_a_slow_authority_read_within_the_work_budget(admission_case):
+    from caller_runtime.domain.conversation import SessionLimits, WorkBudget
+
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        limits = SessionLimits(
+            started_at=slot.started_at,
+            admission_deadline_utc=slot.admission_deadline_utc,
+            auth_expires_at=slot.auth_expires_at,
+        )
+        work = WorkBudget.accept(limits, clock.utc_now())
+        read = container.read_item
+
+        # A loaded CI runner stalled a start's readiness check past a 1-s read budget.
+        async def slow_read(*arguments, **keywords):
+            await asyncio.sleep(1.2)
+            return await read(*arguments, **keywords)
+
+        container.read_item = slow_read
+        checked = await service.check_work(
+            slot.session_id, slot.owner_epoch, generation=slot.generation, work=work
+        )
+        assert checked.session_id == slot.session_id
+
+    asyncio.run(scenario())
+
+
 def test_authority_watcher_tolerates_a_slow_identity_check_within_its_second(admission_case):
     service, repository, container, clock, permit, cache = admission_case
 

@@ -11,6 +11,7 @@ verified.
 import asyncio
 import hashlib
 import json
+import logging
 import math
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -39,6 +40,8 @@ from caller_runtime.services.delegation import (
     SpeechFragments,
     WorkItem,
 )
+
+diagnostics = logging.getLogger("caller-runtime.work")
 
 
 class TaskClarity(Metadata):
@@ -714,9 +717,22 @@ class ConversationExecutor:
             failed_here = False
             try:
                 await self._execute(item, emit)
-            except Exception:
+            except Exception as error:
                 self._failed = True
                 failed_here = True
+                # Class and fixed code only, never content, so the next failure can be named.
+                code = (
+                    error.args[0] if isinstance(error, (PermissionError, AdmissionError)) else None
+                )
+                diagnostics.warning(
+                    json.dumps(
+                        {
+                            "event": "test.work.failure",
+                            "error": type(error).__name__,
+                            "code": code if isinstance(code, str) and len(code) <= 64 else None,
+                        }
+                    )
+                )
                 await self._work_error(emit, item.receipt.task_id)
             finally:
                 self.queue.finish(item.receipt)

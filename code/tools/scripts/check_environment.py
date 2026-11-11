@@ -717,15 +717,18 @@ def journey_text(context: Context, token: str) -> None:
             "text": JOURNEY_PROMPT,
         }
         socket.send(json.dumps(submit))
-        reply = ""
-        while not reply:
+        # The reply streams in `text.delta`; `text.completed` is an empty end marker.
+        reply: list[str] = []
+        while True:
             message = journey_receive(socket, step, deadline, context.clock)
             if message.get("type") == "error":
                 raise JourneyFailure(step, "model_error")
-            if message.get("type") == "text.completed" and isinstance(message.get("text"), str):
-                reply = message["text"].strip()
-                if not reply:
+            if message.get("type") == "text.delta" and isinstance(message.get("text"), str):
+                reply.append(message["text"])
+            if message.get("type") == "text.completed":
+                if not "".join(reply).strip():
                     raise JourneyFailure(step, "empty_reply")
+                break
         journey_stop(context, socket, step, session, 2, deadline)
 
     journey_session(context, token, "text", step, steps)

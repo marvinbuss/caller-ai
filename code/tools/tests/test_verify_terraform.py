@@ -122,7 +122,11 @@ def _docker_available():
 
     if shutil.which("docker") is None:
         return False
-    return subprocess.run(["docker", "info"], capture_output=True, check=False).returncode == 0
+    # The pinned scanner is a Linux image; Windows runners run Docker in Windows-container mode.
+    info = subprocess.run(
+        ["docker", "info", "--format", "{{.OSType}}"], capture_output=True, text=True, check=False
+    )
+    return info.returncode == 0 and info.stdout.strip() == "linux"
 
 
 def test_the_scan_fails_on_any_misconfiguration_and_on_empty_results(module):

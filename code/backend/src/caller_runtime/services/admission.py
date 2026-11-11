@@ -877,10 +877,10 @@ class TestAdmissionService:
         if session_id not in self._locks or session_id not in self._startup:
             raise AdmissionError("stale_owner")
         try:
+            # Bounded by the work budget: a 1-s cap failed starts whenever one read stalled.
             current = await self.repository.read(
-                deadline=min(
-                    self._deadline(work.work_deadline_utc, expired_code="work_deadline_exceeded"),
-                    asyncio.get_running_loop().time() + 1,
+                deadline=self._deadline(
+                    work.work_deadline_utc, expired_code="work_deadline_exceeded"
                 )
             )
             slot = self._owned(current, session_id, self.owner_id, owner_epoch)
