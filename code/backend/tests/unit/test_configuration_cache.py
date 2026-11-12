@@ -244,15 +244,18 @@ def test_absent_routable_and_conversation_settings_mean_defaults(cache, runtime_
     assert snapshot.schema_version == "2.0.0"
     assert "conversationSettings" not in snapshot.for_runtime()
     assert snapshot.conversation_settings() == {}
-    assert all(snapshot.routable(row["communityId"]) for row in snapshot.for_runtime()["communities"])
-    partial = schema_two_one(runtime_revision_v2(2), voice="cove")
-    assert cache.install(partial, etag='"partial"').conversation_settings() == {"voice": "cove"}
+    assert all(
+        snapshot.routable(row["communityId"]) for row in snapshot.for_runtime()["communities"]
+    )
+    partial = schema_two_one(runtime_revision_v2(2), voice="quartz")
+    assert cache.install(partial, etag='"partial"').conversation_settings() == {"voice": "quartz"}
 
 
 @pytest.mark.parametrize(
     "settings",
     [
         {"voice": "Not A Voice"},
+        {"voice": "cove"},
         {"maxOutputTokens": 0},
         {"maxOutputTokens": "800"},
         {"idleTimeoutSeconds": 29},

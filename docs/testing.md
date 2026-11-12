@@ -23,6 +23,23 @@ not fail the cases after it. The speech cases press Mute only when no audio is q
 
 Markers: `quick` (fast tier) and `browser` (needs prepared Chromium). `--strict-markers` is on.
 
+## Management browser suites
+
+Each file in `code/management/tests/browser/` starts its own owned host from `tests/editor_app.py`.
+The host signs in fixture users with any role mix (`/_test/login/<name>?roles=editor+tester`, with
+optional short session and token lifetimes), answers the sign-in redirect itself, serves a runtime
+status double (`/_test/status/up`, `voice-down` or `down`) and can delay or fail
+`/v2/configuration` and `/v1/status` (`/_test/fault`). These routes exist only in the fixture host.
+
+| File | Covers |
+|------|--------|
+| `test_shell.py` | Login page without a session |
+| `test_frame.py` | Sign-in gating, return paths, roles, navigation, session warning and re-sign-in, profile, responsive frame |
+| `test_configuration_editor.py` | Community and Agent graph, rules and refusals, settings panels, Tools section, loading and errors |
+| `test_test_page.py` | Text and voice console on `/test`, leaving during a test, role checks |
+| `test_status_page.py` | Status values, runtime down, loading and Retry |
+| `test_settings_page.py` | Voice drop-down, ranges, separate drafts, read-only when the runtime is down |
+
 ## In-process end-to-end journey
 
 `code/e2e` composes the runtime and the management app from their live settings in one process, with

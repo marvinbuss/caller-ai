@@ -3,12 +3,12 @@
 ## Feature 002 Community Editor
 
 The community MVP is an authenticated management workflow, not a model/provider or telephone
-qualification. Start at `/configuration`; stable community links open
-`/configuration/communities/[community_id]`. Both routes share one organization-wide draft and
-Save action. See the current [configuration guide](../configuration-guide.md#community-overview-and-routes).
+qualification. Start at **Community and Agent** (`/communities`); the old `/configuration`
+routes redirect there. The graph and the Tools section share one organization-wide draft and
+Publish action. See the current [configuration guide](../configuration-guide.md#community-and-agent-page).
 
-1. Select the intended source/destination to add one directed connection. Reverse permission
-    needs a separate edge. Node dragging and X/Y keyboard edits change presentation only.
+1. Draw a link from the source to the destination to add one directed connection. Reverse
+    permission needs a separate link. Moving nodes changes this browser's view only.
 2. Save the complete draft. The returned revision/ETag acknowledges its submitted generation;
     edits made during the request remain Unsaved. No stale success message confirms newer work.
 3. On 409, keep the draft and coordinate with the other manager. Cancel Reload to retain it,

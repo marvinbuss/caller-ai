@@ -29,9 +29,10 @@ For the isolated generated-identity HTTPS/WSS editor and console fixture, run fr
 uv run --directory code/tools --locked --no-sync python scripts/smoke.py --editor
 ```
 
-The helper builds the normal Reflex frontend within its existing 180-second budget and starts
+The helper builds the normal Reflex frontend within a 300-second budget and starts
 both owned apps under one 120-second readiness deadline. Open its emitted HTTPS URL, sign in
-through the fixture-only declared manager route and follow the test control. Start is explicit;
+through the fixture-only declared manager route and use the sidebar: Community and Agent, Test,
+Status and Settings. On the Test page, start is explicit;
 text acquires no microphone, shows a notice that text test conversations are stored for 30 days
 and visible only to their owner, speech permission precedes tickets, and Ctrl+C disposes owned
 processes and temporary test keys/trust. No actual provider, cloud identity/store or physical

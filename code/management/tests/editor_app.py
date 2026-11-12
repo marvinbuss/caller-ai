@@ -33,6 +33,7 @@ from management_app.adapters.test_session_client import TestSessionClient, direc
 from management_app.adapters.text_relay import ActiveRevision
 from management_app.api.configuration import create_router
 from management_app.api.runtime_configuration import create_router as runtime_router
+from management_app.api.status import create_router as status_router
 from management_app.api.test_sessions import create_router as test_router
 from management_app.health import create_health_api
 from management_app.management_app import create_app, editor_asgi
@@ -273,7 +274,8 @@ async def fixture_revision():
     current = await repository.read_active()
     document = current[0]
     welcome = next(agent["agentId"] for agent in document["agents"] if agent["role"] == "welcome")
-    return ActiveRevision(document["id"], document["revisionNumber"], welcome)
+    idle = (document.get("conversationSettings") or {}).get("idleTimeoutSeconds", 120)
+    return ActiveRevision(document["id"], document["revisionNumber"], welcome, int(idle))
 
 
 test_relay = (
@@ -308,6 +310,88 @@ api.include_router(
         relay=test_relay,
     )
 )
+# The runtime status double: "up", "voice-down" or "down"; switching it expires the cache.
+status_double = {"mode": "up", "offset": 0.0}
+STATUS_VOICES = [
+    {"id": "marin", "name": "Marin", "language": "English", "accent": None, "presentation": None},
+    {
+        "id": "quartz",
+        "name": "Quartz",
+        "language": "English",
+        "accent": "Australian",
+        "presentation": "Feminine",
+    },
+    {
+        "id": "vesper",
+        "name": "Vesper",
+        "language": "English",
+        "accent": "British",
+        "presentation": "Masculine",
+    },
+    {
+        "id": "nuri",
+        "name": "Nuri",
+        "language": "German",
+        "accent": None,
+        "presentation": "Feminine",
+    },
+    {
+        "id": "brise",
+        "name": "Brise",
+        "language": "French",
+        "accent": None,
+        "presentation": "Feminine",
+    },
+]
+
+
+async def fixture_status():
+    if status_double["mode"] == "down":
+        raise PermissionError("runtime_status_unavailable")
+    checked = "2026-11-11T10:00:00Z"
+    return {
+        "text": {
+            "endpointHost": "caller-fixture-foundry.openai.azure.com",
+            "deployment": "gpt-fixture-text",
+            "reachable": True,
+            "checkedAt": checked,
+            "lastCallOutcome": "success",
+            "lastCallAt": "2026-11-11T09:58:12Z",
+        },
+        "voice": {
+            "endpointHost": "caller-fixture-foundry.openai.azure.com",
+            "region": "swedencentral",
+            "model": "gpt-live-1",
+            "reachable": status_double["mode"] != "voice-down",
+            "checkedAt": checked,
+            "lastCallOutcome": None,
+            "lastCallAt": None,
+        },
+        "supportedVoices": STATUS_VOICES,
+        "defaults": {"voice": "marin", "maxOutputTokens": 1024, "idleTimeoutSeconds": 120},
+        "limits": {"maxOutputTokens": 1024, "idleTimeoutSeconds": {"min": 30, "max": 120}},
+    }
+
+
+api.include_router(
+    status_router(
+        identity=identity,
+        fetch=fixture_status,
+        test_role=test_role,
+        telemetry=test_telemetry,
+        monotonic=lambda: time.monotonic() + status_double["offset"],
+        on_status=validator.remember_status,
+    )
+)
+
+
+@api.get("/_test/status/{mode}")
+async def fixture_status_mode(mode: str):
+    if mode not in {"up", "voice-down", "down"}:
+        raise HTTPException(400, "unknown_fixture_status")
+    status_double["mode"] = mode
+    status_double["offset"] = float(status_double["offset"]) + 120
+    return {"mode": mode}
 
 
 @api.get("/_test/login/{name}")

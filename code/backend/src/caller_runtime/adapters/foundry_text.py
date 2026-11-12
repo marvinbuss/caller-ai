@@ -131,6 +131,7 @@ class FoundryTextAdapter:
         transport: httpx2.AsyncBaseTransport | None = None,
         settlement_observer: SettlementObserver | None = None,
         telemetry: Telemetry | None = None,
+        call_observer: Callable[[bool], None] | None = None,
     ) -> None:
         try:
             parts = urlsplit(endpoint)
@@ -165,6 +166,7 @@ class FoundryTextAdapter:
         self._transport, self._closed = transport, False
         self._clients: set[AsyncOpenAI] = set()
         self._settlement_observer = settlement_observer
+        self._call_observer = call_observer
         self._telemetry = telemetry
         self._active_operations = 0
         self._disposal_unknown = False
@@ -190,6 +192,13 @@ class FoundryTextAdapter:
             and not self._active_operations
             and not self._disposal_unknown
         )
+
+    def _observe_call(self, success: bool) -> None:
+        if self._call_observer is not None:
+            try:
+                self._call_observer(success)
+            except Exception:
+                pass
 
     async def _settle(self, intent: AttemptIntent) -> None:
         reference = "model-" + uuid4().hex
@@ -415,6 +424,7 @@ class FoundryTextAdapter:
                     return await call(opened)
 
                 result = await self.admission.perform(intent, request, work=work)
+                self._observe_call(True)
                 await self._settle(intent)
                 return result
         except AdmissionError as error:
@@ -422,9 +432,11 @@ class FoundryTextAdapter:
         except PermissionError:
             raise
         except APIStatusError as error:
+            self._observe_call(False)
             await self._settle_refusal(intent, error)
             raise PermissionError("model_unavailable") from None
         except Exception:
+            self._observe_call(False)
             raise PermissionError("model_unavailable") from None
         finally:
             try:

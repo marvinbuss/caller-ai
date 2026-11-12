@@ -31,8 +31,11 @@ from caller_runtime.adapters.configuration_client import ConfigurationClient
 from caller_runtime.adapters.foundry_text import FoundryTextAdapter
 from caller_runtime.adapters.gpt_live import GptLiveAdapter, LiveSocket, sdk_socket
 from caller_runtime.adapters.identity import TestPermitVerifier
+from caller_runtime.adapters.status_probe import StatusProbe
 from caller_runtime.adapters.text_history_repository import TextHistoryRepository
 from caller_runtime.api.connection import WorkloadIdentity
+from caller_runtime.api.status import StatusBindings
+from caller_runtime.api.status import create_router as create_status_router
 from caller_runtime.api.text import create_router as create_text_router
 from caller_runtime.api.voice import create_router as create_voice_router
 from caller_runtime.domain.configuration import RevisionCache
@@ -192,6 +195,16 @@ class ConversationRuntime:
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
         self._starting: set[asyncio.Task[object]] = set()
         self._stop = asyncio.Event()
+        self.status = StatusProbe(
+            credential=lambda: self._credential,
+            hosts={
+                "text": urlsplit(options.text_endpoint).hostname or "",
+                "voice": urlsplit(options.live_endpoint).hostname or "",
+            },
+            telemetry=lambda: self._telemetry,
+            utc_now=utc_now,
+            monotonic=monotonic,
+        )
 
     @property
     def active_sessions(self) -> tuple[str, ...]:
@@ -219,6 +232,19 @@ class ConversationRuntime:
                 service=self._text_service(telemetry),
                 workload_identity=self._workload_identity,
                 permits=self._permits,
+            )
+        )
+        router.include_router(
+            create_status_router(
+                workload_identity=self._workload_identity,
+                probe=lambda: self.status,
+                bindings=StatusBindings(
+                    text_host=urlsplit(self.options.text_endpoint).hostname or "",
+                    text_deployment=self.options.text_deployment,
+                    live_host=urlsplit(self.options.live_endpoint).hostname or "",
+                    live_region=self.options.live_region,
+                    max_output_tokens=self.options.max_output_tokens,
+                ),
             )
         )
         return router
@@ -359,6 +385,8 @@ class ConversationRuntime:
                     if session_id not in present:
                         self._sessions.pop(session_id, None)
                 snapshot = admission.snapshot_for(slot)
+                # The admitting revision's settings hold for the session's whole life.
+                chosen = snapshot.conversation_settings()
                 text = FoundryTextAdapter(
                     endpoint=self.options.text_endpoint,
                     deployment=self.options.text_deployment,
@@ -367,10 +395,14 @@ class ConversationRuntime:
                     admission=admission,
                     utc_now=self._utc_now,
                     max_input_tokens=self.options.max_input_tokens,
-                    max_output_tokens=self.options.max_output_tokens,
+                    max_output_tokens=min(
+                        int(chosen.get("maxOutputTokens", self.options.max_output_tokens)),
+                        self.options.max_output_tokens,
+                    ),
                     transport=self._text_transport,
                     settlement_observer=observations,
                     telemetry=telemetry,
+                    call_observer=lambda ok: self.status.record_call("text", ok),
                 )
                 capabilities = ConversationCapabilityClient(
                     endpoint=self.options.management_endpoint,
@@ -401,10 +433,11 @@ class ConversationRuntime:
                         credential=credential,
                         admission=admission,
                         utc_now=self._utc_now,
-                        voice=self.options.voice,
+                        voice=str(chosen.get("voice", self.options.voice)),
                         socket_factory=self._live_socket_factory,
                         settlement_observer=observations,
                         telemetry=telemetry,
+                        call_observer=lambda ok: self.status.record_call("voice", ok),
                     )
                     configured = {
                         agent["agentId"]: agent for agent in snapshot.for_runtime()["agents"]

@@ -45,6 +45,7 @@ class EditorServices:
         *,
         graph: Document | None = None,
         etag: str | None = None,
+        path: str = "/v2/configuration",
     ) -> httpx.Response:
         headers = self.guard.request_headers(sid, token, mutation=method == "PUT")
         if etag is not None:
@@ -55,9 +56,7 @@ class EditorServices:
                 base_url=self.guard.identity.policy.origin,
                 trust_env=False,
             ) as client:
-                return await client.request(
-                    method, "/v2/configuration", headers=headers, json=graph
-                )
+                return await client.request(method, path, headers=headers, json=graph)
 
 
 @dataclass(slots=True)

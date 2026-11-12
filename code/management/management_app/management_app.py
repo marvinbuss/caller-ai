@@ -57,6 +57,8 @@ def create_app(
         from management_app.pages.status import status_page
         from management_app.pages.test_console import test_console_page
         from management_app.state.configuration_editor import ConfigurationEditorState
+        from management_app.state.settings import SettingsState
+        from management_app.state.status import StatusState
         from management_app.state.test_console import TestConsoleState
 
     registration = RegistrationContext.ensure_context()
@@ -89,8 +91,18 @@ def create_app(
                 title="Test | Caller AI",
                 on_load=TestConsoleState.enter_view,
             )
-            application.add_page(status_page, route="/status", title="Status | Caller AI")
-            application.add_page(settings_page, route="/settings", title="Settings | Caller AI")
+            application.add_page(
+                status_page,
+                route="/status",
+                title="Status | Caller AI",
+                on_load=StatusState.load,
+            )
+            application.add_page(
+                settings_page,
+                route="/settings",
+                title="Settings | Caller AI",
+                on_load=SettingsState.load,
+            )
             for old, new in REDIRECTS.items():
                 application.add_page(redirect_page(new), route=old, title="Caller AI")
     return application

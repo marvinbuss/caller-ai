@@ -661,7 +661,16 @@ def test_composition_caches_the_history_probe_and_reports_failed_or_stale_result
 
 @pytest.mark.parametrize(
     "outcome",
-    ["ready", "stale", "late", "unknown", "unsupported_deployment", "construction", "publication"],
+    [
+        "ready",
+        "stale",
+        "late",
+        "unknown",
+        "unsupported_deployment",
+        "construction",
+        "publication",
+        "settings",
+    ],
 )
 def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanup(
     reviewed_runtime_options,
@@ -705,9 +714,16 @@ def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanu
         assert str(request.url) == "https://management.fixture.example/v2/runtime/configuration"
         if outcome == "stale" and clock.monotonic() >= 30:
             return httpx.Response(503)
+        document = runtime_revision_v2(publication[0])
+        if outcome == "settings" and publication[0] == 1:
+            from tests.unit.test_configuration_cache import schema_two_one
+
+            document = schema_two_one(
+                document, voice="quartz", maxOutputTokens=300, idleTimeoutSeconds=60
+            )
         return httpx.Response(
             200,
-            json=runtime_revision_v2(publication[0]),
+            json=document,
             headers={"etag": '"current-fixture-' + str(publication[0]) + '"'},
         )
 
@@ -745,6 +761,26 @@ def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanu
             now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
         )
         async with runtime.running(telemetry):
+            if outcome == "settings":
+                chosen = await runtime.start(permit(1, mode=mode), emit=emit)
+                import json
+
+                assert '"quartz"' in json.dumps(sockets[0].start)
+                assert chosen.text_adapter.max_output_tokens == 300
+                assert chosen.policy.slot.idle_seconds == 60
+                # A new publication without settings changes nothing for the running session.
+                publication[0] = 2
+                default = await runtime.start(
+                    permit(2, actor="other-manager", mode=mode), emit=emit
+                )
+                assert '"quartz"' not in json.dumps(sockets[1].start)
+                assert '"marin"' in json.dumps(sockets[1].start)
+                assert default.text_adapter.max_output_tokens == options.max_output_tokens
+                assert default.policy.slot.idle_seconds == 120
+                assert chosen.policy.slot.idle_seconds == 60
+                assert chosen.text_adapter.max_output_tokens == 300
+                assert await default.close() and await chosen.close()
+                return
             if outcome == "publication":
                 original = await runtime.start(permit(1, mode=mode), emit=emit)
                 publication[0] = 2

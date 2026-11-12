@@ -50,6 +50,7 @@ TEST_MEASUREMENTS = {
         {"backend_first_text_seconds", "work_seconds", "cleanup_seconds", "admission_seconds"}
     ),
     "history.store": frozenset({"store_seconds"}),
+    "status.probe": frozenset({"text_probe_seconds", "voice_probe_seconds"}),
 }
 TEST_MODES = frozenset({"text", "speech"})
 # Warning-level events that name why a test failed: class and fixed code names, bounded timings.
@@ -98,7 +99,16 @@ OPERATIONS = (
 )
 EVENTS = (
     frozenset(
-        {"startup", "shutdown", "request", "probe", "failure", "configuration", "history.store"}
+        {
+            "startup",
+            "shutdown",
+            "request",
+            "probe",
+            "failure",
+            "configuration",
+            "history.store",
+            "status.probe",
+        }
     )
     | TEST_OPERATIONS
 )
@@ -110,6 +120,7 @@ VALUES = {
             "/readyz",
             "/v1/conversations/text",
             "/v1/conversations/voice",
+            "/v1/status",
             "/v2/runtime/configuration",
             "unmatched",
         }

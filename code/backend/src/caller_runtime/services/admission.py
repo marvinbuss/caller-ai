@@ -259,6 +259,7 @@ class TestAdmissionService:
                     welcome = next(
                         agent["agentId"] for agent in graph["agents"] if agent["role"] == "welcome"
                     )
+                    idle = int(revision.conversation_settings().get("idleTimeoutSeconds", 120))
                     slot = TestSlot(
                         sessionId=desired_id,
                         actorKey=permit.actor_key,
@@ -273,7 +274,8 @@ class TestAdmissionService:
                         admissionDeadlineUtc=permit.admission_deadline_utc,
                         authExpiresAt=permit.auth_expires_at,
                         expiresAt=now + timedelta(seconds=600),
-                        idleExpiresAt=now + timedelta(seconds=120),
+                        idleExpiresAt=now + timedelta(seconds=idle),
+                        idleSeconds=idle,
                         activeAgentId=welcome,
                         activeCommunityId=None,
                     )
@@ -454,7 +456,9 @@ class TestAdmissionService:
             document = slot.model_dump(mode="json", by_alias=True)
             document.update(
                 lastUserAt=now.isoformat(),
-                idleExpiresAt=min(now + timedelta(seconds=120), slot.expires_at).isoformat(),
+                idleExpiresAt=min(
+                    now + timedelta(seconds=slot.idle_seconds), slot.expires_at
+                ).isoformat(),
             )
             return TestSlot.model_validate_json(encoded(document))
 

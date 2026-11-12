@@ -663,9 +663,18 @@ def rules(errors: list[dict]) -> set[str]:
     return {error["rule_id"] for error in errors}
 
 
+def with_limits(validator, voices=("marin", "quartz"), max_output_tokens=1024):
+    from management_app.services.configuration_validation import ConversationLimits
+
+    limits = ConversationLimits(frozenset(voices), max_output_tokens)
+    validator.conversation_limits = lambda: limits
+    return validator
+
+
 def test_schema_two_one_accepts_routable_and_conversation_settings(validator, configuration_graph):
     from management_app.models.configuration import ConfigurationGraph
 
+    with_limits(validator)
     assert configuration_graph["schemaVersion"] == "2.1.0"
     configuration_graph["communities"][1]["routable"] = False
     configuration_graph["conversationSettings"] = {
@@ -681,11 +690,12 @@ def test_schema_two_one_accepts_routable_and_conversation_settings(validator, co
 
 @pytest.mark.parametrize(
     "settings",
-    [{}, {"voice": "cove"}, {"maxOutputTokens": 1}, {"idleTimeoutSeconds": 120}],
+    [{}, {"voice": "quartz"}, {"maxOutputTokens": 1}, {"idleTimeoutSeconds": 120}],
 )
 def test_conversation_settings_fields_are_optional(validator, configuration_graph, settings):
     from management_app.models.configuration import ConfigurationGraph
 
+    with_limits(validator)
     configuration_graph["conversationSettings"] = settings
     assert validator.validate(configuration_graph) == []
     dumped = ConfigurationGraph.model_validate(configuration_graph).model_dump(
@@ -699,6 +709,54 @@ def test_conversation_settings_unknown_fields_are_schema_errors(validator, confi
     errors = validator.validate(configuration_graph)
     assert_safe(errors)
     assert "schema" in rules(errors)
+
+
+@pytest.mark.parametrize(
+    "settings,rule",
+    [
+        ({"voice": "cove"}, "conversation_voice"),
+        ({"voice": "Not A Voice"}, "conversation_voice"),
+        ({"maxOutputTokens": 0}, "conversation_limit"),
+        ({"maxOutputTokens": 1025}, "conversation_limit"),
+        ({"maxOutputTokens": 4097}, "conversation_limit"),
+        ({"maxOutputTokens": "800"}, "conversation_limit"),
+        ({"idleTimeoutSeconds": 29}, "conversation_limit"),
+        ({"idleTimeoutSeconds": 121}, "conversation_limit"),
+        ({"idleTimeoutSeconds": 60.5}, "conversation_limit"),
+    ],
+)
+def test_conversation_settings_outside_the_runtime_catalog_and_limits_are_refused(
+    validator, configuration_graph, settings, rule
+):
+    with_limits(validator)
+    configuration_graph["conversationSettings"] = settings
+    errors = validator.validate(configuration_graph)
+    assert_safe(errors)
+    assert rules(errors) == {rule}
+
+
+def test_without_the_runtime_catalog_only_an_unchanged_voice_is_accepted(
+    validator, configuration_graph
+):
+    previous = {**configuration_graph, "conversationSettings": {"voice": "quartz"}}
+    configuration_graph["conversationSettings"] = {"voice": "quartz", "idleTimeoutSeconds": 60}
+    assert validator.validate(configuration_graph, previous_revision=previous) == []
+    configuration_graph["conversationSettings"] = {"voice": "marin"}
+    errors = validator.validate(configuration_graph, previous_revision=previous)
+    assert rules(errors) == {"conversation_voice"}
+    assert rules(validator.validate(configuration_graph)) == {"conversation_voice"}
+
+
+def test_conversation_limits_come_from_the_status_body():
+    from management_app.services.configuration_validation import ConversationLimits
+
+    limits = ConversationLimits.from_status(
+        {
+            "supportedVoices": [{"id": "marin"}, {"id": "quartz"}],
+            "limits": {"maxOutputTokens": 900},
+        }
+    )
+    assert limits == ConversationLimits(frozenset({"marin", "quartz"}), 900)
 
 
 def test_schema_two_zero_document_reads_with_routable_true(validator, configuration_graph):

@@ -37,11 +37,13 @@ from management_app.adapters.public_tools import (
     SecretPort,
     resolve_public,
 )
+from management_app.adapters.runtime_status_client import RuntimeStatusClient
 from management_app.adapters.test_session_client import TestSessionClient, WorkloadCredential
 from management_app.adapters.text_relay import ActiveRevision
 from management_app.api.capabilities import create_router as capability_router
 from management_app.api.configuration import create_router as configuration_router
 from management_app.api.runtime_configuration import create_router as runtime_router
+from management_app.api.status import create_router as status_router
 from management_app.health import create_health_api
 from management_app.metrics import ManagementMetrics
 from management_app.models.capabilities import ApprovedCapabilities
@@ -382,7 +384,12 @@ async def compose_management(
                         for agent in document["agents"]
                         if agent["role"] == "welcome"
                     )
-                    return ActiveRevision(document["id"], document["revisionNumber"], welcome)
+                    idle = (document.get("conversationSettings") or {}).get(
+                        "idleTimeoutSeconds", 120
+                    )
+                    return ActiveRevision(
+                        document["id"], document["revisionNumber"], welcome, int(idle)
+                    )
 
                 startup.test_relay = TestSessionClient(
                     endpoint=request.tests.runtime_endpoint,
@@ -447,6 +454,25 @@ async def compose_management(
                     oidc=resolved.oidc,
                     test_role=request.tests.test_role if request.tests is not None else None,
                     telemetry=telemetry,
+                )
+            )
+            status_client = (
+                RuntimeStatusClient(
+                    origin=urlsplit(request.tests.runtime_endpoint).netloc,
+                    audience=request.tests.runtime_audience,
+                    credential=resolved.tests.credential,
+                    transport=resolved.tests.transport,
+                )
+                if request.tests is not None and resolved.tests is not None
+                else None
+            )
+            api.include_router(
+                status_router(
+                    identity=identity,
+                    fetch=status_client.fetch if status_client is not None else None,
+                    test_role=request.tests.test_role if request.tests is not None else None,
+                    telemetry=telemetry,
+                    on_status=validator.remember_status,
                 )
             )
             editor = EditorServices(

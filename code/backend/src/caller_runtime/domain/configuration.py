@@ -20,6 +20,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from caller_runtime.domain.visibility import CommunityVisibility
+from caller_runtime.domain.voices import voice_ids
 
 GRAPH_FIELDS = frozenset(
     {
@@ -34,6 +35,8 @@ GRAPH_FIELDS = frozenset(
 )
 # Schema 2.1.0 additions; absent means the environment defaults.
 OPTIONAL_GRAPH_FIELDS = frozenset({"conversationSettings"})
+MAX_OUTPUT_TOKENS = 4096
+IDLE_SECONDS = (30, 120)
 ETAG = re.compile(r'^"[A-Za-z0-9_-]{1,128}"$')
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")]
 Name = Annotated[str, Field(min_length=1, max_length=128)]
@@ -129,8 +132,15 @@ class _Connection(_Strict):
 
 class _ConversationSettings(_Strict):
     voice: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")] | None = None
-    maxOutputTokens: int | None = Field(default=None, ge=1, le=4096)
-    idleTimeoutSeconds: int | None = Field(default=None, ge=30, le=120)
+    maxOutputTokens: int | None = Field(default=None, ge=1, le=MAX_OUTPUT_TOKENS)
+    idleTimeoutSeconds: int | None = Field(default=None, ge=IDLE_SECONDS[0], le=IDLE_SECONDS[1])
+
+    @field_validator("voice")
+    @classmethod
+    def supported_voice(cls, value: str | None) -> str | None:
+        if value is not None and value not in voice_ids():
+            raise ValueError("unsupported_voice")
+        return value
 
 
 class _Revision(_Strict):

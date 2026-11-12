@@ -63,6 +63,22 @@ feed the `test.alert` classification.
 Library request logs (Azure SDK HTTP lines with headers, `httpx`, the runtime's access log) are kept at warning
 level, so the container logs hold the structured application events and library warnings only.
 
+## Frontend and Status Events
+
+The management frontend and the status checks add these events (feature 005). Every field and value comes
+from a closed set in the services' `observability.py`; a value outside it is refused, so no name, account,
+prompt, setting value, host or token can reach the log. Failures are logged at `WARNING` (management) or
+`ERROR` (runtime).
+
+| Event | Service | Fields | Read it when |
+|-------|---------|--------|--------------|
+| `ui.page_view` | Management | `page`, `outcome` (`shown`, `login`, `no_access`, `role_required`) | Users report they cannot reach a page: `role_required` and `no_access` show a role gap |
+| `auth.sign_in` | Management | `outcome`, `reason` (`none`, `invalid_response`, `unavailable`, `capacity`) | Sign-in failures rise: `invalid_response` points at the identity provider answer, `capacity` at the session store |
+| `auth.session_extend` | Management | `outcome` | "Stay signed in" fails: the session or the sign-in token ended |
+| `configuration.rule_refused` | Management | `outcome` (`refused`), `rule`, `item_kind` | Editors hit a graph rule repeatedly: the rule name shows which one |
+| `status.check` | Management | `outcome`, `text`, `voice` (`reachable`, `unreachable`, `unknown`) | The Status page shows the runtime or a model unreachable |
+| `status.probe` | Runtime | `outcome`, `measurement` (`text_probe_seconds` or `voice_probe_seconds`), `value` | A model is unreachable: a failure means the token or the TLS connection to the model host did not succeed within 2 seconds |
+
 ## Environment alerts
 
 Each environment deploys its monitoring with the `monitoring` module (see [Platform](platform.md)): a Log Analytics

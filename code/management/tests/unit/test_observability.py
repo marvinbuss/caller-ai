@@ -297,3 +297,64 @@ def test_library_request_logs_stay_out_of_the_structured_application_log():
         assert logging.getLogger("management.events").isEnabledFor(logging.INFO)
     finally:
         telemetry.close()
+
+
+UI_SAMPLES = [
+    ("ui.page_view", {"page": "status", "outcome": "shown"}),
+    ("auth.sign_in", {"outcome": "failure", "reason": "invalid_response"}),
+    ("auth.session_extend", {"outcome": "success"}),
+    (
+        "configuration.rule_refused",
+        {"outcome": "refused", "rule": "entry_agent", "item_kind": "agent"},
+    ),
+    ("status.check", {"outcome": "success", "text": "reachable", "voice": "unreachable"}),
+]
+ENVELOPE = {
+    "timestamp",
+    "severity",
+    "service",
+    "environment",
+    "event",
+    "correlation_id",
+    "trace_id",
+    "span_id",
+}
+
+
+@pytest.mark.parametrize("name,fields", UI_SAMPLES)
+def test_frontend_events_follow_the_schema_and_carry_no_content(name, fields, caplog):
+    from management_app.observability import UI_EVENTS
+
+    assert name in UI_EVENTS
+    telemetry = Telemetry("management", "local")
+    try:
+        with caplog.at_level("INFO", logger="management.events"):
+            telemetry.record(name, **fields)
+        event = telemetry.events[-1]
+        assert set(event) == ENVELOPE | set(fields)
+        assert event["event"] == name and {key: event[key] for key in fields} == fields
+        logged = json.loads(caplog.records[-1].getMessage())
+        assert logged == event
+    finally:
+        telemetry.close()
+
+
+@pytest.mark.parametrize(
+    "name,fields",
+    [
+        ("ui.page_view", {"page": "status", "outcome": "shown", "user": "Ada Lovelace"}),
+        ("ui.page_view", {"page": "/status?name=ada", "outcome": "shown"}),
+        ("auth.sign_in", {"outcome": "success", "reason": "ada@example.com"}),
+        ("status.check", {"outcome": "success", "text": "eyJtoken", "voice": "reachable"}),
+        ("configuration.rule_refused", {"outcome": "refused", "rule": "prompt text"}),
+        ("settings.voice", {"outcome": "success"}),
+    ],
+)
+def test_frontend_events_refuse_names_accounts_settings_and_tokens(name, fields):
+    telemetry = Telemetry("management", "local")
+    try:
+        with pytest.raises(ValueError):
+            telemetry.record(name, **fields)
+        assert telemetry.events == ()
+    finally:
+        telemetry.close()

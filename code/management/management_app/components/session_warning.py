@@ -1,11 +1,12 @@
 """Session expiry warning with "Stay signed in", shown from `expiresAt` minus 5 minutes.
 
 "Stay signed in" extends the session through `POST /auth/session/extend` (CSRF protected,
-capped by the sign-in token's expiry). When the sign-in token itself is about to end, the page's
-`on_resign` handler stores its open drafts in this tab's session storage and signs in again with
-`returnTo`; without a handler the browser signs in again directly. Once the session has ended the
-browser goes to the login page, which says that unpublished changes were discarded, so nothing
-unsaved is ever reported as saved.
+capped by the sign-in token's expiry). When the sign-in token itself is about to end, the browser
+signs in again with `returnTo`. Open drafts live in the server-side state of this tab, whose
+identity is kept in the tab's session storage and bound to the signed-in actor, so they come back
+for the same user only; sign-out and an ended session clear the tab's session storage, which
+discards them. Once the session has ended the browser goes to the login page, which says that
+unpublished changes were discarded, so nothing unsaved is ever reported as saved.
 """
 
 from typing import Any, cast
@@ -34,6 +35,8 @@ function CallerSessionWarning({onResign, warningSeconds = 300}) {
     const token = Date.parse(session.tokenExpiresAt);
     if (!Number.isFinite(expires)) return null;
     if (now >= expires) {
+        // A new tab identity drops this tab's server-side drafts: they were never published.
+        try { window.sessionStorage.clear(); } catch (error) {}
         window.location.assign("/login?expired=1");
         return null;
     }

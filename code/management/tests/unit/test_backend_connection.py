@@ -175,7 +175,7 @@ class Browser:
         self._finished.set()
 
 
-def run_text_session(handler, texts, *, validate=None):
+def run_text_session(handler, texts, *, validate=None, idle_seconds=None):
     from management_app.adapters.backend_connection import TurnPermits
     from management_app.adapters.test_session_client import TestSessionClient
     from management_app.adapters.text_relay import ActiveRevision
@@ -192,6 +192,8 @@ def run_text_session(handler, texts, *, validate=None):
         return await handler(request)
 
     async def revision():
+        if idle_seconds is not None:
+            return ActiveRevision("published-fixture", 7, "welcome", idle_seconds)
         return ActiveRevision("published-fixture", 7, "welcome")
 
     clock = [permit.issued_at]
@@ -231,6 +233,21 @@ def run_text_session(handler, texts, *, validate=None):
 def sse(*events):
     body = "".join(f"event: {kind}\ndata: {json.dumps(data)}\n\n" for kind, data in events)
     return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, content=body)
+
+
+@pytest.mark.parametrize("idle_seconds,expected", [(None, 120), (45, 45), (120, 120)])
+def test_text_relay_idle_timeout_comes_from_the_active_revision(idle_seconds, expected):
+    from datetime import datetime, timedelta
+
+    async def handler(request):
+        return httpx.Response(500)
+
+    browser, _requests, _tokens = run_text_session(handler, [], idle_seconds=idle_seconds)
+    ready = next(message for message in browser.displayed if message["type"] == "ready")
+    permit = json.loads(json.dumps(permit_document()))
+    started = datetime.fromisoformat(permit["issuedAt"].replace("Z", "+00:00"))
+    idle = datetime.fromisoformat(ready["idleExpiresAt"].replace("Z", "+00:00"))
+    assert idle - started == timedelta(seconds=expected)
 
 
 @pytest.mark.parametrize("steps", range(8))

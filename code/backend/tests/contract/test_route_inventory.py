@@ -1,4 +1,4 @@
-"""The runtime serves exactly four routes; every retired call-era route is gone."""
+"""The runtime serves exactly five routes; every retired call-era route is gone."""
 
 import time
 from datetime import UTC, datetime
@@ -22,6 +22,7 @@ LIVE_ROUTES = {
     ("GET", "/readyz"),
     ("POST", "/v1/conversations/text"),
     ("WEBSOCKET", "/v1/conversations/voice"),
+    ("GET", "/v1/status"),
 }
 RETIRED_PATHS = (
     "/v1/internal/test-sessions",

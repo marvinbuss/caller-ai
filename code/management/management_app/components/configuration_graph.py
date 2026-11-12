@@ -197,6 +197,10 @@ NODE_CSS = """
 .caller-node-toggle { margin-left: auto; min-width: 28px; min-height: 28px; border-radius: 4px;
   border: 1px solid #8a9690; background: #ffffff; cursor: pointer; }
 .caller-node-toggle:focus-visible { outline: 3px solid #1f5fbf; outline-offset: 2px; }
+.react-flow .react-flow__node:focus-visible, .react-flow .react-flow__edge:focus-visible,
+.react-flow .react-flow__pane:focus-visible,
+.react-flow .react-flow__controls-button:focus-visible {
+  outline: 3px solid #1f5fbf; outline-offset: 2px; }
 """
 
 

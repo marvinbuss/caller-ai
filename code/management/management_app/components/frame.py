@@ -157,12 +157,10 @@ function CallerLeaveNotice() {
     const [shown, setShown] = useState(false);
     useEffect(() => {
         const check = () => {
-            try {
-                if (window.sessionStorage.getItem("caller-test-left") === "1") {
-                    window.sessionStorage.removeItem("caller-test-left");
-                    setShown(true);
-                }
-            } catch (error) {}
+            if (window.__callerTestLeft === true) {
+                window.__callerTestLeft = false;
+                setShown(true);
+            }
         };
         check();
         const timer = setInterval(check, 500);
@@ -195,9 +193,7 @@ FRAME_CSS = f"""
 .caller-sidebar a[aria-current="page"] {{ background: {COLORS["brand"]};
   color: {COLORS["on-brand"]}; font-weight: 600; }}
 .caller-menu-button {{ display: none; }}
-.caller-frame a:focus-visible, .caller-frame button:focus-visible,
-.caller-frame select:focus-visible, .caller-frame input:focus-visible,
-.caller-frame textarea:focus-visible, .caller-login a:focus-visible {{
+.caller-frame :focus-visible, .caller-login a:focus-visible {{
   outline: 3px solid {COLORS["focus"]}; outline-offset: 2px; }}
 .caller-button {{ display: inline-flex; align-items: center; gap: 8px; min-height: 40px;
   padding: 8px 16px; border-radius: 6px; border: 1px solid {COLORS["border"]};
@@ -209,6 +205,9 @@ FRAME_CSS = f"""
   padding: 10px 12px; border-radius: 6px; }}
 .caller-leave-notice {{ color: {COLORS["warning"]}; background: {COLORS["warning-fill"]};
   padding: 10px 12px; border-radius: 6px; margin: 0 0 16px; }}
+.caller-input {{ min-height: 40px; padding: 8px 10px; border-radius: 6px; width: 100%;
+  max-width: 420px; border: 1px solid {COLORS["border"]}; background: {COLORS["surface"]};
+  color: {COLORS["text"]}; font: inherit; }}
 @media (max-width: {NARROW_BREAKPOINT_PX - 1}px) {{
   .caller-frame {{ grid-template-columns: minmax(0, 1fr); }}
   .caller-menu-button {{ display: inline-flex; align-items: center; justify-content: center;

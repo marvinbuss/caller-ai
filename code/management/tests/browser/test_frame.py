@@ -261,6 +261,100 @@ def test_session_warning_extends_the_session(browser: Browser, frame_host):
     context.close()
 
 
+FOCUS_STATE = """() => {
+    const element = document.activeElement;
+    if (!element || element === document.body) return null;
+    const style = getComputedStyle(element);
+    const outlined = style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0;
+    const ringed = style.boxShadow && style.boxShadow !== "none";
+    return {
+        name: (element.getAttribute("aria-label") || element.textContent || element.tagName)
+            .trim().slice(0, 40),
+        tag: element.tagName,
+        visible: outlined || ringed,
+    };
+}"""
+
+
+def test_keyboard_only_walkthrough_reaches_every_page_with_visible_focus(
+    browser: Browser, frame_host
+):
+    context, page = signed_in(browser, frame_host, user="frame-two")
+    try:
+        expect(page.get_by_role("heading", name="Welcome to Caller AI", exact=True)).to_be_visible()
+        for page_id, label in NAV.items():
+            if page_id == "dashboard":
+                continue
+            # Tab from the top of the page to the sidebar entry and open it with Enter only.
+            page.evaluate("document.activeElement && document.activeElement.blur()")
+            for _ in range(30):
+                page.keyboard.press("Tab")
+                if page.evaluate("document.activeElement.textContent.trim()") == label and (
+                    page.evaluate("document.activeElement.closest('nav') !== null")
+                ):
+                    break
+            else:
+                raise AssertionError(f"sidebar entry {label} is not reachable by keyboard")
+            page.keyboard.press("Enter")
+            expect(page.get_by_role("heading", name=label, exact=True)).to_be_visible()
+            page.wait_for_load_state("networkidle")
+            seen = []
+            page.evaluate("document.activeElement && document.activeElement.blur()")
+            for _ in range(25):
+                page.keyboard.press("Tab")
+                state = page.evaluate(FOCUS_STATE)
+                if state is None:
+                    continue
+                seen.append(state)
+                assert state["visible"], (label, state)
+            assert len(seen) >= 3, (label, seen)
+    finally:
+        context.close()
+
+
+def draft_outline(page: Page, name: str):
+    return page.get_by_test_id("graph-outline").get_by_role(
+        "button", name=f"{name} (Custom)", exact=True
+    )
+
+
+def test_signing_in_again_keeps_the_open_draft_for_the_same_user_only(browser: Browser, frame_host):
+    context, page = signed_in(
+        browser,
+        frame_host,
+        user="frame-three",
+        target="/communities",
+        session_seconds=290,
+        token_seconds=290,
+    )
+    answer_identity_provider(context, frame_host, "frame-three:editor+tester")
+    try:
+        draft_outline(page, "alpha").click()
+        page.get_by_role("group", name="Community alpha", exact=True).get_by_label(
+            "Name", exact=True
+        ).fill("Resign alpha")
+        expect(page.get_by_test_id("editor-status")).to_have_text("Unsaved")
+        warning = page.get_by_test_id("session-warning")
+        expect(warning).to_be_visible()
+        with page.expect_request("**/auth/callback"):
+            warning.get_by_role("button", name="Stay signed in").click()
+        expect(page.get_by_test_id("editor-status")).to_have_text("Unsaved", timeout=20000)
+        assert urlsplit(page.url).path.rstrip("/") == "/communities", page.url
+        expect(draft_outline(page, "Resign alpha")).to_be_visible()
+        expect(page.get_by_test_id("session-warning")).to_have_count(0)
+        # Sign-out discards the tab's drafts; the next user starts from the published graph.
+        page.get_by_role("button", name="Sign out", exact=True).click()
+        wait_for_login(page)
+        answer_identity_provider(context, frame_host, "frame-two:editor+tester")
+        page.goto(frame_host["ui"] + "/communities", wait_until="networkidle")
+        page.get_by_role("link", name="Sign in", exact=True).click()
+        expect(draft_outline(page, "alpha")).to_be_visible(timeout=20000)
+        expect(draft_outline(page, "Resign alpha")).to_have_count(0)
+        expect(page.get_by_test_id("editor-status")).not_to_have_text("Unsaved")
+    finally:
+        context.close()
+
+
 def test_an_ended_session_returns_to_login_with_the_discarded_message(browser: Browser, frame_host):
     context, page = signed_in(browser, frame_host, session_seconds=3)
     wait_for_login(page, "expired=1", timeout=15000)

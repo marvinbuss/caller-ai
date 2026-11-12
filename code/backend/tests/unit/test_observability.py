@@ -424,6 +424,23 @@ def test_history_store_event_carries_only_outcome_and_latency():
         telemetry.close()
 
 
+def test_status_probe_event_carries_only_model_outcome_and_duration():
+    telemetry = Telemetry("caller-runtime", "local")
+    try:
+        telemetry.event("status.probe", "failure", measurement="voice_probe_seconds", value=2.0)
+        event = telemetry.events[-1]
+        assert event["event"] == "status.probe" and event["outcome"] == "failure"
+        assert event["measurement"] == "voice_probe_seconds" and event["value"] == "2.0"
+        assert "kind" not in event and "reason_code" not in event
+        assert "openai.azure.com" not in json.dumps(event)
+        with pytest.raises(ValueError, match="unsafe_test_measurement"):
+            telemetry.event("status.probe", "success", measurement="host_seconds", value=1)
+        with pytest.raises(ValueError, match="unsafe_test_metadata"):
+            telemetry.event("status.probe", "success", mode="text", reason="ready")
+    finally:
+        telemetry.close()
+
+
 def test_diagnostic_events_follow_the_event_schema_and_drop_free_text(caplog):
     telemetry = Telemetry("caller-runtime", "live")
     try:
