@@ -198,6 +198,8 @@ class TestSlot(Metadata):
     auth_expires_at: AwareTime = Field(alias="authExpiresAt")
     expires_at: AwareTime = Field(alias="expiresAt")
     idle_expires_at: AwareTime = Field(alias="idleExpiresAt")
+    # From the admitting revision's `conversationSettings`; fixed for the session's life.
+    idle_seconds: int = Field(default=120, alias="idleSeconds", ge=30, le=120)
     last_user_at: AwareTime | None = Field(default=None, alias="lastUserAt")
     phase: Literal["starting", "active", "ending", "cleanup_pending"] = "starting"
     ready_at: AwareTime | None = Field(default=None, alias="readyAt")
@@ -220,7 +222,8 @@ class TestSlot(Metadata):
         if (
             self.expires_at != self.started_at + timedelta(seconds=600)
             or not self.started_at <= last_user < self.expires_at
-            or self.idle_expires_at != min(last_user + timedelta(seconds=120), self.expires_at)
+            or self.idle_expires_at
+            != min(last_user + timedelta(seconds=self.idle_seconds), self.expires_at)
             or not self.started_at
             < self.admission_deadline_utc
             <= self.started_at + timedelta(seconds=10)
@@ -347,6 +350,7 @@ class SessionLimits:
     started_at: datetime
     admission_deadline_utc: datetime
     auth_expires_at: datetime
+    idle_seconds: int = 120
     ready_at: datetime | None = field(default=None, init=False)
     _last_user_at: datetime = field(init=False)
     _observed_at: datetime = field(init=False)
@@ -370,7 +374,7 @@ class SessionLimits:
 
     @property
     def idle_expires_at(self) -> datetime:
-        return min(self._last_user_at + timedelta(seconds=120), self.expires_at)
+        return min(self._last_user_at + timedelta(seconds=self.idle_seconds), self.expires_at)
 
     def _require(self, now: datetime) -> datetime:
         now = utc(now)

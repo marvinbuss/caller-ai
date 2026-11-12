@@ -82,7 +82,7 @@ This repairs stale success acknowledgment, not a proven cause of the historical 
 community. Full native/image verification of the changed handler is still required. T031
 tracks those checks, not the now-closed historical investigation. The six external tasks
 remain open; no timeout, assertion or live-mode boundary changes.
-See the [save contract and sequence](../configuration-guide.md#save-conflict-and-recovery).
+See the [save contract and sequence](../configuration-guide.md#publish-conflict-and-recovery).
 
 ## Earlier Diagnostic Outcome: 2026-10-27
 

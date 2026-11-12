@@ -3,25 +3,26 @@
 ## Feature 002 Community Editor
 
 The community MVP is an authenticated management workflow, not a model/provider or telephone
-qualification. Start at `/configuration`; stable community links open
-`/configuration/communities/[community_id]`. Both routes share one organization-wide draft and
-Save action. See the current [configuration guide](../configuration-guide.md#community-overview-and-routes).
+qualification. Start at **Community and Agent** (`/communities`); the old `/configuration`
+routes redirect there. The graph and the Tools section share one organization-wide draft and
+Publish action. See the current [configuration guide](../configuration-guide.md#community-and-agent-page).
 
-1. Select the intended source/destination to add one directed connection. Reverse permission
-    needs a separate edge. Node dragging and X/Y keyboard edits change presentation only.
-2. Save the complete draft. The returned revision/ETag acknowledges its submitted generation;
-    edits made during the request remain Unsaved. No stale success message confirms newer work.
-3. On 409, keep the draft and coordinate with the other manager. Cancel Reload to retain it,
-    or explicitly confirm discard/reload. Never replay a publication to recover pending audit.
+1. Draw a link from the source to the destination to add one directed connection. Reverse
+    permission needs a separate link. Moving nodes changes this browser's view only.
+2. Publish the complete draft after reading the confirmation. The returned revision/ETag
+    acknowledges its submitted generation; edits made during the request remain Unsaved. No
+    stale success message confirms newer work.
+3. On 409, keep the draft and coordinate with the other manager. **Reload** is the explicit
+    choice to fetch the newer revision. Never replay a publication to recover pending audit.
 4. On 422, repair the reported field/reference. For referenced deletion, cancel or explicitly
     confirm the removal; changes stay draft-only until publication. Do not edit the database
     or raw role fields to bypass validation.
-5. On a missing community link, use Communities to choose an existing ID; no substitute is
-    selected. Authentication expiry requires normal reauthentication. Do not share fixture
-    cookies, inspect another actor's draft or put credentials in URLs or browser storage.
+5. Authentication expiry requires normal reauthentication; "Stay signed in" keeps the open
+    draft for the same user. Do not share fixture cookies, inspect another actor's draft or
+    put credentials in URLs or browser storage.
 
-Browser back/forward and internal links preserve unsaved edits; browser reload/departure warns.
-The explicit Reload dialog is the discard path. Empty protected-only publication is editable
+Sidebar navigation keeps unsaved edits. A newer publication by another manager shows a notice
+with Reload; the draft is never replaced silently. Empty protected-only publication is editable
 but cannot admit a runtime conversation. Model/test-ticket/voice resources are not part of
 this editor-only fixture, and no UI status certifies real Cosmos durability or live behavior.
 Record only source/revision, fixed outcome/correlation, counts and timing for failures, never

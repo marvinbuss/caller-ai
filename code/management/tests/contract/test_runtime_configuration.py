@@ -19,7 +19,7 @@ def test_v2_runtime_projection_has_independent_hash_and_no_layout(runtime_config
     response = client.get("/v2/runtime/configuration", headers=headers)
     assert response.status_code == 200
     projection = response.json()
-    assert projection["schemaVersion"] == "2.0.0" and "layout" not in projection
+    assert projection["schemaVersion"] == "2.1.0" and "layout" not in projection
     assert (
         projection["graphHash"]
         == hashlib.sha256(encoded(graph_document(repository.snapshot))).hexdigest()
@@ -45,12 +45,20 @@ def test_v2_runtime_projection_omits_secret_resolution_material(
 
     client, identity, repository, telemetry = runtime_configuration_api
     repository.snapshot = publication(
-        validator, capability_graph, actor="manager-fixture", previous=None, authority=None
+        validator,
+        capability_graph,
+        actor="manager-fixture",
+        previous=None,
+        authority=None,
+        actor_name="Example Editor",
     )[0]
+    assert repository.snapshot["publication"]["publishedByName"] == "Example Editor"
     before = copy.deepcopy(repository.snapshot)
     response = client.get("/v2/runtime/configuration", headers={"X-Fixture-Identity": "runtime"})
     assert response.status_code == 200
     projection = response.json()
+    assert "publication" not in projection and "Example Editor" not in response.text
+    assert "agentStamps" not in response.text and "warnings" not in projection
     assert "secret://" not in response.text and "credentialRef" not in response.text
     assert "layout" not in projection and repository.snapshot == before
     policy = graph_document(before)
@@ -143,12 +151,13 @@ def test_snapshot_is_exact_integrity_checked_revision_with_private_cache_headers
     assert response.status_code == 200
     expected = copy.deepcopy(repository.snapshot)
     expected.pop("layout")
+    expected.pop("publication")
     expected["policyHash"] = hashlib.sha256(encoded(graph_document(expected))).hexdigest()
     assert response.json() == expected
     assert response.headers["etag"] == repository.etag
     assert response.headers["cache-control"] == "private, no-cache"
     assert response.headers["vary"] == "Authorization"
-    assert response.json()["schemaVersion"] == "2.0.0"
+    assert response.json()["schemaVersion"] == "2.1.0"
     assert (
         response.json()["graphHash"]
         == hashlib.sha256(encoded(graph_document(repository.snapshot))).hexdigest()

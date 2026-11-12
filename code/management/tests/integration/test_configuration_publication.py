@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 
-def test_v2_layout_publication_keeps_atomic_authority_and_full_hash(publication_store, graph_v2):
+def test_v2_publication_keeps_atomic_authority_and_full_hash(publication_store, graph_v2):
     from management_app.adapters.configuration_repository import graph_document
     from management_app.services.configuration_validation import encoded
 
@@ -17,9 +17,11 @@ def test_v2_layout_publication_keeps_atomic_authority_and_full_hash(publication_
 
     async def scenario():
         before, etag = await repository.initialize(graph_v2, actor_id="manager-fixture")
+        assert before["schemaVersion"] == "2.1.0"
+        assert before["layout"] == {"communities": [], "agentsByCommunity": {}}
         authority = await repository.read_authority()
         changed = copy.deepcopy(graph_v2)
-        changed["layout"]["communities"][0]["x"] += 100
+        changed["agents"][3]["prompt"] += " changed"
         saved = await repository.publish(changed, if_match=etag, actor_id="manager-fixture")
         assert saved is not None and saved[1] != etag
         assert saved[0]["graphHash"] != before["graphHash"]
@@ -42,6 +44,47 @@ def test_v2_layout_publication_keeps_atomic_authority_and_full_hash(publication_
     asyncio.run(scenario())
 
 
+def test_agent_stamps_follow_changes_across_three_publications(publication_store, graph_v2):
+    from management_app.adapters.configuration_repository import graph_document
+    from management_app.services.configuration_validation import encoded
+
+    repository, _container = publication_store
+
+    async def scenario():
+        first, etag = await repository.initialize(graph_v2, actor_id="bootstrap-fixture")
+        stamps = first["publication"]["agentStamps"]
+        assert {stamp["revisionNumber"] for stamp in stamps.values()} == {1}
+        changed = copy.deepcopy(graph_v2)
+        changed["agents"][3]["prompt"] += " second"
+        second, etag = await repository.publish(
+            changed, if_match=etag, actor_id="actor-two", actor_name="Second Editor"
+        )
+        stamps = second["publication"]["agentStamps"]
+        assert stamps["agent-alpha"] == {
+            "revisionNumber": 2,
+            "changedAt": second["publication"]["publishedAt"],
+            "changedBy": "actor-two",
+            "changedByName": "Second Editor",
+        }
+        assert stamps["agent-beta"] == first["publication"]["agentStamps"]["agent-beta"]
+        assert second["publication"]["publishedByName"] == "Second Editor"
+        third_graph = copy.deepcopy(changed)
+        third_graph["agents"].append(
+            {**third_graph["agents"][4], "agentId": "agent-beta-new", "name": "Beta new"}
+        )
+        third, _etag = await repository.publish(
+            third_graph, if_match=etag, actor_id="actor-three", actor_name="Third Editor"
+        )
+        stamps = third["publication"]["agentStamps"]
+        assert stamps["agent-beta-new"]["revisionNumber"] == 3
+        assert stamps["agent-alpha"]["revisionNumber"] == 2
+        assert stamps["agent-beta"]["revisionNumber"] == 1
+        # Stamps sit outside the graph hash.
+        assert third["graphHash"] == hashlib.sha256(encoded(graph_document(third))).hexdigest()
+
+    asyncio.run(scenario())
+
+
 def test_v2_manager_conditions_and_legacy_route_rejection(editor_test_app, graph_v2):
     from management_app.health import lifecycle
 
@@ -59,7 +102,7 @@ def test_v2_manager_conditions_and_legacy_route_rejection(editor_test_app, graph
                 assert (await client.get("/v2/configuration")).status_code == 401
                 await client.get("/_test/login/manager-one")
                 current = await client.get("/v2/configuration")
-                assert current.status_code == 200 and current.json()["schemaVersion"] == "2.0.0"
+                assert current.status_code == 200 and current.json()["schemaVersion"] == "2.1.0"
                 assert (
                     current.headers["etag"] == (await editor_test_app.repository.read_active())[1]
                 )
@@ -79,7 +122,7 @@ def test_v2_manager_conditions_and_legacy_route_rejection(editor_test_app, graph
                 ).status_code == 409
                 headers["If-Match"] = current.headers["etag"]
                 changed = copy.deepcopy(graph_v2)
-                changed["layout"]["communities"][0]["x"] += 100
+                changed["agents"][3]["prompt"] += " changed"
                 saved = await client.put("/v2/configuration", json=changed, headers=headers)
                 assert saved.status_code == 200 and saved.headers["etag"] != current.headers["etag"]
                 assert saved.json()["revisionNumber"] == current.json()["revisionNumber"] + 1

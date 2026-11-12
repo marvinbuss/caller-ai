@@ -7,9 +7,9 @@ numbered; the active pointer is a separate document.
 """
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Any, Final, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, StringConstraints, field_validator
 
 from management_app.models.capabilities import (
     CapabilityAssignment,
@@ -44,6 +44,7 @@ class Community(ConfigurationModel):
     routing_description: str = Field(alias="routingDescription")
     enabled: bool
     entry_agent_id: Identifier = Field(alias="entryAgentId")
+    routable: bool = True
 
     @field_validator("routing_description")
     @classmethod
@@ -82,8 +83,30 @@ class GraphLayout(ConfigurationModel):
     agents_by_community: dict[Identifier, list[GraphPosition]] = Field(alias="agentsByCommunity")
 
 
+def _absent(value: object) -> bool:
+    return value is None
+
+
+class ConversationSettings(ConfigurationModel):
+    """Per-conversation values; an absent field means the runtime's environment default."""
+
+    voice: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,63}$")] | None = Field(
+        default=None, exclude_if=_absent
+    )
+    max_output_tokens: int | None = Field(
+        default=None, alias="maxOutputTokens", ge=1, le=4096, exclude_if=_absent
+    )
+    idle_timeout_seconds: int | None = Field(
+        default=None, alias="idleTimeoutSeconds", ge=30, le=120, exclude_if=_absent
+    )
+
+
+EMPTY_LAYOUT: Final[dict[str, Any]] = {"communities": [], "agentsByCommunity": {}}
+SCHEMA_VERSION: Final = "2.1.0"
+
+
 class ConfigurationGraph(ConfigurationModel):
-    schema_version: Literal["2.0.0"] = Field(alias="schemaVersion")
+    schema_version: Literal["2.0.0", "2.1.0"] = Field(alias="schemaVersion")
     agents: list[Agent] = Field(max_length=200)
     communities: list[Community] = Field(max_length=50)
     relationships: list[Relationship] = Field(max_length=1000)
@@ -93,6 +116,27 @@ class ConfigurationGraph(ConfigurationModel):
     layout: GraphLayout
     tools: list[ToolDefinition] = Field(max_length=256)
     mcp_connections: list[MCPConnection] = Field(alias="mcpConnections", max_length=128)
+    conversation_settings: ConversationSettings | None = Field(
+        default=None, alias="conversationSettings", exclude_if=_absent
+    )
+
+
+class AgentStamp(ConfigurationModel):
+    """When and by whom an agent last changed in a published revision."""
+
+    revision_number: int = Field(alias="revisionNumber", ge=1)
+    changed_at: str = Field(alias="changedAt", max_length=64)
+    changed_by: Identifier = Field(alias="changedBy")
+    changed_by_name: str = Field(alias="changedByName", max_length=256)
+
+
+class PublicationRecord(ConfigurationModel):
+    """Editor-only publication metadata; outside both hashes and the runtime projection."""
+
+    published_at: str = Field(alias="publishedAt", max_length=64)
+    published_by: Identifier = Field(alias="publishedBy")
+    published_by_name: str = Field(alias="publishedByName", max_length=256)
+    agent_stamps: dict[Identifier, AgentStamp] = Field(alias="agentStamps", max_length=200)
 
 
 class ConfigurationRevision(ConfigurationGraph):
@@ -102,6 +146,7 @@ class ConfigurationRevision(ConfigurationGraph):
     created_at: datetime = Field(alias="createdAt")
     created_by: Identifier = Field(alias="createdBy")
     graph_hash: str = Field(alias="graphHash", pattern=r"^[0-9a-f]{64}$")
+    publication: PublicationRecord | None = Field(default=None, exclude_if=_absent)
 
     @field_validator("created_at")
     @classmethod

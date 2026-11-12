@@ -89,6 +89,40 @@ EVENTS = (
     frozenset({"startup", "shutdown", "request", "probe", "failure", "configuration"})
     | TEST_OPERATIONS
 )
+PAGES = frozenset({"login", "dashboard", "communities", "test", "status", "settings"})
+RULES = frozenset(
+    {
+        "default_community",
+        "default_connection",
+        "predefined_agent",
+        "entry_agent",
+        "handover_scope",
+        "reserved_name",
+    }
+)
+REACHABILITY = frozenset({"reachable", "unreachable", "unknown"})
+# Frontend events: every field and value comes from these closed sets (contract ui-shell.md).
+UI_EVENTS: dict[str, dict[str, frozenset[str]]] = {
+    "ui.page_view": {
+        "page": PAGES,
+        "outcome": frozenset({"shown", "login", "no_access", "role_required"}),
+    },
+    "auth.sign_in": {
+        "outcome": frozenset({"success", "failure"}),
+        "reason": frozenset({"none", "invalid_response", "unavailable", "capacity"}),
+    },
+    "auth.session_extend": {"outcome": frozenset({"success", "failure"})},
+    "configuration.rule_refused": {
+        "outcome": frozenset({"refused"}),
+        "rule": RULES,
+        "item_kind": frozenset({"community", "agent", "connection", "handover", "tool"}),
+    },
+    "status.check": {
+        "outcome": frozenset({"success", "failure"}),
+        "text": REACHABILITY,
+        "voice": REACHABILITY,
+    },
+}
 VALUES = {
     "http.method": frozenset({"GET", "HEAD", "POST", "PUT", "WEBSOCKET"}),
     "http.route": frozenset(
@@ -303,6 +337,32 @@ class Telemetry:
                     pass
         elif name in TEST_OPERATIONS and mode is not None:
             self._observe_test(event, mode, measurement, value)
+
+    def record(self, name: str, **fields: str) -> None:
+        """A frontend event whose every field and value is from `UI_EVENTS`; no content."""
+        allowed = UI_EVENTS.get(name)
+        if allowed is None or fields.keys() != allowed.keys():
+            raise ValueError("unsafe_event_name")
+        if any(value not in allowed[key] for key, value in fields.items()):
+            raise ValueError("unsafe_event_value")
+        if self._closed:
+            return
+        context = trace.get_current_span().get_span_context()
+        event = {
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "severity": "WARNING" if fields["outcome"] == "failure" else "INFO",
+            "service": self.service,
+            "environment": self.mode,
+            "event": name,
+            "correlation_id": sanitize_correlation_id(None),
+            "trace_id": format(context.trace_id, "032x") if context.is_valid else "",
+            "span_id": format(context.span_id, "016x") if context.is_valid else "",
+        } | fields
+        with self._event_lock:
+            self._events.append(event)
+        self._logger.log(
+            logging.WARNING if fields["outcome"] == "failure" else logging.INFO, json.dumps(event)
+        )
 
     def diagnostic(
         self,

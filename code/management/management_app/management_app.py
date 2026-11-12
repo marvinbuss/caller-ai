@@ -1,10 +1,10 @@
-"""Foundation shell plus an explicit authenticated editor composition; live calls stay off.
+"""The management frontend: one authenticated frame around every page, plus its health API.
 
-`create_app` always serves the status shell and its health API and reports live calls and
-configuration as unavailable. When an `EditorServices` bundle is passed it also registers the
-configuration editor and test console pages behind the Reflex socket guard. Reflex registers
-states in a context that is forked while the app is built, so the editor pages and states are
-imported before that fork; moving those imports later breaks the frontend export.
+`create_app` always serves the login page and the dashboard route with the health API. When an
+`EditorServices` bundle is passed it also registers the Community and Agent, Test, Status and
+Settings pages behind the Reflex socket guard, and redirects the old `/configuration` routes.
+Reflex registers states in a context that is forked while the app is built, so the pages and
+states are imported before that fork; moving those imports later breaks the frontend export.
 """
 
 import os
@@ -31,94 +31,11 @@ if TYPE_CHECKING:
     from management_app.state.editor_draft import EditorServices
 
 
-class ShellState(rx.State):
-    """A server-backed event verifies the actual Reflex connection."""
-
-    status: str = "Ready"
-
-    @rx.event
-    def refresh_status(self) -> None:
-        self.status = "Updated"
-
-
 def index() -> rx.Component:
-    return cast(
-        rx.Component,
-        rx.box(
-            rx.el.header(
-                rx.hstack(
-                    rx.icon("headset", size=22, color="#197767"),
-                    rx.text("CALLER / CONTROL", size="2", weight="bold"),
-                    rx.spacer(),
-                    align="center",
-                    width="100%",
-                    max_width="960px",
-                    margin="0 auto",
-                ),
-                padding=["18px 20px", "18px 32px"],
-                border_bottom="1px solid #dce1df",
-                background="#f4f7f6",
-                role="banner",
-            ),
-            rx.el.main(
-                rx.heading("Caller AI", size="7", margin_bottom="32px"),
-                rx.hstack(
-                    rx.heading("System status", size="4"),
-                    rx.spacer(),
-                    rx.tooltip(
-                        rx.icon_button(
-                            rx.icon("refresh-cw", size=16),
-                            aria_label="Refresh status",
-                            on_click=ShellState.refresh_status,
-                            variant="outline",
-                            color_scheme="gray",
-                            width="36px",
-                            height="36px",
-                        ),
-                        content="Refresh status",
-                    ),
-                    align="center",
-                    width="100%",
-                    margin_bottom="20px",
-                ),
-                rx.box(
-                    rx.text(
-                        "Agents, communities and the test console are edited in the configuration. "
-                        "Signing in with an organization account that holds the editor or tester "
-                        "role is required.",
-                        size="3",
-                        color="#58615c",
-                        margin_bottom="16px",
-                    ),
-                    rx.link(
-                        "Open configuration", href="/configuration/", size="3", weight="medium"
-                    ),
-                    padding="20px 0",
-                    border_top="1px solid #dce1df",
-                    width="100%",
-                ),
-                rx.hstack(
-                    rx.icon("circle-check", size=16, color="#197767"),
-                    rx.text(
-                        ShellState.status, size="2", data_testid="connection-status", role="status"
-                    ),
-                    align="center",
-                    margin_top="24px",
-                    min_height="24px",
-                ),
-                padding=["28px 20px", "40px 32px"],
-                max_width="960px",
-                width="100%",
-                margin="0 auto",
-                role="main",
-            ),
-            min_height="100vh",
-            background="#ffffff",
-            color="#242925",
-            font_family="Trebuchet MS, sans-serif",
-            letter_spacing="0",
-        ),
-    )
+    from management_app.components.frame import frame
+    from management_app.pages.dashboard import dashboard_content
+
+    return frame("dashboard", dashboard_content)
 
 
 def create_app(
@@ -127,14 +44,21 @@ def create_app(
     dependencies: ReadinessPort | None = None,
     editor: "EditorServices | None" = None,
 ) -> rx.App:
+    from management_app.components.frame import REDIRECTS, redirect_page
+    from management_app.pages.login import login_page
+
     configuration = settings or Settings()
     api = editor.api if editor is not None else create_health_api(configuration, dependencies)
     if editor is not None:
         api.state.editor_services = editor
         # States must register in the base context, so import them before the fork below.
-        from management_app.pages.communities import configuration_page
+        from management_app.pages.community_agent import community_agent_page
+        from management_app.pages.settings import settings_page
+        from management_app.pages.status import status_page
         from management_app.pages.test_console import test_console_page
         from management_app.state.configuration_editor import ConfigurationEditorState
+        from management_app.state.settings import SettingsState
+        from management_app.state.status import StatusState
         from management_app.state.test_console import TestConsoleState
 
     registration = RegistrationContext.ensure_context()
@@ -150,28 +74,49 @@ def create_app(
             api_transformer=api,
             style={"letter_spacing": "0"},
         )
+        application.app_wraps[(5, "Overlay")] = _signed_in_overlay
         application.register_lifespan_task(lifecycle, api=api, settings=configuration)
-        application.add_page(index, title="Caller AI")
+        application.add_page(index, route="/", title="Dashboard | Caller AI")
+        application.add_page(login_page, route="/login", title="Sign in | Caller AI")
         if editor is not None:
             application.add_page(
-                configuration_page,
-                route="/configuration",
-                title="Configuration | Caller AI",
-                on_load=ConfigurationEditorState.enter_view,
-            )
-            application.add_page(
-                configuration_page,
-                route="/configuration/communities/[community_id]",
-                title="Community | Caller AI",
+                community_agent_page,
+                route="/communities",
+                title="Community and Agent | Caller AI",
                 on_load=ConfigurationEditorState.enter_view,
             )
             application.add_page(
                 test_console_page,
-                route="/configuration/test",
+                route="/test",
                 title="Test | Caller AI",
                 on_load=TestConsoleState.enter_view,
             )
+            application.add_page(
+                status_page,
+                route="/status",
+                title="Status | Caller AI",
+                on_load=StatusState.load,
+            )
+            application.add_page(
+                settings_page,
+                route="/settings",
+                title="Settings | Caller AI",
+                on_load=SettingsState.load,
+            )
+            for old, new in REDIRECTS.items():
+                application.add_page(redirect_page(new), route=old, title="Caller AI")
     return application
+
+
+def _signed_in_overlay(stateful: bool) -> rx.Component | None:
+    """Connection notices only for signed-in users; the login page has no socket by design."""
+    from reflex.app import default_overlay_component
+
+    from management_app.components.frame import gate
+
+    if not stateful:
+        return None
+    return cast(rx.Component, rx.fragment(gate("signed_in", default_overlay_component())))
 
 
 async def create_managed_app(

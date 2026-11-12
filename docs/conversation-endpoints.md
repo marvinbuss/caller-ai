@@ -1,6 +1,7 @@
 # Conversation endpoints
 
-The backend runtime serves two public conversation endpoints and two operational probes. They
+The backend runtime serves two public conversation endpoints, a status endpoint for management and
+two operational probes. The conversation endpoints
 share one connection contract, so a caller handles errors, limits and settings the same way for
 text and voice. Everything else a caller might try (the retired call, provider-callback, drain and
 development routes, and the earlier `/v1/internal/test-sessions` WebSocket) is not found.
@@ -9,6 +10,7 @@ development routes, and the earlier `/v1/internal/test-sessions` WebSocket) is n
 |---------|-----------------|-----------|
 | Text turn | `POST /v1/conversations/text` | HTTP request, `text/event-stream` response |
 | Voice session | `GET /v1/conversations/voice` (upgrade) | WebSocket, subprotocol `caller.voice.v1` |
+| Service status | `GET /v1/status` | HTTP JSON, management workload only |
 | Liveness and readiness | `GET /healthz`, `GET /readyz` | HTTP, operational only |
 
 Both conversation endpoints require TLS, accept no query string and are reached by the
@@ -168,6 +170,32 @@ Text submission is not part of the voice protocol. Any failure sends one `error`
 normal `stop` ends with `ended` (`cleanupStatus` is `complete` once the slot is released) and
 close code 1000. Voice sessions store nothing; audio, transcripts and provider bodies stay
 volatile and are disposed when the session closes.
+
+## Status endpoint
+
+`GET /v1/status` tells management which Foundry service and model deployments the runtime uses,
+whether each is reachable, and which voices and limits the Settings page may offer. It requires the
+same workload credential as the conversation endpoints and TLS; failures answer `401`/`403` with
+the existing codes, or `503 status_unavailable`. The full body is in the
+[status contract](../specs/005-management-frontend-redesign/contracts/status.md).
+
+- `text` and `voice` name the model host (never a URL, key or token), the text deployment, the
+  voice region and the voice model (`gpt-live-1`), with `reachable`, `checkedAt` and the outcome
+  and time of the last real model call.
+- Reachability means a token for the Foundry scope was obtained and a TLS connection to the host
+  succeeded within 2 seconds; no model request is sent. Results are reused for 60 seconds and at
+  most one check per model runs at a time. Each check emits `status.probe`.
+- `supportedVoices` is the reviewed voice catalog (`domain/voices.py`), `defaults` the environment
+  values (`CALLER_LIVE_VOICE`, `CALLER_MAX_OUTPUT_TOKENS`, 120 seconds idle) and `limits` the
+  ranges a revision's `conversationSettings` may use.
+
+## Conversation settings
+
+A published revision may carry `conversationSettings` (schema 2.1.0): `voice`, `maxOutputTokens`
+and `idleTimeoutSeconds`. The runtime applies them when a session is admitted and keeps them for
+that session's life, so a later publication changes only new sessions. An absent value means the
+environment default; `maxOutputTokens` is capped at `CALLER_MAX_OUTPUT_TOKENS`. A revision with a
+voice outside the catalog or a value outside the limits is refused when the runtime installs it.
 
 ## Observability
 

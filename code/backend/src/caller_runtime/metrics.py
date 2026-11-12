@@ -29,8 +29,9 @@ ROUTE_PATHS = {
     "/readyz": "readiness",
     "/v1/conversations/text": "text",
     "/v1/conversations/voice": "voice",
+    "/v1/status": "status",
 }
-ROUTES = frozenset({"health", "readiness", "text", "voice", "unmatched"})
+ROUTES = frozenset({"health", "readiness", "text", "voice", "status", "unmatched"})
 DEPENDENCIES = frozenset(
     {"readiness", "session_store", "history_store", "model", "configuration", "capability_gateway"}
 )

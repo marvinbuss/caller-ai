@@ -25,7 +25,7 @@ def test_bootstrap_is_idempotent_with_stable_protected_ids_and_no_business_admis
     from tests.integration.test_configuration_persistence import ContainerDouble
 
     assert protected_graph() == protected_graph()
-    assert protected_graph()["schemaVersion"] == "2.0.0"
+    assert protected_graph()["schemaVersion"] == "2.1.0"
     container = ContainerDouble() if kind == "cosmos-double" else None
     store = (
         LocalConfigurationRepository(validator=validator)

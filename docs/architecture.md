@@ -217,6 +217,37 @@ Windows Granian can report an occupied port as OS error 10013 instead of 10048; 
 verify the original listener still accepts connections. See [testing](testing.md) for the suites
 and [failure-gate evidence](acceptance/ci-failure-gate.md) for the recorded history.
 
+## Service Status and Conversation Settings
+
+The management Status and Settings pages read the runtime through one workload-authenticated call.
+Management caches the answer for 60 seconds (a manual refresh skips it at most once per 10 seconds
+per session) and records `status.check`; the runtime reuses its probe results for 60 seconds and
+records `status.probe`. Neither side returns or logs a key, token or full URL.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser (Status or Settings)
+    participant M as Management
+    participant R as Runtime
+    participant F as Foundry
+    B->>M: GET /v1/status (session cookie, editor or tester)
+    alt cached for under 60 s
+        M-->>B: cached body
+    else
+        M->>R: GET /v1/status (workload token)
+        R->>F: token for the Foundry scope and TLS connect (2 s, cached 60 s)
+        R-->>M: hosts, deployments, reachability, voices, defaults, limits
+        M-->>B: runtime reachable plus the runtime body
+    end
+    Note over M,R: Runtime unreachable: status null and the time of the last success
+```
+
+Schema 2.1.0 adds `routable` on communities and an optional `conversationSettings` object (voice,
+reply length limit, idle timeout). The runtime reads both 2.0.0 and 2.1.0 revisions; an absent
+`routable` means true and absent settings mean the environment defaults. Management writes 2.1.0
+only, so deploy the runtime before the management app for any release that writes 2.1.0. The
+runtime applies `conversationSettings` at admission and keeps them for the session's life.
+
 ## Removed Call-Era Components
 
 Feature 003 removed the call lifecycle, per-call session repositories, capacity and owner-routing

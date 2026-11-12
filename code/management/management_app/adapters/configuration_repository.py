@@ -179,11 +179,16 @@ class LocalConfigurationRepository:
         authority: Document = json.loads(self._state[2])
         return authority
 
-    def _commit(self, payload: Document, actor: str) -> Publication:
+    def _commit(self, payload: Document, actor: str, actor_name: str = "") -> Publication:
         previous = json.loads(self._state[0]) if self._state else None
         authority = json.loads(self._state[2]) if self._state else None
         snapshot, pointer, permission = publication(
-            self.validator, payload, actor=actor, previous=previous, authority=authority
+            self.validator,
+            payload,
+            actor=actor,
+            previous=previous,
+            authority=authority,
+            actor_name=actor_name,
         )
         pointer["_etag"] = '"local-' + uuid4().hex + '"'
         permission["_etag"] = '"local-' + uuid4().hex + '"'
@@ -250,13 +255,13 @@ class LocalConfigurationRepository:
             return current if current is not None else self._commit(payload, actor_id)
 
     async def publish(
-        self, payload: Document, *, if_match: str, actor_id: str
+        self, payload: Document, *, if_match: str, actor_id: str, actor_name: str = ""
     ) -> Publication | None:
         async with self._lock:
             current = await self.read_active()
             if current is None or current[1] != if_match:
                 return None
-            return self._commit(payload, actor_id)
+            return self._commit(payload, actor_id, actor_name)
 
 
 class CosmosConfigurationRepository:
@@ -465,7 +470,7 @@ class CosmosConfigurationRepository:
             raise RuntimeError("configuration_store_unavailable") from None
 
     async def publish(
-        self, payload: Document, *, if_match: str, actor_id: str
+        self, payload: Document, *, if_match: str, actor_id: str, actor_name: str = ""
     ) -> Publication | None:
         try:
             async with asyncio.timeout(5):
@@ -480,6 +485,7 @@ class CosmosConfigurationRepository:
                         actor=actor_id,
                         previous=current[0],
                         authority=authority,
+                        actor_name=actor_name,
                     )
                     operations: list[BatchOperation] = [
                         ("create", (snapshot,)),

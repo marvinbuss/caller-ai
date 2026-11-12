@@ -61,7 +61,7 @@ def configuration_graph_document() -> dict:
         ("agent-beta", "ordinary", "community-beta"),
     ]
     return {
-        "schemaVersion": "2.0.0",
+        "schemaVersion": "2.1.0",
         "agents": [
             {
                 "agentId": identifier,
@@ -81,6 +81,7 @@ def configuration_graph_document() -> dict:
                 "routingDescription": f"Synthetic {name} routing",
                 "enabled": True,
                 "entryAgentId": f"agent-{name}",
+                "routable": True,
             }
             for name in ("alpha", "beta")
         ],
@@ -100,7 +101,7 @@ def configuration_graph() -> dict:
 @pytest.fixture
 def graph_v2(configuration_graph):
     graph = copy.deepcopy(configuration_graph)
-    graph["schemaVersion"] = "2.0.0"
+    graph["schemaVersion"] = "2.1.0"
     graph["agents"].append(
         {**graph["agents"][3], "agentId": "agent-alpha-peer", "name": "Alpha peer"}
     )

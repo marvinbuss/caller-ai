@@ -153,7 +153,7 @@ class CommunityVisibility:
             ]
         elif agent["role"] == "routing":
             for community in graph["communities"]:
-                if community["enabled"] is not True:
+                if community["enabled"] is not True or community.get("routable", True) is not True:
                     continue
                 try:
                     self._enabled(graph, community["entryAgentId"])
@@ -169,7 +169,7 @@ class CommunityVisibility:
 
     def _browser_graph(self) -> Document:
         graph = self._graph()
-        if graph.get("schemaVersion") != "2.0.0":
+        if graph.get("schemaVersion") not in {"2.0.0", "2.1.0"}:
             raise PermissionError("handover_not_allowed")
         return graph
 
@@ -206,7 +206,10 @@ class CommunityVisibility:
     def initial_entry(self, routing_id: str, community_id: str) -> Document:
         graph = self._browser_graph()
         routing = self._enabled(graph, routing_id)
-        if routing["role"] != "routing":
+        if routing["role"] != "routing" or not any(
+            community["communityId"] == community_id and community.get("routable", True) is True
+            for community in graph["communities"]
+        ):
             raise PermissionError("handover_not_allowed")
         return self._projection(self._community_entry(graph, community_id))
 

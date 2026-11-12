@@ -8,7 +8,9 @@ always gives the same issues.
 """
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 from jsonschema import Draft202012Validator, SchemaError
 from pydantic import ValidationError
@@ -29,8 +31,31 @@ GRAPH_FIELDS = frozenset(
         "layout",
         "tools",
         "mcpConnections",
+        "conversationSettings",
     }
 )
+RESERVED_PREFIX = "default-"
+RESERVED_NAMES = frozenset({"welcome", "routing", "goodbye"})
+SETTING_RULES = {
+    "conversationSettings.voice": "conversation_voice",
+    "conversationSettings.maxOutputTokens": "conversation_limit",
+    "conversationSettings.idleTimeoutSeconds": "conversation_limit",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationLimits:
+    """The runtime's voice catalog and reply limit, from its status response."""
+
+    voices: frozenset[str]
+    max_output_tokens: int
+
+    @classmethod
+    def from_status(cls, status: Mapping[str, Any]) -> "ConversationLimits":
+        return cls(
+            frozenset(str(voice["id"]) for voice in status["supportedVoices"]),
+            int(status["limits"]["maxOutputTokens"]),
+        )
 
 
 def encoded(value: object) -> bytes:
@@ -97,6 +122,13 @@ class ConfigurationValidator:
         self.detector = SecretDetector(policy, approved_secret_aliases)
         self.destinations = approved_destination_refs
         self.reviewed = reviewed if reviewed is not None else ApprovedCapabilities()
+        # Set once the runtime status is known; until then only an unchanged voice is accepted.
+        self.conversation_limits: Callable[[], ConversationLimits | None] = lambda: None
+
+    def remember_status(self, status: Mapping[str, Any]) -> None:
+        """Keep the catalog and limits of the latest runtime status for later checks."""
+        limits = ConversationLimits.from_status(status)
+        self.conversation_limits = lambda: limits
 
     def validate(
         self,
@@ -128,8 +160,24 @@ class ConfigurationValidator:
                 path = ""
                 for component in error["loc"]:
                     path = field_path(path, component)
-                reject(path, rule="schema")
+                reject(path, rule=SETTING_RULES.get(path, "schema"))
             return errors
+
+        settings = graph.conversation_settings
+        if settings is not None:
+            limits = self.conversation_limits()
+            before = (previous_revision or {}).get("conversationSettings")
+            unchanged = isinstance(before, dict) and before.get("voice") == settings.voice
+            if settings.voice is not None and not (
+                settings.voice in limits.voices if limits is not None else unchanged
+            ):
+                reject("conversationSettings.voice", rule="conversation_voice")
+            if (
+                settings.max_output_tokens is not None
+                and limits is not None
+                and settings.max_output_tokens > limits.max_output_tokens
+            ):
+                reject("conversationSettings.maxOutputTokens", rule="conversation_limit")
 
         groups: list[tuple[Sequence[ConfigurationModel], str, str]] = [
             (graph.agents, "agent_id", "agents"),
@@ -212,6 +260,10 @@ class ConfigurationValidator:
                         reject(assignment_path, rule="capability_review")
 
         for index, community in enumerate(graph.communities):
+            if community.community_id.startswith(RESERVED_PREFIX):
+                reject(f"communities[{index}].communityId", rule="reserved_name")
+            if community.name.strip().casefold() in RESERVED_NAMES:
+                reject(f"communities[{index}].name", rule="reserved_name")
             entry = agents.get(community.entry_agent_id)
             if (
                 entry is None

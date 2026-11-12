@@ -27,6 +27,7 @@ from management_app.api.problems import problem_response
 from management_app.observability import sanitize_correlation_id
 from management_app.services.audit import AuditRecord
 from management_app.services.configuration_validation import SNAPSHOT_LIMIT, encoded
+from management_app.services.graph_view import unreachable
 from management_app.services.secret_detection import Issue
 
 ETAG = re.compile(r'^"[A-Za-z0-9_-]{1,128}"$')
@@ -56,7 +57,7 @@ class RepositoryPort(Protocol):
     async def read_active(self) -> Publication | None: ...
 
     async def publish(
-        self, payload: Document, *, if_match: str, actor_id: str
+        self, payload: Document, *, if_match: str, actor_id: str, actor_name: str = ""
     ) -> Publication | None: ...
 
 
@@ -113,11 +114,23 @@ async def read_graph(request: Request) -> Document:
         raise HTTPException(422, "invalid_configuration") from None
 
 
-def revision_response(publication: Publication, correlation: str) -> JSONResponse:
+def revision_response(
+    publication: Publication,
+    correlation: str,
+    *,
+    editor: bool = True,
+) -> JSONResponse:
     snapshot, etag = publication
     if not ETAG.fullmatch(etag):
         raise ValueError("invalid_storage_etag")
     revision = verified_revision(snapshot)
+    if not editor:
+        revision.pop("publication", None)
+    # Advisory only: an unreachable community never blocks publication.
+    revision["warnings"] = [
+        {"code": "community_unreachable", "communityId": identifier}
+        for identifier in unreachable(revision)
+    ]
     return JSONResponse(
         revision,
         headers={"ETag": etag, "Cache-Control": "no-store", "X-Correlation-ID": correlation},
@@ -160,17 +173,20 @@ def create_router(
         actor = None
         try:
             async with asyncio.timeout_at(deadline):
-                actor = (
-                    await identity.require_manager(request)
-                    if reader_role is None
-                    else await identity.require_reader(request, reader_role=reader_role)
-                )
+                editor = True
+                try:
+                    actor = await identity.require_manager(request)
+                except HTTPException:
+                    if reader_role is None:
+                        raise
+                    actor = await identity.require_reader(request, reader_role=reader_role)
+                    editor = False
                 if request.query_params:
                     raise HTTPException(422, "unsupported_configuration_parameters")
                 current = await repository.read_active()
                 if current is None or validator.validate(graph_document(current[0])):
                     raise ValueError("configuration_unavailable")
-                return revision_response(current, correlation)
+                return revision_response(current, correlation, editor=editor)
         except HTTPException as error:
             if error.status_code in (401, 403):
                 await denial(correlation, actor, deadline)
@@ -201,7 +217,12 @@ def create_router(
                 issues = validator.validate(payload)
                 if issues:
                     raise ConfigurationRejected(issues)
-                published = await repository.publish(payload, if_match=values[0], actor_id=actor)
+                published = await repository.publish(
+                    payload,
+                    if_match=values[0],
+                    actor_id=actor,
+                    actor_name=getattr(identity, "display_name", lambda _request: "")(request),
+                )
                 if published is None:
                     raise HTTPException(409, "configuration_conflict")
                 response = revision_response(published, correlation)

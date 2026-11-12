@@ -201,6 +201,81 @@ def test_v2_policy_snapshot_rejects_strict_and_semantic_corruption(
     assert cache.pin() is pinned
 
 
+def rehashed(document: dict) -> dict:
+    from caller_runtime.domain.configuration import GRAPH_FIELDS, OPTIONAL_GRAPH_FIELDS, encoded
+
+    policy = {key: document[key] for key in GRAPH_FIELDS} | {
+        key: document[key] for key in OPTIONAL_GRAPH_FIELDS if key in document
+    }
+    document["policyHash"] = hashlib.sha256(encoded(policy)).hexdigest()
+    return document
+
+
+def schema_two_one(document: dict, **settings) -> dict:
+    document["schemaVersion"] = "2.1.0"
+    for community in document["communities"]:
+        community["routable"] = True
+    if settings:
+        document["conversationSettings"] = settings
+    return rehashed(document)
+
+
+def test_schema_two_one_is_accepted_with_routable_and_conversation_settings(
+    cache, runtime_revision_v2
+):
+    document = schema_two_one(
+        runtime_revision_v2(), voice="marin", maxOutputTokens=800, idleTimeoutSeconds=90
+    )
+    document["communities"][1]["routable"] = False
+    snapshot = cache.install(rehashed(document), etag='"projection-v2-1"')
+    assert snapshot.schema_version == "2.1.0"
+    runtime = snapshot.for_runtime()
+    assert runtime["conversationSettings"] == {
+        "voice": "marin",
+        "maxOutputTokens": 800,
+        "idleTimeoutSeconds": 90,
+    }
+    assert [community["routable"] for community in runtime["communities"]] == [True, False]
+    assert snapshot.conversation_settings() == runtime["conversationSettings"]
+
+
+def test_absent_routable_and_conversation_settings_mean_defaults(cache, runtime_revision_v2):
+    snapshot = cache.install(runtime_revision_v2(), etag='"projection-v2"')
+    assert snapshot.schema_version == "2.0.0"
+    assert "conversationSettings" not in snapshot.for_runtime()
+    assert snapshot.conversation_settings() == {}
+    assert all(
+        snapshot.routable(row["communityId"]) for row in snapshot.for_runtime()["communities"]
+    )
+    partial = schema_two_one(runtime_revision_v2(2), voice="quartz")
+    assert cache.install(partial, etag='"partial"').conversation_settings() == {"voice": "quartz"}
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"voice": "Not A Voice"},
+        {"voice": "cove"},
+        {"maxOutputTokens": 0},
+        {"maxOutputTokens": "800"},
+        {"idleTimeoutSeconds": 29},
+        {"idleTimeoutSeconds": 121},
+        {"temperature": 1},
+    ],
+)
+def test_conversation_settings_out_of_bounds_are_refused(cache, runtime_revision_v2, settings):
+    with pytest.raises(ValueError, match="invalid_configuration_snapshot"):
+        cache.install(schema_two_one(runtime_revision_v2(), **settings), etag='"bounds"')
+
+
+@pytest.mark.parametrize("version", ["1.0.0", "2.2.0", "3.0.0"])
+def test_other_schema_versions_are_still_refused(cache, runtime_revision_v2, version):
+    document = runtime_revision_v2()
+    document["schemaVersion"] = version
+    with pytest.raises(ValueError, match="invalid_configuration_snapshot"):
+        cache.install(rehashed(document), etag='"other-version"')
+
+
 def test_conversation_setup_clock_advances_utc_and_monotonic_without_sleep(conversation_clock):
     from datetime import UTC, datetime, timedelta
 

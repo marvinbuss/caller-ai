@@ -13,14 +13,12 @@ import reflex as rx
 from reflex.event import EventHandler
 from reflex.vars.object import ObjectVar
 
-from management_app.components.configuration_graph import ConfigurationGraph
 from management_app.state.configuration_editor import ConfigurationEditorState as Editor
 
 ERRORS = cast(ObjectVar[dict[str, str]], Editor.errors)
 EDIT_AGENT = cast(EventHandler, Editor.edit_agent)
 DELETE_AGENT = cast(EventHandler, Editor.delete_agent)
 ENABLE_AGENT = cast(EventHandler, Editor.set_agent_enabled)
-SET_POSITION = cast(EventHandler, Editor.set_agent_coordinate)
 
 
 def field_control(label: str, control: rx.Component, identifier: Any, path: Any) -> rx.Component:
@@ -73,7 +71,15 @@ def agent_row(agent: ObjectVar[dict[str, Any]]) -> rx.Component:
                         ),
                         rx.alert_dialog.content(
                             rx.alert_dialog.title("Delete agent?"),
-                            rx.alert_dialog.description(agent["name"].to(str)),
+                            rx.alert_dialog.description(
+                                rx.cond(
+                                    Editor.selected_handover_names != "",
+                                    agent["name"].to(str)
+                                    + " and its handovers will be removed: "
+                                    + Editor.selected_handover_names,
+                                    agent["name"].to(str) + " will be removed.",
+                                )
+                            ),
                             rx.flex(
                                 rx.alert_dialog.cancel(rx.button("Cancel", variant="soft")),
                                 rx.alert_dialog.action(
@@ -126,7 +132,7 @@ def agent_row(agent: ObjectVar[dict[str, Any]]) -> rx.Component:
                         value=rx.cond(
                             agent["protected"].to(bool), "", agent["communityId"].to(str)
                         ),
-                        disabled=agent["protected"].to(bool) | (Editor.selected_community_id != ""),
+                        disabled=agent["protected"].to(bool),
                         on_change=EDIT_AGENT(identifier, "communityId"),
                         padding="9px 10px",
                         border="1px solid #b8c3bd",
@@ -163,34 +169,11 @@ def agent_row(agent: ObjectVar[dict[str, Any]]) -> rx.Component:
                 prefix + "prompt",
             ),
             rx.cond(
-                ~agent["protected"].to(bool),
-                rx.grid(
-                    *[
-                        field_control(
-                            axis.upper() + " position",
-                            rx.el.input(
-                                type="number",
-                                step="any",
-                                min=-100000,
-                                max=100000,
-                                id=identifier + "-position-" + axis,
-                                value=agent["positionXText" if axis == "x" else "positionYText"].to(
-                                    str
-                                ),
-                                on_change=SET_POSITION(identifier, axis),
-                                width="100%",
-                                padding="9px 10px",
-                                border="1px solid #b8c3bd",
-                                border_radius="4px",
-                            ),
-                            identifier + "-position-" + axis,
-                            "layout.agentsByCommunity." + identifier + "." + axis,
-                        )
-                        for axis in ("x", "y")
-                    ],
-                    columns="2",
-                    spacing="4",
-                    width="100%",
+                agent["protected"].to(bool),
+                rx.text(
+                    "Pre-defined agent: it cannot be deleted, moved, disabled or given tools.",
+                    size="2",
+                    color="#4f5852",
                 ),
             ),
             rx.el.label(
@@ -205,6 +188,12 @@ def agent_row(agent: ObjectVar[dict[str, Any]]) -> rx.Component:
                 align_items="center",
                 gap="8px",
             ),
+            rx.text(
+                "Last changed: " + agent["lastChanged"].to(str),
+                size="2",
+                color="#4f5852",
+                data_testid="agent-last-changed",
+            ),
             id=identifier,
             aria_label=agent["groupLabel"].to(str),
             border="1px solid #dce1df",
@@ -215,128 +204,5 @@ def agent_row(agent: ObjectVar[dict[str, Any]]) -> rx.Component:
             gap="16px",
             min_width="0",
             margin="0",
-        ),
-    )
-
-
-def agents() -> rx.Component:
-    return cast(
-        rx.Component,
-        rx.el.section(
-            rx.heading("Agents", size="5"),
-            rx.cond(
-                Editor.selected_community_id != "",
-                rx.vstack(
-                    rx.el.label(
-                        "Community entry agent",
-                        rx.el.select(
-                            rx.foreach(
-                                Editor.selected_entry_choices,
-                                lambda agent: rx.el.option(
-                                    agent["name"].to(str), value=agent["agentId"].to(str)
-                                ),
-                            ),
-                            value=Editor.selected_community_entry,
-                            on_change=Editor.select_community_entry,
-                            aria_label="Community entry agent",
-                            padding="9px 10px",
-                            border="1px solid #b8c3bd",
-                            border_radius="4px",
-                            width="100%",
-                        ),
-                        display="flex",
-                        flex_direction="column",
-                        gap="6px",
-                        width="100%",
-                    ),
-                    ConfigurationGraph.create(
-                        nodes=Editor.agent_nodes,
-                        edges=Editor.agent_edges,
-                        view_key=Editor.selected_community_id,
-                        dirty=Editor.dirty,
-                        guard_leave=False,
-                        on_move=Editor.move_agent,
-                        on_link=Editor.connect_agents,
-                        on_pick=Editor.focus_agent,
-                    ),
-                    width="100%",
-                    align="stretch",
-                    spacing="4",
-                ),
-            ),
-            rx.el.form(
-                rx.el.label(
-                    "Name",
-                    rx.el.input(
-                        name="name",
-                        aria_label="New agent name",
-                        placeholder="Agent name",
-                        required=True,
-                        padding="9px 10px",
-                        border="1px solid #b8c3bd",
-                        border_radius="4px",
-                        width="100%",
-                    ),
-                    display="flex",
-                    flex_direction="column",
-                    gap="6px",
-                    min_width="0",
-                ),
-                rx.el.label(
-                    "Community",
-                    rx.el.select(
-                        rx.foreach(
-                            Editor.agent_community_options,
-                            lambda item: rx.el.option(
-                                item["name"].to(str), value=item["communityId"].to(str)
-                            ),
-                        ),
-                        name="community",
-                        aria_label="New agent community",
-                        required=True,
-                        padding="9px 10px",
-                        border="1px solid #b8c3bd",
-                        border_radius="4px",
-                        width="100%",
-                    ),
-                    display="flex",
-                    flex_direction="column",
-                    gap="6px",
-                    min_width="0",
-                ),
-                rx.el.label(
-                    "Prompt",
-                    rx.el.input(
-                        name="prompt",
-                        aria_label="New agent prompt",
-                        placeholder="Prompt",
-                        required=True,
-                        padding="9px 10px",
-                        border="1px solid #b8c3bd",
-                        border_radius="4px",
-                        width="100%",
-                    ),
-                    display="flex",
-                    flex_direction="column",
-                    gap="6px",
-                    min_width="0",
-                ),
-                rx.button(rx.icon("plus", size=16), "Add agent", type="submit", variant="outline"),
-                on_submit=Editor.add_agent,
-                aria_label="New agent",
-                display="grid",
-                grid_template_columns=rx.breakpoints(initial="1fr", md="repeat(2, minmax(0, 1fr))"),
-                align_items="end",
-                gap="10px",
-                margin="16px 0",
-            ),
-            rx.grid(
-                rx.foreach(Editor.agent_rows, agent_row),
-                columns=rx.breakpoints(initial="1", lg="2"),
-                spacing="5",
-                width="100%",
-            ),
-            width="100%",
-            min_width="0",
         ),
     )

@@ -341,6 +341,7 @@ class GptLiveAdapter:
         socket_factory: Callable[..., Awaitable[LiveSocket]] = sdk_socket,
         settlement_observer: SettlementObserver | None = None,
         telemetry: Telemetry | None = None,
+        call_observer: Callable[[bool], None] | None = None,
     ) -> None:
         try:
             parts = urlsplit(endpoint)
@@ -369,6 +370,7 @@ class GptLiveAdapter:
         self._credential, self.admission, self.utc_now = credential, admission, utc_now
         self._voice, self._factory = voice, socket_factory
         self._settlement_observer = settlement_observer
+        self._call_observer = call_observer
         self._telemetry = telemetry
         self._sessions: dict[str, GptLiveSession] = {}
         self._closed = False
@@ -449,6 +451,7 @@ class GptLiveAdapter:
                     return socket
 
                 connected = await self.admission.perform(intent, begin, work=work)
+                self._observe_call(True)
                 provider_id = protocol.provider_session_id
                 if provider_id is None:
                     raise ValueError("live_not_started")
@@ -465,6 +468,7 @@ class GptLiveAdapter:
         except PermissionError:
             raise
         except Exception:
+            self._observe_call(False)
             raise PermissionError("live_unavailable") from None
         finally:
             if socket is not None and slot.session_id not in self._sessions:
@@ -474,6 +478,13 @@ class GptLiveAdapter:
                         await socket.close()
                 except Exception:
                     pass
+
+    def _observe_call(self, success: bool) -> None:
+        if self._call_observer is not None:
+            try:
+                self._call_observer(success)
+            except Exception:
+                pass
 
     async def close(self) -> None:
         self._closed = True

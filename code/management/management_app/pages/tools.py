@@ -55,7 +55,13 @@ def tool_row(tool: ObjectVar[dict[str, Any]]) -> rx.Component:
                     ),
                     rx.alert_dialog.content(
                         rx.alert_dialog.title("Remove tool?"),
-                        rx.alert_dialog.description("Its agent assignments will also be removed."),
+                        rx.alert_dialog.description(
+                            rx.cond(
+                                tool["usedBy"].to(str) != "",
+                                "These agents lose this tool: " + tool["usedBy"].to(str),
+                                "No agent uses this tool.",
+                            )
+                        ),
                         rx.flex(
                             rx.alert_dialog.cancel(rx.button("Cancel", variant="soft")),
                             rx.alert_dialog.action(
@@ -351,7 +357,7 @@ def tools() -> rx.Component:
     return cast(
         rx.Component,
         rx.el.section(
-            rx.heading("Capabilities", size="5"),
+            rx.heading("Tools", size="5"),
             rx.heading("MCP connections", size="4", margin_top="20px"),
             rx.el.form(
                 rx.el.select(
@@ -412,14 +418,8 @@ def tools() -> rx.Component:
                 spacing="5",
                 width="100%",
             ),
-            rx.heading("Agent assignments", size="4", margin_top="24px", margin_bottom="14px"),
-            rx.grid(
-                rx.foreach(Editor.assignment_rows, assignment_group),
-                columns=rx.breakpoints(initial="1", lg="2"),
-                spacing="5",
-                width="100%",
-            ),
             width="100%",
             min_width="0",
+            data_testid="tools-section",
         ),
     )

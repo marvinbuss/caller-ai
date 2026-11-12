@@ -197,6 +197,7 @@ class ProtectedReflexBoundary:
         self.allowed = {
             "/auth/callback",
             "/auth/logout",
+            "/auth/session/extend",
             "/v2/configuration",
             "/_event",
             "/_event/",

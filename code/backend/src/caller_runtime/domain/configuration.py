@@ -20,6 +20,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from caller_runtime.domain.visibility import CommunityVisibility
+from caller_runtime.domain.voices import voice_ids
 
 GRAPH_FIELDS = frozenset(
     {
@@ -32,6 +33,10 @@ GRAPH_FIELDS = frozenset(
         "mcpConnections",
     }
 )
+# Schema 2.1.0 additions; absent means the environment defaults.
+OPTIONAL_GRAPH_FIELDS = frozenset({"conversationSettings"})
+MAX_OUTPUT_TOKENS = 4096
+IDLE_SECONDS = (30, 120)
 ETAG = re.compile(r'^"[A-Za-z0-9_-]{1,128}"$')
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")]
 Name = Annotated[str, Field(min_length=1, max_length=128)]
@@ -71,6 +76,7 @@ class _Community(_Strict):
     routingDescription: str
     enabled: bool
     entryAgentId: Identifier
+    routable: bool = True
 
     @field_validator("routingDescription")
     @classmethod
@@ -124,10 +130,23 @@ class _Connection(_Strict):
     reviewedCapabilityCatalog: list[_ReviewedCapability]
 
 
+class _ConversationSettings(_Strict):
+    voice: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")] | None = None
+    maxOutputTokens: int | None = Field(default=None, ge=1, le=MAX_OUTPUT_TOKENS)
+    idleTimeoutSeconds: int | None = Field(default=None, ge=IDLE_SECONDS[0], le=IDLE_SECONDS[1])
+
+    @field_validator("voice")
+    @classmethod
+    def supported_voice(cls, value: str | None) -> str | None:
+        if value is not None and value not in voice_ids():
+            raise ValueError("unsupported_voice")
+        return value
+
+
 class _Revision(_Strict):
     id: Identifier
     organizationId: Literal["default"]
-    schemaVersion: Literal["2.0.0"]
+    schemaVersion: Literal["2.0.0", "2.1.0"]
     revisionNumber: int = Field(ge=1)
     createdAt: datetime
     createdBy: Identifier
@@ -139,6 +158,7 @@ class _Revision(_Strict):
     communityConnections: list[_CommunityConnection] = Field(max_length=1000)
     tools: list[_Tool] = Field(max_length=256)
     mcpConnections: list[_Connection] = Field(max_length=128)
+    conversationSettings: _ConversationSettings | None = None
 
 
 def encoded(value: object) -> bytes:
@@ -169,7 +189,9 @@ class RevisionSnapshot:
             if model.createdAt.tzinfo is None or model.createdAt.utcoffset() is None:
                 raise ValueError("invalid_revision_time")
             detached: dict[str, Any] = json.loads(content)
-            graph = {key: detached[key] for key in GRAPH_FIELDS}
+            graph = {key: detached[key] for key in GRAPH_FIELDS} | {
+                key: detached[key] for key in OPTIONAL_GRAPH_FIELDS if key in detached
+            }
             if hashlib.sha256(encoded(graph)).hexdigest() != model.policyHash:
                 raise ValueError("invalid_configuration_hash")
             if len(model.relationships) + len(model.communityConnections) > 1000:
@@ -256,7 +278,22 @@ class RevisionSnapshot:
     def for_runtime(self) -> dict[str, Any]:
         """Detached trusted orchestration graph; never give this full graph to an agent."""
         document: dict[str, Any] = json.loads(self._content)
-        return {key: document[key] for key in GRAPH_FIELDS} | {"revisionId": self.revision_id}
+        return (
+            {key: document[key] for key in GRAPH_FIELDS}
+            | {key: document[key] for key in OPTIONAL_GRAPH_FIELDS if key in document}
+            | {"revisionId": self.revision_id}
+        )
+
+    def conversation_settings(self) -> dict[str, Any]:
+        """Published per-conversation values; an absent key means the environment default."""
+        settings: dict[str, Any] = json.loads(self._content).get("conversationSettings") or {}
+        return {key: value for key, value in settings.items() if value is not None}
+
+    def routable(self, community_id: str) -> bool:
+        for community in json.loads(self._content)["communities"]:
+            if community["communityId"] == community_id:
+                return community.get("routable", True) is True
+        return False
 
     def view_for(self, agent_id: str) -> dict[str, Any]:
         return CommunityVisibility(self.for_runtime()).view_for(agent_id)

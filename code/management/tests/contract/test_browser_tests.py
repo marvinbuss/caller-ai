@@ -1,5 +1,6 @@
 """Browser-test tickets and raw WebSockets must use verified cookie/Origin permission."""
 
+import asyncio
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -251,6 +252,71 @@ def test_cookie_test_permission_needs_no_access_token_or_key_discovery(browser_i
     response = client.post("/ticket-authorization", headers=browser_headers(identity, ticket))
     assert response.status_code == 200 and response.json() == {"actor": "browser-test-manager"}
     assert keys.calls == 0
+
+
+def test_tester_only_tests_ships_off():
+    from management_app import security
+
+    assert security.TESTER_ONLY_TESTS is False
+
+
+@pytest.mark.parametrize("switch", [False, True])
+@pytest.mark.parametrize(
+    "roles,allowed",
+    [
+        (("Configuration.Manager", "Configuration.Test"), {False: True, True: True}),
+        (("Configuration.Test",), {False: False, True: True}),
+        (("Configuration.Manager",), {False: False, True: False}),
+        ((), {False: False, True: False}),
+    ],
+)
+def test_console_roles_follow_the_tester_only_switch(
+    browser_identity, monkeypatch, switch, roles, allowed
+):
+    from management_app import security
+    from management_app.security import Principal
+
+    client, identity, _keys, _ticket = browser_identity
+    monkeypatch.setattr(security, "TESTER_ONLY_TESTS", switch)
+    ticket = identity.sessions.issue(
+        Principal("role-mix", identity.policy.tenant_id, int(time.time()) + 900, roles)
+    )
+    response = client.post("/ticket-authorization", headers=browser_headers(identity, ticket))
+    assert response.status_code == (200 if allowed[switch] else 403)
+
+
+@pytest.mark.parametrize("switch", [False, True])
+def test_tester_only_sessions_never_read_or_write_configuration(
+    browser_identity, monkeypatch, switch
+):
+    from fastapi import HTTPException
+
+    from management_app import security
+    from management_app.security import Principal
+
+    _client, identity, _keys, _ticket = browser_identity
+    monkeypatch.setattr(security, "TESTER_ONLY_TESTS", switch)
+    ticket = identity.sessions.issue(
+        Principal("tester-only", identity.policy.tenant_id, int(time.time()) + 900, ("T",))
+    )
+    for method in ("GET", "PUT"):
+        request = Request(
+            {
+                "type": "http",
+                "method": method,
+                "scheme": "https",
+                "path": "/v2/configuration",
+                "query_string": b"",
+                "headers": [
+                    (key.lower().encode(), value.encode())
+                    for key, value in browser_headers(identity, ticket).items()
+                ],
+                "server": ("management", 443),
+            }
+        )
+        with pytest.raises(HTTPException) as refused:
+            asyncio.run(identity.require_manager(request))
+        assert refused.value.status_code == 403
 
 
 @pytest.mark.parametrize(

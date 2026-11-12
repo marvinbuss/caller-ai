@@ -12,7 +12,13 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from management_app.models.configuration import ConfigurationGraph, ConfigurationRevision
+from management_app.models.configuration import (
+    EMPTY_LAYOUT,
+    SCHEMA_VERSION,
+    ConfigurationGraph,
+    ConfigurationRevision,
+    PublicationRecord,
+)
 from management_app.models.permissions import AUTHORITY_LIMIT, PermissionAuthority
 from management_app.services.configuration_validation import (
     BATCH_LIMIT,
@@ -48,6 +54,28 @@ def runtime_projection(snapshot: Document) -> Document:
     return provenance | policy | {"policyHash": hashlib.sha256(encoded(policy)).hexdigest()}
 
 
+def agent_stamps(
+    graph: Document, previous: Document | None, *, number: int, at: str, actor: str, name: str
+) -> dict[str, Document]:
+    """New stamps for new or changed agents; unchanged agents keep the stamp they had."""
+    before = {agent["agentId"]: agent for agent in (previous or {}).get("agents", [])}
+    kept = ((previous or {}).get("publication") or {}).get("agentStamps", {})
+    stamps: dict[str, Document] = {}
+    for agent in graph["agents"]:
+        identifier = agent["agentId"]
+        if identifier in before and before[identifier] == agent:
+            if identifier in kept:
+                stamps[identifier] = copy.deepcopy(kept[identifier])
+            continue
+        stamps[identifier] = {
+            "revisionNumber": number,
+            "changedAt": at,
+            "changedBy": actor,
+            "changedByName": name,
+        }
+    return stamps
+
+
 def publication(
     validator: ConfigurationValidator,
     payload: Document,
@@ -55,6 +83,7 @@ def publication(
     actor: str,
     previous: Document | None,
     authority: Document | None,
+    actor_name: str = "",
 ) -> tuple[Document, Document, Document]:
     errors = validator.validate(
         payload,
@@ -64,8 +93,12 @@ def publication(
     if errors:
         raise ConfigurationRejected(errors)
     graph = ConfigurationGraph.model_validate(payload).model_dump(mode="json", by_alias=True)
+    # Positions live in the browser now; a revision keeps only the empty 2.1.0 layout.
+    graph |= {"schemaVersion": SCHEMA_VERSION, "layout": copy.deepcopy(EMPTY_LAYOUT)}
     now = datetime.now(UTC)
     number = previous["revisionNumber"] + 1 if previous else 1
+    stamped_at = now.isoformat().replace("+00:00", "Z")
+    name = actor_name[:256]
     snapshot = ConfigurationRevision.model_validate(
         {
             **graph,
@@ -75,6 +108,18 @@ def publication(
             "createdAt": now,
             "createdBy": actor,
             "graphHash": hashlib.sha256(encoded(graph)).hexdigest(),
+            "publication": PublicationRecord.model_validate_json(
+                encoded(
+                    {
+                        "publishedAt": stamped_at,
+                        "publishedBy": actor,
+                        "publishedByName": name,
+                        "agentStamps": agent_stamps(
+                            graph, previous, number=number, at=stamped_at, actor=actor, name=name
+                        ),
+                    }
+                )
+            ),
         }
     ).model_dump(mode="json", by_alias=True)
     pointer = {

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-labelledby="caller-ai-mark-title">
+  <title id="caller-ai-mark-title">Caller AI</title>
+  <rect width="48" height="48" rx="12" fill="#197767"/>
+  <path fill="#ffffff" d="M12 14h24a4 4 0 0 1 4 4v12a4 4 0 0 1-4 4H24l-7 6v-6h-5a4 4 0 0 1-4-4V18a4 4 0 0 1 4-4z"/>
+  <g fill="#197767">
+    <rect x="15" y="22" width="3" height="4" rx="1.5"/>
+    <rect x="20" y="19" width="3" height="10" rx="1.5"/>
+    <rect x="25" y="17" width="3" height="14" rx="1.5"/>
+    <rect x="30" y="20" width="3" height="8" rx="1.5"/>
+  </g>
+  <path fill="#ffffff" d="M41 3l1 4 4 1-4 1-1 4-1-4-4-1 4-1z"/>
+</svg>

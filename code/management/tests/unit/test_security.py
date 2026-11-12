@@ -369,16 +369,21 @@ def test_oidc_callback_requires_matching_cookie_state_and_nonce_then_is_single_u
         assert started.status_code == 303 and started.headers["Cache-Control"] == "no-store"
         state = parse_qs(urlsplit(started.headers["Location"]).query)["state"][0]
         body = {"state": state, "code": str(uuid4())}
-        rejected = client.post("/auth/callback", data={**body, "state": "incorrect-state"})
-        assert rejected.status_code == 401 and oidc.exchanges == 0
+        rejected = client.post(
+            "/auth/callback", data={**body, "state": "incorrect-state"}, follow_redirects=False
+        )
+        assert rejected.status_code == 303 and oidc.exchanges == 0
+        assert rejected.headers["Location"] == "/login?signin=failed"
+        assert identity.cookie_name not in client.cookies
         started = client.get("/auth/login", follow_redirects=False)
         state = parse_qs(urlsplit(started.headers["Location"]).query)["state"][0]
         body["state"] = state
         accepted = client.post("/auth/callback", data=body, follow_redirects=False)
-        assert accepted.status_code == 303 and accepted.headers["Location"] == "/configuration"
+        assert accepted.status_code == 303 and accepted.headers["Location"] == "/"
         assert identity.cookie_name in client.cookies
         assert "id_token" not in accepted.text and "access_token" not in accepted.text
-        assert client.post("/auth/callback", data=body, follow_redirects=False).status_code == 401
+        replay = client.post("/auth/callback", data=body, follow_redirects=False)
+        assert replay.status_code == 303 and replay.headers["Location"] == "/login?signin=failed"
         assert oidc.exchanges == 1
 
 

@@ -10,7 +10,8 @@ which same-community peers an ordinary agent can discover.
 
 Feature 002 now uses fresh-start configuration schema/HTTP v2. The shared foundation includes
 publication, runtime policy projection, cache freshness and protected-role admission controls.
-The editable community overview and selected-community agent graph are implemented locally.
+The Community and Agent page (one graph of default and custom communities) and the Settings page
+are implemented locally.
 The shared text/speech runtime, signed-ticket gateway, same-origin relay and browser console
 are implemented behind explicit reviewed composition. Controlled graph/runtime/browser tests
 do not qualify actual providers or physical devices. Feature-001 evidence below remains historical.
@@ -262,32 +263,65 @@ window. Outages, invalid replies, absent data, backward time or stale publicatio
 admission. Existing holders retain their immutable pin; last-good content is not new-session
 authority. A fresh protected-only bootstrap remains editable but cannot admit a conversation.
 
-## Community Overview and Routes
+## Community and Agent Page
 
-`/configuration` opens the community graph, directed connection forms and community editor.
-Drag feedback stays local; one bounded final-position command updates layout only. X/Y inputs
-provide the keyboard equivalent. Fit View and zoom controls frame the canvas. Missing saved
-positions use deterministic local spacing; formatting coordinates for display does not round
-their stored values. Long names wrap and do not require changing the 128-character limit.
+Open **Community and Agent** (`/communities`) from the sidebar; it needs the editor role. The old
+`/configuration` routes redirect here (`/configuration/test` redirects to `/test`). See
+[management-frontend.md](management-frontend.md) for the frame, roles and node conventions.
 
-Use Source community/Destination community and Add connection, or connect node handles, for
-one explicit direction. Its inverse is a separate command. Connection deletion has a
-Cancel/Delete dialog; confirmed deletion remains an unsaved draft until Save. Creating a
-community seeds its ordinary entry. Protected-only configuration displays No communities,
-keeps community creation available and disables impossible connection creation.
+The page shows one graph of all communities with their agents inside. Three default communities,
+Welcome, Routing and Goodbye, hold the pre-defined agents. They are drawn with a dashed border, a
+lock icon and a **Default** label and cannot be renamed, deleted, disabled or joined by links; a
+custom community uses a solid border, a pencil icon and a **Custom** label. Select a node (or its
+entry in the outline below the graph, which is the keyboard and screen-reader route) to open its
+settings panel under the graph.
 
-Community links and graph selections open `/configuration/communities/[community_id]` by stable
-ID, showing its ordinary editor shell. Communities returns to the overview. Link, back and
-forward navigation reauthorize without reloading/replacing the organization-wide draft;
-missing IDs display Community unavailable, never another community. Anonymous navigation
-exposes no saved prompts or Save action. Global settings on the overview retains access to
-protected roles and reviewed catalogs; these remain organization-wide, not graph members.
+- **Communities**: add one from **Add a community** (name, routing description, entry agent). A
+  link from Routing to a custom community marks it routable; a custom community that nothing
+  routes to is flagged **Unreachable**, and one without an enabled entry agent is flagged
+  **Invalid** and blocks publishing. Deleting a community names the connections it removes first.
+- **Agents**: add, rename, enable or disable, move to another custom community and delete custom
+  agents. The entry agent of a community cannot be disabled, moved or deleted until another entry
+  is chosen. The settings panel shows when and by whom the agent last changed in a published
+  revision.
+- **Handovers**: draw a link between two agents of the same custom community. Links across
+  communities, to pre-defined agents or between default communities are refused with the rule
+  that blocked them; the refusal changes nothing.
+- **Tools**: the Tools section below the graph lists the reviewed tools, the agents that use each
+  one, and confirms a removal by naming the agents that lose it.
 
-Unsaved overview/child edits install a browser departure/reload warning. Cancel keeps the
-draft; the Reload configuration dialog separately requires explicit discard. Saved child
-routes can reload directly from the publication. Visiting or editing any route neither starts
-a model session nor captures media. See the [community runbook](runbooks/communities.md) for
-conflict, missing-ID and draft recovery; runtime conversation qualification remains separate.
+Positions and collapsed communities are kept in this browser only (local storage per origin and
+user, at most 400 entries); they are not part of a revision.
+
+Edits stay in a draft until **Publish**, which shows a summary (new revision number, communities
+that will be unreachable, and communities that block publishing) before it writes. While the page
+is open, a newer publication by someone else shows a notice with its revision number; the draft
+is never replaced silently, and **Reload** is your choice.
+
+## Settings Page
+
+Open **Settings** (`/settings`); it needs the editor role. It groups the service settings by topic:
+
+- **Voice**: the voice drop-down lists the runtime's voice catalog grouped by language, labeled
+  like "Quartz — English (Australian), feminine", with the environment default marked. The idle
+  timeout is an integer from 30 to 120 seconds.
+- **Text**: the reply length limit is an integer from 1 to the runtime's limit; it applies to text
+  replies and delegated work, not to spoken output.
+- **Service (read-only)**: the Foundry service host, the text and voice model deployments and the
+  voice region.
+
+The Settings page has its own draft, separate from the graph draft. **Publish settings** writes a
+new revision that is the loaded active revision with only `conversationSettings` replaced, so
+unpublished graph edits are never published with it, and publishing the graph never publishes
+unsaved settings. Only values that differ from the environment defaults are stored; an absent
+value means the default. Published settings apply to conversations started afterwards; running
+conversations keep theirs. If another revision was published meanwhile, the page keeps your values
+and offers **Reload** to publish them on top of it. When the runtime cannot be reached, the voice
+catalog and limits are unknown, so the settings are read-only with an explanation.
+
+Management validation refuses a voice outside the runtime catalog (rule `conversation_voice`) and
+values outside the limits (rule `conversation_limit`); until the runtime status has been read, only
+an unchanged voice is accepted. The runtime refuses a revision whose settings break the same rules.
 
 US1 local checkpoint on 2026-10-30: all 534 management tests passed, including every compiled
 editor/shell browser case, with no skipped/deselected required tests. The eight US1 browser
@@ -299,27 +333,7 @@ documents and 31 pinned sandboxed Mermaid renders passed, along with publication
 guards. These are local Windows/synthetic-identity results, not native Linux/remote CI,
 real Cosmos, Foundry, microphone/headset, alert delivery or the complete multimodal feature.
 
-## Agents Within One Community
-
-Open a community by its stable link to edit its ordinary agents, prompt/enabled state, entry
-and directed handovers. The child canvas and forms show only that community's ordinary
-members; protected Welcome/Routing/Goodbye remain global. The New agent form is scoped to
-the selected community. Its entry selector contains enabled eligible members; disabling the
-current entry cannot publish until repaired. Review the field error rather than assuming a
-client checkbox or selection is authority.
-
-Connect handles or use Source agent/Destination agent for one directed handover. Eligible
-same-community peers remain discoverable even without an edge, but only the explicit source
-direction permits handover. Missing/reversed/foreign/protected/disabled targets cannot grant
-execution. X/Y inputs and dragging edit only `layout.agentsByCommunity`; neither creates a
-handover, capability grant or membership change. Node selection focuses its inspector.
-
-An agent used as entry must be replaced before deletion or movement. Moving another agent
-requires repairing its semantic edges first; it cannot leave a cross-community relationship.
-Explicit deletion confirms the action and cleans related positions/edges. Removing a tool
-cleans assignments as before. Reviewed capability controls on the child scope assignment
-rows to that community; Global settings remains the one protected-role/catalog access point.
-All changes share the same organization-wide draft, validation, ETag and Save controls.
+## Handover and Transfer Policy
 
 The schema-2 runtime policy distinguishes three pure operations: an ordinary same-community
 handover, initial Routing selection, and a later source-preserving community transfer. The
@@ -400,15 +414,16 @@ Revocations conservatively accumulate disabled/removed capabilities and removed/
 assignment actions; re-enabling a definition does not silently clear current-policy denial.
 Reauthorization belongs to later explicit permission administration.
 
-## Save, Conflict and Recovery
+## Publish, Conflict and Recovery
 
 Text fields buffer typing locally and flush on blur, preventing server round trips from
-dropping keystrokes. Save replaces any previous success message with Saving before emitting
-its busy/disabled state and publishing the complete graph with its original exact strong ETag.
-Saved or Saved; audit pending acknowledges only the current returned revision. A request
-failure returns to Unsaved and retains the draft, rather than leaving an earlier success
-visible. Publication atomically creates a revision, advances `active` and orders permission
-changes. It never writes a partial configuration.
+dropping keystrokes. **Publish** first shows a confirmation with the new revision number and any
+unreachable or invalid communities; confirming replaces any previous message with Saving and
+publishes the complete graph with its original exact strong ETag. "Published revision N"
+acknowledges only the current returned revision (with "audit pending" when the audit record is
+still pending). A request failure returns to Unsaved and retains the draft, rather than leaving
+an earlier success visible. Publication atomically creates a revision, advances `active` and
+orders permission changes. It never writes a partial configuration.
 
 ```mermaid
 sequenceDiagram
@@ -424,7 +439,7 @@ sequenceDiagram
     alt Commit succeeds
         Store-->>Editor: Complete revision and new ETag
         alt Same logical draft and generation
-            Editor-->>Manager: Saved for the acknowledged generation
+            Editor-->>Manager: Published revision N for the acknowledged generation
         else Newer edits in the same logical draft
             Editor-->>Manager: Retain newer edits, advance base ETag and remain Unsaved
         else Explicitly replaced or reloaded draft
@@ -447,9 +462,10 @@ No query parameter may select another organization. Errors use safe `application
 and correlation IDs; rejected values and unsafe property names are not echoed.
 
 On 409, both managers' local edits remain distinct; no silent merge or overwrite occurs.
-Cancel a reload to keep the draft, or explicitly confirm discard/reload to fetch the latest
-saved revision. On 422, fix only the reported fields; other draft values remain intact.
-Never bypass validation by changing a prompt, raw role flag, ETag or database item.
+The page names the newer revision and keeps the draft; **Reload** is the explicit choice to
+fetch the latest published revision. On 422, the message names the refused items; other draft
+values remain intact. Never bypass validation by changing a prompt, raw role flag, ETag or
+database item.
 
 Successful publication returns 200 with `X-Audit-Status: recorded` or `pending`. Pending means
 the graph is already committed: retain its returned revision ID and recover metadata audit,
@@ -457,7 +473,7 @@ not the graph write. See the [configuration runbook](runbooks/configuration.md).
 
 ## Published Browser Console
 
-Open `/configuration/test` from the configuration header. Entry and reload create no ticket,
+Open **Test** (`/test`) from the sidebar. Entry and reload create no ticket,
 microphone or model connection and never resume an old test. The selected editor community and
 unsaved draft are not routing authority: every new test refreshes the current publication,
 starts its global Welcome/Routing flow and displays the runtime's pinned revision and agent.

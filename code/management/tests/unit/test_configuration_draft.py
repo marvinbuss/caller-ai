@@ -16,6 +16,34 @@ def draft(configuration_graph):
     return EditorDraft.from_revision({**configuration_graph, "id": "revision-one"}, '"etag-one"')
 
 
+def editor_state(**values):
+    """A stand-in for the Reflex state with the editor's own helper methods bound to it."""
+    from types import MethodType, SimpleNamespace
+
+    from management_app.state.configuration_editor import ConfigurationEditorState
+
+    state = SimpleNamespace(
+        **{
+            "selected_community_id": "",
+            "selected_agent_id": "",
+            "loaded_revision": 0,
+            "notice_revision": 0,
+            "_stamps": {},
+            "_settings": {},
+            "_loaded_etag": "",
+        }
+        | values
+    )
+    for name in ("_remember", "_named_issues"):
+        setattr(state, name, MethodType(getattr(ConfigurationEditorState, name), state))
+    return state
+
+
+async def drain(events):
+    async for _update in events:
+        pass
+
+
 def test_us2_agent_position_is_local_presentation_and_delete_cleans_it(draft, validator):
     peer = draft.add_agent("community-alpha", "Alpha graph peer", "Synthetic peer prompt")
     draft.add_relationship("agent-alpha", peer)
@@ -147,7 +175,7 @@ def test_us1_save_acknowledgement_retains_newer_edits_without_claiming_them_save
             200, json={**payloads[-1], "id": "revision-two"}, headers={"ETag": '"etag-two"'}
         )
 
-    state = SimpleNamespace(
+    state = editor_state(
         busy=False,
         status="Unsaved",
         errors={},
@@ -193,7 +221,7 @@ def test_us1_save_acknowledgement_tracks_logical_draft_across_framework_copies(d
             headers={"ETag": '"etag-two"'},
         )
 
-    state = SimpleNamespace(
+    state = editor_state(
         busy=False,
         status="Unsaved",
         errors={},
@@ -218,7 +246,8 @@ def test_us1_save_acknowledgement_tracks_logical_draft_across_framework_copies(d
         with pytest.raises(StopAsyncIteration):
             await anext(submission)
         if replacement == "state-copy":
-            assert current[0].etag == '"etag-two"' and state.status == "Saved"
+            assert current[0].etag == '"etag-two"'
+            assert state.status.startswith("Published revision")
         else:
             assert current[0].etag == '"etag-reloaded"' and state.status == ""
         assert not state.busy
@@ -228,34 +257,32 @@ def test_us1_save_acknowledgement_tracks_logical_draft_across_framework_copies(d
 
 @pytest.mark.parametrize("selected", ["community-alpha", "community-beta", "missing"])
 def test_us1_child_entry_preserves_shared_unsaved_draft_without_reloading(draft, selected):
-    from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
     from management_app.state.configuration_editor import ConfigurationEditorState
 
     draft.edit_agent("agent-alpha", "prompt", "Synthetic retained navigation edit")
     services = Mock()
-    state = SimpleNamespace(
+    state = editor_state(
         _draft=draft,
         authorized=True,
         status="Unsaved",
         error="",
         errors={},
         generation=7,
-        selected_community_id="",
+        selected_community_id=selected,
         selection_error="",
         _services=services,
         load=AsyncMock(),
-        router=SimpleNamespace(page=SimpleNamespace(params={"community_id": selected})),
     )
-    asyncio.run(ConfigurationEditorState.enter_view.fn(state))
+    asyncio.run(drain(ConfigurationEditorState.enter_view.fn(state)))
     state.load.assert_not_awaited()
     services.assert_called_once()
     assert state._draft is draft and draft.etag == '"etag-one"'
     assert draft.graph["agents"][3]["prompt"] == "Synthetic retained navigation edit"
     assert state.status == "Unsaved" and state.generation == 7
-    assert state.selected_community_id == selected
-    assert state.selection_error == ("Community unavailable" if selected == "missing" else "")
+    assert state.selected_community_id == ("" if selected == "missing" else selected)
+    assert state.selection_error == ""
 
 
 def test_us1_child_entry_rechecks_authorization_before_exposing_shared_draft(draft):
@@ -264,7 +291,7 @@ def test_us1_child_entry_rechecks_authorization_before_exposing_shared_draft(dra
 
     from management_app.state.configuration_editor import ConfigurationEditorState
 
-    state = SimpleNamespace(
+    state = editor_state(
         _draft=draft,
         authorized=True,
         status="Unsaved",
@@ -277,7 +304,7 @@ def test_us1_child_entry_rechecks_authorization_before_exposing_shared_draft(dra
         load=AsyncMock(),
         router=SimpleNamespace(page=SimpleNamespace(params={"community_id": "community-alpha"})),
     )
-    asyncio.run(ConfigurationEditorState.enter_view.fn(state))
+    asyncio.run(drain(ConfigurationEditorState.enter_view.fn(state)))
     assert state.authorized is False and state._draft is None
     state.load.assert_not_awaited()
     assert "synthetic-private" not in state.error + state.selection_error
@@ -288,14 +315,15 @@ def test_us1_graph_wrapper_constructs_with_typed_bounded_callbacks():
 
     from management_app.components.configuration_graph import ConfigurationGraph
 
-    component = ConfigurationGraph.create(nodes=[], edges=[], view_key="communities", dirty=False)
+    component = ConfigurationGraph.create(nodes=[], edges=[], actor="actor-one", dirty=False)
     assert isinstance(component, rx.Component)
     imports = component.add_imports()
     assert "@xyflow/react@12.12.0" in imports
     assert "@xyflow/react/dist/style.css" in imports
-    assert {"on_move", "on_link", "on_pick"} <= component.get_event_triggers().keys()
+    triggers = component.get_event_triggers().keys()
+    assert {"on_link", "on_pick"} <= triggers and "on_move" not in triggers
     code = "\n".join(component.add_custom_code())
-    assert "useNodesState" in code and "useEffect" in code
+    assert "useNodesState" in code and "localStorage" in code and "onMove" not in code
 
 
 def test_us1_dirty_guard_constructs_without_rendering_an_extra_canvas():
@@ -314,41 +342,51 @@ def test_us1_graph_bridge_deduplicates_unchanged_and_repeated_final_positions():
     import shutil
     import subprocess
 
-    from management_app.components.configuration_graph import GRAPH_CODE, LEAVE_CODE
+    from management_app.components.configuration_graph import (
+        GRAPH_CODE,
+        LEAVE_CODE,
+        STORAGE_LIMIT,
+        VIEW_CODE,
+    )
 
     node = shutil.which("node")
     assert node is not None, "prepared_node_required"
     harness = """
+const store = new Map();
+globalThis.window = {location: {origin: "https://editor.example"}, localStorage: {
+    getItem: key => store.has(key) ? store.get(key) : null,
+    setItem: (key, value) => store.set(key, value)
+}};
 const useNodesState = nodes => [nodes, () => {}, () => {}];
-const useRef = value => ({current: value});
+const useState = value => [value, () => {}];
+const useMemo = compute => compute();
 const useEffect = () => {};
 const createElement = (tag, props, ...children) => ({tag, props, children});
 const ReactFlow = "flow", Background = "background", Controls = "controls";
+const Handle = "handle", Position = {Top: "top", Bottom: "bottom"};
 """
     scenario = """
-const moves = [];
-CallerConfigurationLeaveGuard({dirty: true});
 const tree = CallerConfigurationGraph({
-    nodes: [{id: "community-alpha", position: {x: 40, y: 40}}], edges: [],
-    viewKey: "communities", dirty: false, onMove: (...values) => moves.push(values)
+    nodes: [{id: "c-community-alpha", position: {x: 40, y: 40}, data: {}}], edges: [],
+    actor: "actor-one", dirty: false
 });
 const changed = tree.children[0].props.onNodesChange;
-const change = (x, dragging = false) => changed([
-    {type: "position", id: "community-alpha", position: {x, y: 40}, dragging}
-]);
-change(40);
-if (moves.length !== 0) throw new Error("unchanged_position_was_dispatched");
-change(80);
-change(80);
-if (moves.length !== 1) throw new Error("duplicate_final_position_was_dispatched");
-change(100, true);
-if (moves.length !== 1) throw new Error("intermediate_drag_was_dispatched");
-change(100);
-if (moves.length !== 2) throw new Error("new_final_position_not_dispatched");
-"""
+changed([{type: "position", id: "c-community-alpha", position: {x: 90, y: 40}, dragging: true}]);
+if (store.size !== 0) throw new Error("intermediate_drag_was_stored");
+changed([{type: "position", id: "c-community-alpha", position: {x: 90, y: 40}}]);
+const view = JSON.parse(store.get("caller-graph-view:https://editor.example:actor-one"));
+if (view["c-community-alpha"].x !== 90) throw new Error("final_position_not_stored");
+for (let index = 0; index < LIMIT + 50; index++) {
+    callerWriteView("actor-one", "a-agent-" + index, {x: index, y: 0});
+}
+const bounded = JSON.parse(store.get("caller-graph-view:https://editor.example:actor-one"));
+if (Object.keys(bounded).length !== LIMIT) throw new Error("view_not_bounded");
+if (bounded["c-community-alpha"]) throw new Error("oldest_not_evicted");
+if (!bounded["a-agent-" + (LIMIT + 49)]) throw new Error("newest_evicted");
+""".replace("LIMIT", str(STORAGE_LIMIT))
     result = subprocess.run(
         [node, "--input-type=module"],
-        input=harness + LEAVE_CODE + GRAPH_CODE + scenario,
+        input=harness + LEAVE_CODE + VIEW_CODE % {"limit": STORAGE_LIMIT} + GRAPH_CODE + scenario,
         text=True,
         capture_output=True,
         check=False,
@@ -370,17 +408,16 @@ def test_draft_is_detached_and_conflict_retains_unsaved_values(draft, configurat
 def test_editor_components_construct_with_typed_reflex_events() -> None:
     import reflex as rx
 
-    from management_app.pages.communities import configuration_page
+    from management_app.pages.community_agent import community_agent_page
 
-    assert isinstance(configuration_page(), rx.Component)
+    assert isinstance(community_agent_page(), rx.Component)
 
 
 def test_sign_in_link_loads_the_server_route_instead_of_a_client_page() -> None:
-    from management_app.pages.communities import configuration_page
+    from management_app.components.frame import FRAME_CODE
 
-    tree = json.dumps(configuration_page().render(), default=str)
-    link = tree[tree.index("/auth/login") - 400 : tree.index("/auth/login") + 400]
-    assert "reloadDocument" in link
+    # A plain anchor, so the browser loads the server route instead of a client page.
+    assert 'createElement("a", {' in FRAME_CODE and "/auth/login?returnTo=" in FRAME_CODE
 
 
 @pytest.mark.parametrize("role", ["welcome", "routing", "goodbye"])
@@ -569,7 +606,7 @@ def test_save_acknowledgment_belongs_to_the_current_request(
             },
         )
 
-    state = SimpleNamespace(
+    state = editor_state(
         busy=False,
         status=previous_status,
         errors={},
@@ -596,7 +633,9 @@ def test_save_acknowledgment_belongs_to_the_current_request(
                 assert state.error == "Save unavailable. Unsaved edits retained."
                 assert draft.etag == '"etag-one"'
             else:
-                expected = "Saved; audit pending" if outcome == "audit_pending" else "Saved"
+                expected = "Published revision " + (
+                    "; audit pending" if outcome == "audit_pending" else ""
+                )
                 assert state.status == expected and not state.error
                 assert draft.etag == '"etag-two"'
         finally:

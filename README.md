@@ -7,6 +7,7 @@ explicit reviewed resources. Local synthetic tests are not live-provider or devi
 - [Setup and verification](docs/setup.md)
 - [Architecture](docs/architecture.md)
 - [Community, agent and published-test configuration](docs/configuration-guide.md)
+- [Management frontend: pages, roles and conventions](docs/management-frontend.md)
 - [Repository ownership](docs/repository-layout.md)
 - [Operational runbooks](docs/runbooks/README.md)
 - [Versioned application contracts](code/contracts/README.md)

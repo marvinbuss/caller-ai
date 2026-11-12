@@ -37,10 +37,8 @@ def test_owned_editor_fixture_requires_normal_manager_cookie(editor_test_app):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize(
-    "target,path", [("editor", "/configuration"), ("test", "/configuration/test")]
-)
-def test_owned_editor_fixture_login_has_only_fixed_destinations(editor_test_app, target, path):
+@pytest.mark.parametrize("path", ["/communities", "/test", "/status", "/"])
+def test_owned_editor_fixture_login_has_only_fixed_destinations(editor_test_app, path):
     async def scenario():
         async with (
             lifecycle(editor_test_app.api, editor_test_app.settings),
@@ -49,14 +47,14 @@ def test_owned_editor_fixture_login_has_only_fixed_destinations(editor_test_app,
                 base_url=editor_test_app.origin,
             ) as client,
         ):
-            response = await client.get("/_test/login/manager-one", params={"target": target})
+            response = await client.get("/_test/login/manager-one", params={"target": path})
             assert response.status_code == 303 and response.headers["location"] == path
             assert (await client.get("/_test/login/unknown-manager")).status_code == 404
             assert (
                 await client.get(
                     "/_test/login/manager-one", params={"target": "https://bad.invalid"}
                 )
-            ).status_code == 422
+            ).status_code == 400
 
     asyncio.run(scenario())
 
@@ -70,7 +68,7 @@ def test_owned_console_fixture_has_explicit_test_role_and_no_allocation_on_ticke
                 base_url=editor_test_app.origin,
             ) as client,
         ):
-            await client.get("/_test/login/manager-one", params={"target": "test"})
+            await client.get("/_test/login/manager-one", params={"target": "/test"})
             csrf = (await client.get("/auth/session")).json()["csrf"]
             response = await client.post(
                 "/v1/console/tickets",
@@ -614,7 +612,8 @@ def test_composed_oidc_session_drives_reflex_drafts_conflicts_and_revocation(
                 assert query["code_challenge_method"] == ["S256"]
                 callback = {"state": query["state"][0], "code": "synthetic-composition-code"}
                 assert (await client.post("/auth/callback", data=callback)).status_code == 303
-                assert (await client.post("/auth/callback", data=callback)).status_code == 401
+                replay = await client.post("/auth/callback", data=callback)
+                assert replay.headers["location"] == "/login?signin=failed"
                 assert "oidc_exchange" in effects and "signing_keys" in effects
                 cookie = client.cookies.get(COOKIE)
                 sid, token = "composition-sid", "composition-state-token"

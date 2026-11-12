@@ -929,6 +929,50 @@ def test_only_accepted_mode_matched_user_activity_refreshes_idle(admission_case)
     asyncio.run(scenario())
 
 
+def test_admitting_revision_idle_timeout_holds_for_the_session(admission_case, runtime_revision_v2):
+    from tests.unit.test_configuration_cache import schema_two_one
+
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        cache.install(
+            schema_two_one(runtime_revision_v2(2), idleTimeoutSeconds=45), etag='"idle-45"'
+        )
+        slot = await service.reserve(permit(1))
+        assert slot.idle_seconds == 45
+        assert slot.idle_expires_at == slot.started_at + timedelta(seconds=45)
+        await service.mark_ready(slot.session_id, slot.owner_epoch)
+        clock.advance(30)
+        # A later publication changes nothing for the running session.
+        cache.install(
+            schema_two_one(runtime_revision_v2(3), idleTimeoutSeconds=120), etag='"idle-120"'
+        )
+        updated = await service.user_activity(
+            slot.session_id, slot.owner_epoch, generation=1, mode="text"
+        )
+        assert updated.idle_expires_at == clock.utc_now() + timedelta(seconds=45)
+        other = await service.reserve(permit(2, actor="manager-two"))
+        assert other.idle_seconds == 120
+
+    asyncio.run(scenario())
+
+
+def test_absent_idle_timeout_means_one_hundred_twenty_seconds(admission_case):
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        assert slot.idle_seconds == 120
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [

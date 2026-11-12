@@ -823,6 +823,11 @@ class CallerTestEngine {
             code, cleanupStatus);
     }
     dispose() {
+        if (!this.terminal) {
+            // The frame tells the user on the next page that leaving stopped the test; the flag
+            // lives in memory only, so the console keeps nothing in browser storage.
+            window.__callerTestLeft = true;
+        }
         this.stop(); this.detached = true;
         this.events = {begin: () => {}, control: () => {}};
     }

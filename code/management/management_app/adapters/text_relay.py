@@ -75,6 +75,8 @@ class ActiveRevision:
     revision_id: str
     revision_number: int
     agent_id: str
+    # `conversationSettings.idleTimeoutSeconds` of that revision, or the default.
+    idle_seconds: int = IDLE_SECONDS
 
 
 class TurnFailure(Exception):
@@ -367,7 +369,9 @@ class TextRelay:
                 revisionNumber=revision.revision_number,
                 agentId=revision.agent_id,
                 expiresAt=expires.isoformat(),
-                idleExpiresAt=min(expires, now + timedelta(seconds=IDLE_SECONDS)).isoformat(),
+                idleExpiresAt=min(
+                    expires, now + timedelta(seconds=revision.idle_seconds)
+                ).isoformat(),
                 bounds=BOUNDS,
             )
         if self._telemetry is not None:
