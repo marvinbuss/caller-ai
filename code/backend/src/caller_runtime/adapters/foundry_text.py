@@ -45,6 +45,18 @@ Reply = TypeVar("Reply")
 READINESS_INPUT = "Initialize the published Welcome conversation without invoking actions."
 # The provider minimum; a full Welcome reply on a reasoning model can outlast the startup budget.
 READINESS_OUTPUT_TOKENS = 16
+# A request still running when its work budget ends is left to finish in the background up to
+# this cap, so its outcome is known and the slot can be released; it is never sent again.
+MODEL_REQUEST_CAP_SECONDS = 60.0
+# Events after which the provider has finished the request.
+FINISHED_EVENTS = frozenset({"response.completed", "response.incomplete", "response.failed"})
+# Detached request drains, held strongly until they finish.
+_DRAINS: set[asyncio.Task[None]] = set()
+
+
+def _reasoning_tokens(usage: object) -> int | None:
+    tokens = getattr(getattr(usage, "output_tokens_details", None), "reasoning_tokens", None)
+    return tokens if type(tokens) is int else None
 
 
 class FoundryCredential(Protocol):
@@ -132,6 +144,7 @@ class FoundryTextAdapter:
         settlement_observer: SettlementObserver | None = None,
         telemetry: Telemetry | None = None,
         call_observer: Callable[[bool], None] | None = None,
+        request_cap_seconds: float = MODEL_REQUEST_CAP_SECONDS,
     ) -> None:
         try:
             parts = urlsplit(endpoint)
@@ -156,6 +169,8 @@ class FoundryTextAdapter:
                 or not 1024 <= max_input_tokens <= 131072
                 or type(max_output_tokens) is not int
                 or not 1 <= max_output_tokens <= 4096
+                or type(request_cap_seconds) not in (int, float)
+                or not 0 < request_cap_seconds <= MODEL_REQUEST_CAP_SECONDS
             ):
                 raise ValueError("invalid_binding")
         except (ValueError, TypeError):
@@ -170,6 +185,9 @@ class FoundryTextAdapter:
         self._telemetry = telemetry
         self._active_operations = 0
         self._disposal_unknown = False
+        self._request_cap = float(request_cap_seconds)
+        self._drains: set[asyncio.Task[None]] = set()
+        self._detached: set[AsyncOpenAI] = set()
         self.binding_hash = hashlib.sha256(
             json.dumps(
                 {"endpoint": self.endpoint, "deployment": deployment, "mode": "responses"},
@@ -193,6 +211,15 @@ class FoundryTextAdapter:
             and not self._disposal_unknown
         )
 
+    @property
+    def draining(self) -> bool:
+        return bool(self._drains)
+
+    async def drained(self) -> None:
+        """Wait until every request left running after its budget has finished or been cut."""
+        while self._drains:
+            await asyncio.wait(tuple(self._drains))
+
     def _observe_call(self, success: bool) -> None:
         if self._call_observer is not None:
             try:
@@ -200,8 +227,8 @@ class FoundryTextAdapter:
             except Exception:
                 pass
 
-    async def _settle(self, intent: AttemptIntent) -> None:
-        reference = "model-" + uuid4().hex
+    async def _settle(self, intent: AttemptIntent, prefix: str = "model-") -> None:
+        reference = prefix + uuid4().hex
         if self._settlement_observer is not None:
             self._settlement_observer.record(intent, reference)
         await self.admission.settle_attempt(intent, settlement_ref=reference)
@@ -338,6 +365,7 @@ class FoundryTextAdapter:
                 mode=slot.mode,
                 input_tokens=result.usage.input_tokens,
                 output_tokens=result.usage.output_tokens,
+                reasoning_tokens=_reasoning_tokens(result.usage),
             )
         return result
 
@@ -362,6 +390,7 @@ class FoundryTextAdapter:
                 mode=slot.mode,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                reasoning_tokens=_reasoning_tokens(response.usage),
             )
         # A reasoning model may spend the whole cap on reasoning; the cap still proves an answer.
         capped = (
@@ -380,6 +409,8 @@ class FoundryTextAdapter:
     ) -> Reply:
         client: AsyncOpenAI | None = None
         intent: AttemptIntent | None = None
+        dispatched: list[asyncio.Task[Reply]] = []
+        cap = asyncio.get_running_loop().time() + self._request_cap
         self._active_operations += 1
         try:
             await self.admission.check_work(
@@ -395,21 +426,7 @@ class FoundryTextAdapter:
                     or token.expires_on <= work.work_deadline_utc.timestamp()
                 ):
                     raise PermissionError("model_identity_unavailable")
-                http = httpx2.AsyncClient(
-                    transport=_BoundedTransport(self._transport),
-                    verify=True,
-                    trust_env=False,
-                    follow_redirects=False,
-                    timeout=httpx2.Timeout(remaining),
-                )
-                client = AsyncOpenAI(
-                    api_key=token.token,
-                    base_url=self.endpoint + "/openai/v1/",
-                    max_retries=0,
-                    http_client=http,
-                    timeout=remaining,
-                )
-                self._clients.add(client)
+                client = self._client(token.token)
                 opened = client
                 intent = await self.admission.begin_attempt(
                     slot.session_id,
@@ -419,31 +436,111 @@ class FoundryTextAdapter:
                     generation=slot.generation,
                     work=work,
                 )
+                recorded = intent
 
                 async def request() -> Reply:
-                    return await call(opened)
+                    # Settles in this task, so a reply that lands after the budget still counts.
+                    try:
+                        result = await call(opened)
+                    except APIStatusError as error:
+                        await self._settle_refusal(recorded, error)
+                        raise
+                    await self._settle(recorded)
+                    return result
 
-                result = await self.admission.perform(intent, request, work=work)
+                async def dispatch() -> asyncio.Task[Reply]:
+                    dispatched.append(asyncio.create_task(request()))
+                    return dispatched[0]
+
+                pending = await self.admission.perform(intent, dispatch, work=work)
+                result = await asyncio.shield(pending)
                 self._observe_call(True)
-                await self._settle(intent)
                 return result
         except AdmissionError as error:
             raise PermissionError(error.code) from None
         except PermissionError:
             raise
-        except APIStatusError as error:
+        except TimeoutError:
+            # The work budget ran out; the logs must tell this apart from a failed model call.
             self._observe_call(False)
-            await self._settle_refusal(intent, error)
-            raise PermissionError("model_unavailable") from None
+            raise PermissionError("work_deadline_exceeded") from None
         except Exception:
             self._observe_call(False)
             raise PermissionError("model_unavailable") from None
         finally:
             try:
+                if dispatched and not dispatched[0].done() and client is not None:
+                    assert intent is not None
+                    self._detach(dispatched[0], client, intent, cap)
+                    client = None
                 if client is not None:
                     await self._dispose_client(client)
             finally:
                 self._active_operations -= 1
+
+    def _client(self, token: str) -> AsyncOpenAI:
+        # The request may run in the background up to the cap, so the client timeout is the cap.
+        http = httpx2.AsyncClient(
+            transport=_BoundedTransport(self._transport),
+            verify=True,
+            trust_env=False,
+            follow_redirects=False,
+            timeout=httpx2.Timeout(self._request_cap),
+        )
+        client = AsyncOpenAI(
+            api_key=token,
+            base_url=self.endpoint + "/openai/v1/",
+            max_retries=0,
+            http_client=http,
+            timeout=self._request_cap,
+        )
+        self._clients.add(client)
+        return client
+
+    def _detach(
+        self,
+        pending: asyncio.Task[Any],
+        client: AsyncOpenAI,
+        intent: AttemptIntent,
+        cap: float,
+    ) -> None:
+        self._detached.add(client)
+        self._active_operations += 1
+        drain = asyncio.create_task(self._drain(pending, client, intent, cap))
+        for tasks in (self._drains, _DRAINS):
+            tasks.add(drain)
+            drain.add_done_callback(tasks.discard)
+
+    async def _drain(
+        self, pending: asyncio.Task[Any], client: AsyncOpenAI, intent: AttemptIntent, cap: float
+    ) -> None:
+        """Let a dispatched request finish; it settles itself on a definite provider outcome.
+
+        Past the cap the request is cut, and only a confirmed client disposal lets the attempt
+        count as settled, since nothing can still be running for it.
+        """
+        try:
+            done, _ = await asyncio.wait(
+                {pending}, timeout=max(0.0, cap - asyncio.get_running_loop().time())
+            )
+            abandoned = not done
+            if abandoned:
+                pending.cancel()
+                await asyncio.wait({pending}, timeout=1)
+            elif not pending.cancelled():
+                pending.exception()
+            try:
+                await self._dispose_client(client)
+            except Exception:
+                return
+            if abandoned and pending.done():
+                try:
+                    await self._settle(intent, "model-abandoned-")
+                except Exception:
+                    pass
+        finally:
+            self._detached.discard(client)
+            self._active_operations -= 1
 
     async def _stream(
         self,
@@ -474,7 +571,8 @@ class FoundryTextAdapter:
         client: AsyncOpenAI | None = None
         iterator: AsyncGenerator[TResponseStreamEvent, None] | None = None
         intent: AttemptIntent | None = None
-        completed = False
+        dispatched: list[asyncio.Task[None]] = []
+        cap = asyncio.get_running_loop().time() + self._request_cap
         self._active_operations += 1
         try:
             await self.admission.check_output(
@@ -486,21 +584,7 @@ class FoundryTextAdapter:
                 token = await self.credential.get_token("https://ai.azure.com/.default")
                 if not token.token or token.expires_on <= work.work_deadline_utc.timestamp():
                     raise PermissionError("model_identity_unavailable")
-                http = httpx2.AsyncClient(
-                    transport=_BoundedTransport(self._transport),
-                    verify=True,
-                    trust_env=False,
-                    follow_redirects=False,
-                    timeout=httpx2.Timeout(remaining),
-                )
-                client = AsyncOpenAI(
-                    api_key=token.token,
-                    base_url=self.endpoint + "/openai/v1/",
-                    max_retries=0,
-                    http_client=http,
-                    timeout=remaining,
-                )
-                self._clients.add(client)
+                client = self._client(token.token)
                 delegate = OpenAIResponsesModel(model=self.deployment, openai_client=client)
                 intent = await self.admission.begin_attempt(
                     slot.session_id,
@@ -510,7 +594,8 @@ class FoundryTextAdapter:
                     generation=slot.generation,
                     work=work,
                 )
-                iterator = cast(
+                recorded = intent
+                source = iterator = cast(
                     AsyncGenerator[TResponseStreamEvent, None],
                     delegate.stream_response(
                         system_instructions=instructions,
@@ -522,14 +607,44 @@ class FoundryTextAdapter:
                         tracing=ModelTracing.DISABLED,
                     ),
                 )
+                events: asyncio.Queue[TResponseStreamEvent | Exception | None] = asyncio.Queue()
 
-                async def first() -> TResponseStreamEvent:
-                    assert iterator is not None
-                    return await anext(iterator)
+                async def pump() -> None:
+                    # Reads the provider stream in its own task, so a consumer that stops early
+                    # never cuts the request; a finished response settles the attempt here.
+                    try:
+                        async for event in source:
+                            if event.type in FINISHED_EVENTS:
+                                await self._settle(recorded)
+                                events.put_nowait(event)
+                                return
+                            events.put_nowait(event)
+                        events.put_nowait(None)
+                    except APIStatusError as error:
+                        await self._settle_refusal(recorded, error)
+                        events.put_nowait(error)
+                    except Exception as error:
+                        events.put_nowait(error)
+                    finally:
+                        try:
+                            await source.aclose()
+                        except BaseException:
+                            self._disposal_unknown = True
+                            raise
 
-                event = await self.admission.perform(intent, first, work=work)
+                async def dispatch() -> asyncio.Task[None]:
+                    dispatched.append(asyncio.create_task(pump()))
+                    return dispatched[0]
+
+                await self.admission.perform(intent, dispatch, work=work)
                 output_bytes = 0
                 while True:
+                    item = await events.get()
+                    if item is None:
+                        raise ValueError("model_stream_incomplete")
+                    if isinstance(item, Exception):
+                        raise item
+                    event = item
                     work.require(utc(self.utc_now()))
                     await self.admission.check_output(
                         slot.session_id, slot.owner_epoch, generation=slot.generation
@@ -539,38 +654,41 @@ class FoundryTextAdapter:
                         if output_bytes > 64 * 1024:
                             raise PermissionError("model_output_limit")
                     if event.type == "response.completed":
-                        completed = True
-                        await iterator.aclose()
-                        await self._settle(intent)
                         if self._telemetry is not None:
                             usage = event.response.usage
                             self._telemetry.model_usage(
                                 mode=slot.mode,
                                 input_tokens=usage.input_tokens if usage is not None else None,
                                 output_tokens=usage.output_tokens if usage is not None else None,
+                                reasoning_tokens=_reasoning_tokens(usage),
                             )
                         yield event
                         return
                     yield event
-                    event = await anext(iterator)
+                    if event.type in FINISHED_EVENTS:
+                        raise PermissionError("model_unavailable")
         except AdmissionError as error:
             raise PermissionError(error.code) from None
         except (GeneratorExit, asyncio.CancelledError):
             raise
         except PermissionError:
             raise
-        except APIStatusError as error:
-            await self._settle_refusal(intent, error)
-            raise PermissionError("model_unavailable") from None
+        except TimeoutError:
+            raise PermissionError("work_deadline_exceeded") from None
         except Exception:
             raise PermissionError("model_unavailable") from None
         finally:
             try:
-                if iterator is not None and not completed:
-                    await iterator.aclose()
-            except BaseException:
-                self._disposal_unknown = True
-                raise
+                if dispatched and not dispatched[0].done() and client is not None:
+                    assert intent is not None
+                    self._detach(dispatched[0], client, intent, cap)
+                    client = None
+                elif not dispatched and iterator is not None:
+                    try:
+                        await iterator.aclose()
+                    except BaseException:
+                        self._disposal_unknown = True
+                        raise
             finally:
                 try:
                     if client is not None:
@@ -580,7 +698,8 @@ class FoundryTextAdapter:
 
     async def close(self) -> None:
         self._closed = True
-        clients = tuple(self._clients)
+        # A detached request keeps its client until its outcome is known or the cap cuts it.
+        clients = tuple(self._clients - self._detached)
         for client in clients:
             await self._dispose_client(client)
 

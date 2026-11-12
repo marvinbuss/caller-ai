@@ -201,7 +201,15 @@ voice outside the catalog or a value outside the limits is refused when the runt
 
 Both endpoints emit the same event names with a `kind` attribute (`text` or `voice`). Events carry
 outcome, fixed reason and bounded measurements only: never content, credentials or provider
-bodies. The history store emits `history.store` with outcome and `store_seconds`.
+bodies. The history store emits `history.store` with outcome and `store_seconds`. Each model call
+logs `test.usage` with `input_tokens`, `output_tokens` and `reasoning_tokens`, and each work item
+logs `test.latency` with `backend_first_text_seconds` and `work_seconds`.
+
+## Model settings
+
+Speech delegations and the clarity check of speech fragments ask the text deployment for low
+reasoning effort, because the caller waits in silence; text turns keep the deployment default. A
+speech delegation has 30 seconds of work budget (text turns and admission keep 10 seconds).
 
 ## Provider constraints
 

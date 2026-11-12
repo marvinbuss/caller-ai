@@ -571,16 +571,34 @@ def test_empty_text_is_valid(tmp_path: Path) -> None:
     assert invoke("check_whitespace.py", str(source)).returncode == 0
 
 
+def apk_installs_by_stage(dockerfile: str) -> list[list[list[str]]]:
+    source = (SCRIPTS.parents[1] / dockerfile).read_text(encoding="utf-8")
+    stages: list[list[list[str]]] = []
+    for line in source.splitlines():
+        if line.startswith("FROM "):
+            stages.append([])
+        elif line.startswith("RUN ") and stages:
+            command = shlex.split(line.removeprefix("RUN "))
+            if command[:3] == ["apk", "add", "--no-cache"]:
+                stages[-1].append(command)
+    return stages
+
+
 def test_management_build_stage_requires_patched_curl_and_libcurl() -> None:
-    source = (SCRIPTS.parents[1] / "management/Dockerfile").read_text(encoding="utf-8")
-    commands = [
-        shlex.split(line.removeprefix("RUN "))
-        for line in source.splitlines()
-        if line.startswith("RUN ")
-    ]
-    installs = [command for command in commands if command[:3] == ["apk", "add", "--no-cache"]]
-    assert len(installs) == 1
-    assert {"curl>=8.23.0-r0", "libcurl>=8.23.0-r0"} <= set(installs[0][3:])
+    installs = apk_installs_by_stage("management/Dockerfile")[2]
+    assert any(
+        {"curl>=8.23.0-r0", "libcurl>=8.23.0-r0"} <= set(command[3:]) for command in installs
+    )
+
+
+@pytest.mark.parametrize(
+    "dockerfile,stage",
+    [("backend/Dockerfile", -1), ("management/Dockerfile", 2), ("management/Dockerfile", -1)],
+)
+def test_python_alpine_stages_upgrade_patched_krb5_libs(dockerfile: str, stage: int) -> None:
+    # The pinned Python base ships krb5-libs with HIGH CVEs; the image scan fails without this.
+    installs = apk_installs_by_stage(dockerfile)[stage]
+    assert ["apk", "add", "--no-cache", "--upgrade", "krb5-libs>=1.22.3-r0"] in installs
 
 
 @pytest.mark.parametrize(

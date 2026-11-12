@@ -24,6 +24,7 @@ from caller_runtime.adapters.admission_repository import (
 )
 from caller_runtime.domain.configuration import RevisionCache, RevisionSnapshot, encoded
 from caller_runtime.domain.conversation import (
+    MAX_WORK_SECONDS,
     AttemptIntent,
     CleanupEvidence,
     ClosureReceipt,
@@ -325,7 +326,7 @@ class TestAdmissionService:
                 or checked >= work.work_deadline_utc
                 or not timedelta(0)
                 < work.work_deadline_utc - work.work_accepted_at
-                <= timedelta(seconds=10)
+                <= timedelta(seconds=MAX_WORK_SECONDS)
             ):
                 raise AdmissionError("work_deadline_exceeded")
 

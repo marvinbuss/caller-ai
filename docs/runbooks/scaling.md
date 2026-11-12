@@ -29,7 +29,8 @@ flowchart TD
 | Active tests per manager | 1 | A second start is refused with `manager_busy` |
 | Occupied slots in the authority item | 5, including slots with uncertain cleanup | Further starts are refused with `capacity_unavailable` |
 | Admission deadline | 10 s from the signed permit | A late start is refused; the permit cannot extend it |
-| Work item budget | 10 s per accepted item, at most one running and one pending | Excess work is refused, never queued without bound |
+| Work item budget | 10 s per accepted text item; 30 s per speech delegation (`RuntimeOptions.speech_work_seconds`, 10–60 s); at most one running and one pending | Excess work is refused, never queued without bound. After 5 s a speech caller hears "One moment, I'm checking that." A work item that fails on its own (`model_unavailable`, `work_deadline_exceeded`, `work_busy`) reports `work_unavailable`, the caller hears "I could not finish that, please try again.", and the session stays open |
+| Model request past its budget | The caller stops waiting; the request finishes in the background for at most 60 s from its start | A completed, incomplete or failed response or a provider refusal settles the attempt and the late reply is discarded; past 60 s the request is cut and settles once its client is confirmed closed. New model work in that session gets `work_busy` until then. Cleanup that waited on it is retried when it finishes |
 | Session lifetime and idle time | 600 s and 120 s since the last accepted user text or verified speech | The session ends; silence and agent output do not extend either |
 | Cleanup | At most 10 s per cleanup operation; volatile context cleared within 300 s | Unconfirmed cleanup raises the `cleanup_uncertain` alert and keeps the slot |
 | Conversation context | 256 KiB (text turn over the limit gets HTTP 413 before streaming) | The turn fails; context is never trimmed silently |
@@ -71,6 +72,7 @@ slot.
 | Situation | Behavior | Operator action |
 |-----------|----------|-----------------|
 | Instance restarts mid-session | The session and its volatile context are gone; its slot stays occupied because closure proof is lost | Inspect the authority item and the `cleanup_uncertain` alert; recover only through reviewed, evidence-based cleanup. Never delete the item, force-clear a slot or replay work. |
+| Slot held by a model request that was never settled (before the background-drain fix) | The same manager gets `manager_busy` (`test.admission.failure` with `error_code` `manager_busy`) long after the session ended | With the owner's approval, run `python -m caller_runtime.recovery` inside the runtime container to preview, then `--apply`. It releases only fenced slots expired at least 5 minutes ago whose only unsettled attempt is a model request; Live and capability attempts must be settled. It never deletes the authority item or touches a live slot, and running it twice changes nothing. |
 | Authority store unavailable or conflicting | Starts fail with `authority_unavailable` or `authority_conflict`; nothing is assumed released | Restore the store; do not bypass admission |
 | History store unavailable | `/readyz` returns 503 `history_store_unavailable`; text requests fail with `history_unavailable` and answer nothing without context | Restore the store; voice is unaffected |
 | Model, Live or management gateway unavailable | The turn or session fails with a fixed public code and cleanup runs | Check the dependency and identity; do not retry an uncertain business action |

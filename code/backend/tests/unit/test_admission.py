@@ -1262,7 +1262,7 @@ def test_foundry_text_settles_only_a_definite_provider_refusal(
 
 
 @pytest.mark.parametrize("complete", [True, False])
-def test_foundry_text_stream_is_gated_and_early_close_never_proves_settlement(
+def test_foundry_text_stream_is_gated_and_early_close_settles_only_after_provider_finishes(
     admission_case, complete
 ):
     from types import SimpleNamespace
@@ -1348,14 +1348,116 @@ def test_foundry_text_stream_is_gated_and_early_close_never_proves_settlement(
             else:
                 await anext(iterator)
                 await iterator.aclose()
+                # Closing early detaches the request; it settles only once the provider finishes.
+                await asyncio.wait_for(adapter.drained(), 5)
             observed = (
                 await repository.read(deadline=asyncio.get_running_loop().time() + 1)
             ).authority.slots[0]
-            assert observed.attempted_through == 1 and observed.settled_through == int(complete)
+            assert observed.attempted_through == observed.settled_through == 1
             assert len(requests) == 1 and all(
                 str(request.url).endswith("/openai/v1/responses") for request in requests
             )
         finally:
+            await adapter.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["late", "cap"])
+@pytest.mark.parametrize("stream", [False, True])
+def test_foundry_text_slow_request_finishes_in_background_and_settles_once(
+    admission_case, stream, outcome
+):
+    from types import SimpleNamespace
+
+    import httpx2
+    from agents import ModelSettings
+    from agents.models.interface import ModelTracing
+
+    from caller_runtime.adapters.foundry_text import FoundryTextAdapter
+    from caller_runtime.domain.conversation import WorkBudget
+
+    service, repository, container, clock, permit, cache = admission_case
+    requests = []
+    release = asyncio.Event()
+
+    class Credentials:
+        async def get_token(self, scope):
+            return SimpleNamespace(
+                token="synthetic-foundry-token", expires_on=clock.utc_now().timestamp() + 900
+            )
+
+    class Chunks(httpx2.AsyncByteStream):
+        async def __aiter__(self):
+            for chunk in model_stream("Synthetic late reply"):
+                yield chunk
+
+    async def slow(request):
+        requests.append(request)
+        await release.wait()
+        if stream:
+            return httpx2.Response(
+                200, headers={"Content-Type": "text/event-stream"}, stream=Chunks()
+            )
+        return httpx2.Response(200, json=model_reply("Synthetic late reply"))
+
+    adapter = FoundryTextAdapter(
+        endpoint="https://approved-fixture.openai.azure.com",
+        deployment="reasoning-fixture",
+        approved_hosts=frozenset({"approved-fixture.openai.azure.com"}),
+        credential=Credentials(),
+        admission=service,
+        utc_now=clock.utc_now,
+        transport=httpx2.MockTransport(slow),
+        max_input_tokens=16384,
+        max_output_tokens=512,
+        request_cap_seconds=1.5 if outcome == "cap" else 30,
+    )
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        slot = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        work = WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(milliseconds=300))
+        model = adapter.model_for(slot, work)
+        arguments = dict(
+            system_instructions="Synthetic instructions",
+            input="Synthetic accepted question",
+            model_settings=ModelSettings(),
+            tools=[],
+            output_schema=None,
+            handoffs=[],
+            tracing=ModelTracing.DISABLED,
+        )
+        try:
+            with pytest.raises(PermissionError, match="^work_deadline_exceeded$"):
+                if stream:
+                    async for _event in model.stream_response(**arguments):
+                        pass
+                else:
+                    await model.get_response(**arguments)
+            # The caller stopped waiting; the request still runs and nothing is settled yet.
+            assert adapter.draining
+            pending = (
+                await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+            ).authority.slots[0]
+            assert pending.attempted_through == 1 and pending.settled_through == 0
+            await adapter.close()
+            assert not adapter.disposed
+            if outcome == "late":
+                release.set()
+            await asyncio.wait_for(adapter.drained(), 5)
+            observed = (
+                await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+            ).authority.slots[0]
+            assert observed.attempted_through == observed.settled_through == 1
+            reference = observed.resources["model"].settlement_ref
+            assert reference.startswith("model-abandoned-") is (outcome == "cap")
+            assert len(requests) == 1 and adapter.disposed
+        finally:
+            release.set()
             await adapter.close()
 
     asyncio.run(scenario())

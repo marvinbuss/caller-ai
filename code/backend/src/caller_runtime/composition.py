@@ -39,7 +39,16 @@ from caller_runtime.api.status import create_router as create_status_router
 from caller_runtime.api.text import create_router as create_text_router
 from caller_runtime.api.voice import create_router as create_voice_router
 from caller_runtime.domain.configuration import RevisionCache
-from caller_runtime.domain.conversation import Identifier, Metadata, StartPermit, TestSlot, utc
+from caller_runtime.domain.conversation import (
+    MAX_WORK_SECONDS,
+    SPEECH_WORK_SECONDS,
+    WORK_SECONDS,
+    Identifier,
+    Metadata,
+    StartPermit,
+    TestSlot,
+    utc,
+)
 from caller_runtime.domain.ports import ContainerPort, CredentialPort
 from caller_runtime.observability import Telemetry
 from caller_runtime.services.admission import AdmissionError, TestAdmissionService
@@ -82,6 +91,9 @@ class RuntimeOptions(Metadata):
         default="text-conversations", pattern=r"^[a-z0-9][a-z0-9-]{0,62}$"
     )
     text_history_ttl_seconds: int = Field(default=2_592_000, ge=1, le=2_592_000)
+    speech_work_seconds: int = Field(
+        default=SPEECH_WORK_SECONDS, ge=WORK_SECONDS, le=MAX_WORK_SECONDS
+    )
 
     @model_validator(mode="after")
     def reviewed_bindings(self) -> Self:
@@ -423,6 +435,7 @@ class ConversationRuntime:
                     utc_now=self._utc_now,
                     cleanup_observations=observations,
                     telemetry=telemetry,
+                    speech_work_seconds=self.options.speech_work_seconds,
                 )
                 self._sessions[slot.session_id] = controller
                 if slot.mode == "speech":
@@ -465,6 +478,18 @@ class ConversationRuntime:
                 telemetry.event("test.admission", "success", mode=slot.mode, reason="ready")
                 return controller
         except BaseException as error:
+            if isinstance(error, AdmissionError) and error.code in {
+                "manager_busy",
+                "capacity_unavailable",
+            }:
+                # A refusal is expected under load, but an unexplained one hid a held slot.
+                telemetry.event("test.admission", "failure", mode=permit.mode, reason="denied")
+                telemetry.diagnostic(
+                    "test.admission.failure",
+                    mode=permit.mode,
+                    error=type(error).__name__,
+                    code=error.code,
+                )
             if not isinstance(error, asyncio.CancelledError) and (
                 not isinstance(error, AdmissionError)
                 or error.code in {"configuration_unavailable", "test_runtime_unavailable"}

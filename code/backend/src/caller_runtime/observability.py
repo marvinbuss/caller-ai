@@ -44,7 +44,13 @@ TEST_OPERATIONS = frozenset(
 )
 TEST_MEASUREMENTS = {
     "test.usage": frozenset(
-        {"voice_seconds_snapshot", "voice_seconds_final", "input_tokens", "output_tokens"}
+        {
+            "voice_seconds_snapshot",
+            "voice_seconds_final",
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+        }
     ),
     "test.latency": frozenset(
         {"backend_first_text_seconds", "work_seconds", "cleanup_seconds", "admission_seconds"}
@@ -473,7 +479,12 @@ class Telemetry:
             self.poll_alerts()
 
     def model_usage(
-        self, *, mode: str, input_tokens: int | None, output_tokens: int | None
+        self,
+        *,
+        mode: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        reasoning_tokens: int | None = None,
     ) -> None:
         if type(input_tokens) is not int or input_tokens <= 0 or type(output_tokens) is not int:
             self.event("test.usage", "failure", mode=mode, reason="unavailable")
@@ -494,6 +505,15 @@ class Telemetry:
             measurement="output_tokens",
             value=output_tokens,
         )
+        if type(reasoning_tokens) is int and reasoning_tokens >= 0:
+            self.event(
+                "test.usage",
+                "success",
+                mode=mode,
+                reason="ready",
+                measurement="reasoning_tokens",
+                value=reasoning_tokens,
+            )
 
     def close(self) -> None:
         if not self._closed:

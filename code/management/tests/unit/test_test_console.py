@@ -1134,6 +1134,16 @@ def test_live_audio_is_a_narrow_reflex_owned_metadata_component():
     )
 
 
+def test_manager_busy_explains_that_an_earlier_test_may_still_be_cleaning_up():
+    from management_app.components.live_audio_js import ENGINE_CODE
+
+    # A held slot after a failed test looked like a stuck console with only "Busy".
+    assert (
+        'manager_busy: "Another test is active or an earlier test is still being cleaned up"'
+        in ENGINE_CODE
+    )
+
+
 def test_browser_bridge_pins_ready_and_waits_for_confirmed_end_before_restart():
     import shutil
     import subprocess
