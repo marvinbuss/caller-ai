@@ -14,6 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     CALLER_MODE=local \
     OPENAI_AGENTS_DISABLE_TRACING=1
+# The pinned base still ships krb5-libs 1.22.1-r0 (HIGH CVEs); drop once the base is rebuilt.
+RUN apk add --no-cache --upgrade 'krb5-libs>=1.22.3-r0'
 RUN addgroup -S -g 10001 caller && adduser -S -u 10001 -G caller -h /home/caller caller
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /app/.venv /app/.venv
