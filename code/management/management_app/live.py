@@ -14,6 +14,8 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -54,6 +56,22 @@ REVIEW_EXCLUDED = frozenset(
     }
 )
 POLICY_FILE = Path(__file__).parent / "services" / "secret_detection_policy.json"
+FIXED_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+STARTUP_LOG = logging.getLogger("management.startup")
+
+
+def failure_codes(error: BaseException) -> list[str]:
+    """The fixed codes along an error's chain; free text (values, messages) is dropped."""
+    codes: list[str] = []
+    current: BaseException | None = error
+    for _depth in range(8):
+        if current is None:
+            break
+        value = current.args[0] if current.args else None
+        if isinstance(value, str) and FIXED_CODE.fullmatch(value):
+            codes.append(value)
+        current = current.__cause__ or current.__context__
+    return codes
 
 
 def reviewed_fingerprint(live: LiveSettings) -> str:
@@ -240,6 +258,16 @@ async def build_live_management(
             raise
         if isinstance(error, PermissionError):
             raise StartupError("fingerprint_mismatch") from None
+        # The lifespan only reports store_unavailable; the chain names what actually failed.
+        STARTUP_LOG.error(
+            json.dumps(
+                {
+                    "event": "management.startup.failure",
+                    "reason": "store_unavailable",
+                    "error_codes": failure_codes(error),
+                }
+            )
+        )
         raise StartupError("store_unavailable") from None
 
 

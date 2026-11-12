@@ -60,6 +60,11 @@ feed the `test.alert` classification.
 | `test.speech.unobserved` | Runtime | `end_ms`, `since_first_frame_ms`, `since_last_frame_ms` | Speech did not renew the idle limit: the first rejected transcript of a generation |
 | `test.relay.failure` | Management | `error_class`, `received_close`, `sent_close`, `browser_close` | The browser saw "cleanup pending" after an unexpected relay close |
 
+A management start that fails with `store_unavailable` also logs one `management.startup.failure` line at
+`ERROR` with `error_codes`: the fixed codes along the failure, outermost first, for example
+`["management_composition_unavailable", "configuration_store_unavailable", "invalid_snapshot"]`. Anything
+that is not a fixed code (a message or value) is left out.
+
 Library request logs (Azure SDK HTTP lines with headers, `httpx`, the runtime's access log) are kept at warning
 level, so the container logs hold the structured application events and library warnings only.
 

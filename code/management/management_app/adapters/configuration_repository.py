@@ -153,7 +153,11 @@ def verified_revision(document: Document) -> Document:
     snapshot = model.model_dump(mode="json", by_alias=True)
     if len(encoded(snapshot)) > SNAPSHOT_LIMIT:
         raise ValueError("invalid_snapshot")
-    if hashlib.sha256(encoded(graph_document(snapshot))).hexdigest() != model.graph_hash:
+    # A later field default changes the normalized graph; the graph as stored also counts.
+    if model.graph_hash not in {
+        hashlib.sha256(encoded(graph_document(snapshot))).hexdigest(),
+        hashlib.sha256(encoded(graph_document(clean))).hexdigest(),
+    }:
         raise ValueError("invalid_snapshot")
     return snapshot
 
