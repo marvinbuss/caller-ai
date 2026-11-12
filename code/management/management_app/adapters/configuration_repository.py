@@ -150,7 +150,8 @@ def graph_document(revision: Document) -> Document:
 def verified_revision(document: Document) -> Document:
     clean = {key: value for key, value in document.items() if key not in COSMOS_METADATA}
     model = ConfigurationRevision.model_validate_json(encoded(clean))
-    snapshot = model.model_dump(mode="json", by_alias=True)
+    # Keep the stored shape: added defaults (routable) would break re-verifying this output.
+    snapshot = model.model_dump(mode="json", by_alias=True, exclude_unset=True)
     if len(encoded(snapshot)) > SNAPSHOT_LIMIT:
         raise ValueError("invalid_snapshot")
     # A later field default changes the normalized graph; the graph as stored also counts.

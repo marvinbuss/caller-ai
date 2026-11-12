@@ -240,6 +240,23 @@ def test_a_start_over_a_revision_from_the_previous_release_succeeds(
     asyncio.run(start())
     assert store.items == before
 
+    async def runtime_configuration() -> httpx.Response:
+        managed = await compose(settings)
+        async with lifecycle(managed.api, settings):
+            transport = httpx.ASGITransport(app=managed.api)
+            origin = "https://management.example.azurecontainerapps.io"
+            async with httpx.AsyncClient(transport=transport, base_url=origin) as client:
+                return await client.get(
+                    "/v2/runtime/configuration",
+                    headers={"Authorization": "Bearer " + runtime_token()},
+                )
+
+    # int, after the start fix: this answered 503, so every test start was refused.
+    response = asyncio.run(runtime_configuration())
+    assert response.status_code == 200
+    assert all("routable" not in community for community in response.json()["communities"])
+    assert store.items == before
+
 
 def test_a_startup_failure_logs_its_fixed_codes_but_no_content(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
