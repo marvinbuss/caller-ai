@@ -290,3 +290,11 @@ Then: T034 graph_view.py and T037 visibility.py in parallel
 ### Deferred (not part of this task list)
 
 Manual security review of tester-only access, usability checks with managers, and a manual walkthrough on `int`, deferred by the owner on 2026-11-11 ([quickstart.md](quickstart.md#deferred-manual-checks)). Release gate: `TESTER_ONLY_TESTS` stays `False` until the security review is recorded; turning it on is a separate reviewed change.
+
+## Phase 10: Convergence
+
+- [X] T072 Report the configured environment voice (`RuntimeOptions.voice`, from `CALLER_LIVE_VOICE`) as `defaults.voice` in `code/backend/src/caller_runtime/api/status.py` (pass it through `StatusBindings` from `composition.py`) instead of the catalog constant, and extend `code/backend/tests/contract/test_status_endpoint.py` with a non-`marin` environment voice, so the Settings page marks the real default and choosing `marin` is published per contracts/status.md `defaults` and FR-025 (contradicts)
+- [X] T073 Add the 15-second background new-revision notice with Reload to the Settings page (`code/management/management_app/state/settings.py`, `code/management/management_app/pages/settings.py`), keeping the settings draft until Reload, and a browser case in `code/management/tests/browser/test_settings_page.py` where a graph publication shows the notice per plan R13 and FR-017 (partial)
+- [X] T074 Remove obsolete descriptions of the old pages from `docs/runbooks/communities.md` (Save step, missing community link and Communities) and `docs/configuration-guide.md` (Scope paragraph on the community overview, "Save, Conflict and Recovery" naming Save instead of Publish) per FR-034 (partial)
+- [X] T075 Add a short explanation to the voice field on the Settings page (`code/management/management_app/pages/settings.py`), like the two number fields have, per FR-025 (partial)
+- [X] T076 Remove the unused `on_resign` parameter from `frame()` in `code/management/management_app/components/frame.py` and from `SessionWarning` in `code/management/management_app/components/session_warning.py`, which the T019 implementation no longer needs, per T019 implementation note (unrequested)

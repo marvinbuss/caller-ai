@@ -244,6 +244,7 @@ class ConversationRuntime:
                     live_host=urlsplit(self.options.live_endpoint).hostname or "",
                     live_region=self.options.live_region,
                     max_output_tokens=self.options.max_output_tokens,
+                    voice=self.options.voice,
                 ),
             )
         )

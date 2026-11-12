@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from caller_runtime.adapters.status_probe import StatusProbe
 from caller_runtime.api.connection import WorkloadIdentity, public_error, public_error_for
 from caller_runtime.domain.configuration import IDLE_SECONDS, MAX_OUTPUT_TOKENS
-from caller_runtime.domain.voices import CATALOG, DEFAULT_VOICE
+from caller_runtime.domain.voices import CATALOG
 
 PATH = "/v1/status"
 HEADERS = {"Cache-Control": "no-store"}
@@ -31,6 +31,7 @@ class StatusBindings:
     live_host: str
     live_region: str
     max_output_tokens: int
+    voice: str
 
 
 async def status_body(probe: StatusProbe, bindings: StatusBindings) -> dict[str, Any]:
@@ -68,7 +69,7 @@ async def status_body(probe: StatusProbe, bindings: StatusBindings) -> dict[str,
             for voice in CATALOG
         ],
         "defaults": {
-            "voice": DEFAULT_VOICE,
+            "voice": bindings.voice,
             "maxOutputTokens": bindings.max_output_tokens,
             "idleTimeoutSeconds": IDLE_SECONDS[1],
         },

@@ -374,7 +374,7 @@ def _loading() -> rx.Component:
     )
 
 
-def frame(page: str, content: Callable[[], rx.Component], *, on_resign: Any = None) -> rx.Component:
+def frame(page: str, content: Callable[[], rx.Component]) -> rx.Component:
     """The whole page for `page`: gate, login, no access, role required or the frame."""
     from management_app.components.session_warning import session_warning
     from management_app.pages.login import login_view
@@ -422,7 +422,7 @@ def frame(page: str, content: Callable[[], rx.Component], *, on_resign: Any = No
                         min_width="0",
                         role="main",
                     ),
-                    session_warning(on_resign),
+                    session_warning(),
                     class_name="caller-frame",
                 ),
                 page=page,

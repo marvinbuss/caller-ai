@@ -8,7 +8,9 @@ from typing import Any, cast
 
 import reflex as rx
 
+from management_app.components.configuration_graph import Interval
 from management_app.components.frame import frame, page_content
+from management_app.pages.community_agent import NOTICE_SECONDS
 from management_app.state.settings import IDLE_RANGE, SettingsState
 from management_app.theme import COLORS
 
@@ -80,6 +82,7 @@ def settings_content() -> rx.Component:
         rx.Component,
         rx.vstack(
             rx.heading("Settings", size="7"),
+            Interval.create(seconds=NOTICE_SECONDS, on_tick=SettingsState.check_revision),
             rx.text(
                 "Changes are published as a new revision and apply to conversations started "
                 "after publication; running conversations keep their values.",
@@ -104,6 +107,25 @@ def settings_content() -> rx.Component:
                             ),
                         ),
                         rx.cond(
+                            SettingsState.notice_revision > 0,
+                            rx.hstack(
+                                rx.text(
+                                    "Another manager published revision "
+                                    + cast(rx.Var[int], SettingsState.notice_revision).to(str)
+                                    + ". Your settings are unchanged."
+                                ),
+                                rx.button(
+                                    "Reload", on_click=SettingsState.reload, variant="outline"
+                                ),
+                                role="status",
+                                data_testid="settings-revision-notice",
+                                padding="10px 12px",
+                                background=COLORS["warning-fill"],
+                                border_radius="6px",
+                                align="center",
+                            ),
+                        ),
+                        rx.cond(
                             SettingsState.conflict != "",
                             rx.hstack(
                                 rx.text(SettingsState.conflict),
@@ -124,7 +146,14 @@ def settings_content() -> rx.Component:
                                 value=SettingsState.voice,
                                 on_change=SettingsState.set_voice,
                                 disabled=SettingsState.read_only,
+                                aria_describedby="settings-voice-help",
                                 class_name="caller-input",
+                            ),
+                            rx.text(
+                                "The voice spoken replies use in voice conversations.",
+                                id="settings-voice-help",
+                                size="2",
+                                color=COLORS["text-muted"],
                             ),
                             rx.cond(
                                 SettingsState.read_only,

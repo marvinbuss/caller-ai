@@ -6,6 +6,8 @@ import httpx
 import pytest
 from playwright.sync_api import Browser, Page, expect
 
+from management_app.services.configuration_validation import GRAPH_FIELDS as PUBLISHED_FIELDS
+
 pytestmark = pytest.mark.browser
 
 USERS = ("settings-one", "settings-two", "settings-three", "settings-four")
@@ -131,6 +133,45 @@ def test_settings_publish_alone_and_keep_the_graph_draft(browser: Browser, runti
                 "button", name="Draft alpha (Custom)", exact=True
             )
         ).to_be_visible()
+    finally:
+        context.close()
+
+
+def test_another_publication_shows_a_notice_and_keeps_the_settings(browser: Browser, runtime_up):
+    context, page = open_page(browser, runtime_up, "settings-two")
+    try:
+        expect(voice(page)).to_be_enabled()
+        page.get_by_label("Idle timeout (seconds)", exact=True).fill("45")
+        with client(runtime_up, "settings-one") as api:
+            current = api.get("/v2/configuration")
+            graph = current.json()
+            graph["communities"][0]["routingDescription"] += " Published elsewhere."
+            csrf = api.get("/auth/session").json()["csrf"]
+            saved = api.put(
+                "/v2/configuration",
+                json={key: graph[key] for key in graph if key in PUBLISHED_FIELDS},
+                headers={
+                    "If-Match": current.headers["ETag"],
+                    "X-CSRF-Token": csrf,
+                    "Origin": runtime_up["ui"],
+                },
+            )
+            saved.raise_for_status()
+            number = saved.json()["revisionNumber"]
+        notice = page.get_by_test_id("settings-revision-notice")
+        expect(notice).to_contain_text(f"revision {number}", timeout=30000)
+        expect(page.get_by_label("Idle timeout (seconds)", exact=True)).to_have_value("45")
+        notice.get_by_role("button", name="Reload", exact=True).click()
+        expect(page.get_by_test_id("settings-revision-notice")).to_have_count(0)
+        expect(page.get_by_label("Idle timeout (seconds)", exact=True)).to_have_value("45")
+        page.get_by_role("button", name="Publish settings", exact=True).click()
+        expect(page.get_by_test_id("settings-status")).to_contain_text(
+            f"Published revision {number + 1}"
+        )
+        with client(runtime_up) as api:
+            active = api.get("/v2/configuration").json()
+        assert active["conversationSettings"]["idleTimeoutSeconds"] == 45
+        assert active["communities"][0]["routingDescription"].endswith("Published elsewhere.")
     finally:
         context.close()
 

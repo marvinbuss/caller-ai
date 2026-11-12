@@ -10,7 +10,8 @@ which same-community peers an ordinary agent can discover.
 
 Feature 002 now uses fresh-start configuration schema/HTTP v2. The shared foundation includes
 publication, runtime policy projection, cache freshness and protected-role admission controls.
-The editable community overview and selected-community agent graph are implemented locally.
+The Community and Agent page (one graph of default and custom communities) and the Settings page
+are implemented locally.
 The shared text/speech runtime, signed-ticket gateway, same-origin relay and browser console
 are implemented behind explicit reviewed composition. Controlled graph/runtime/browser tests
 do not qualify actual providers or physical devices. Feature-001 evidence below remains historical.
@@ -413,15 +414,16 @@ Revocations conservatively accumulate disabled/removed capabilities and removed/
 assignment actions; re-enabling a definition does not silently clear current-policy denial.
 Reauthorization belongs to later explicit permission administration.
 
-## Save, Conflict and Recovery
+## Publish, Conflict and Recovery
 
 Text fields buffer typing locally and flush on blur, preventing server round trips from
-dropping keystrokes. Save replaces any previous success message with Saving before emitting
-its busy/disabled state and publishing the complete graph with its original exact strong ETag.
-Saved or Saved; audit pending acknowledges only the current returned revision. A request
-failure returns to Unsaved and retains the draft, rather than leaving an earlier success
-visible. Publication atomically creates a revision, advances `active` and orders permission
-changes. It never writes a partial configuration.
+dropping keystrokes. **Publish** first shows a confirmation with the new revision number and any
+unreachable or invalid communities; confirming replaces any previous message with Saving and
+publishes the complete graph with its original exact strong ETag. "Published revision N"
+acknowledges only the current returned revision (with "audit pending" when the audit record is
+still pending). A request failure returns to Unsaved and retains the draft, rather than leaving
+an earlier success visible. Publication atomically creates a revision, advances `active` and
+orders permission changes. It never writes a partial configuration.
 
 ```mermaid
 sequenceDiagram
@@ -437,7 +439,7 @@ sequenceDiagram
     alt Commit succeeds
         Store-->>Editor: Complete revision and new ETag
         alt Same logical draft and generation
-            Editor-->>Manager: Saved for the acknowledged generation
+            Editor-->>Manager: Published revision N for the acknowledged generation
         else Newer edits in the same logical draft
             Editor-->>Manager: Retain newer edits, advance base ETag and remain Unsaved
         else Explicitly replaced or reloaded draft
@@ -460,9 +462,10 @@ No query parameter may select another organization. Errors use safe `application
 and correlation IDs; rejected values and unsafe property names are not echoed.
 
 On 409, both managers' local edits remain distinct; no silent merge or overwrite occurs.
-Cancel a reload to keep the draft, or explicitly confirm discard/reload to fetch the latest
-saved revision. On 422, fix only the reported fields; other draft values remain intact.
-Never bypass validation by changing a prompt, raw role flag, ETag or database item.
+The page names the newer revision and keeps the draft; **Reload** is the explicit choice to
+fetch the latest published revision. On 422, the message names the refused items; other draft
+values remain intact. Never bypass validation by changing a prompt, raw role flag, ETag or
+database item.
 
 Successful publication returns 200 with `X-Audit-Status: recorded` or `pending`. Pending means
 the graph is already committed: retain its returned revision ID and recover metadata audit,

@@ -82,6 +82,21 @@ def test_default_runtime_serves_only_the_health_routes():
     assert declared(create_app()) == {("GET", "/healthz"), ("GET", "/readyz")}
 
 
+def test_composed_status_reports_the_configured_voice_as_default(
+    reviewed_runtime_options, signed_test_permit
+):
+    from fastapi import FastAPI
+
+    composed = runtime(reviewed_runtime_options | {"voice": "vesper"}, signed_test_permit[0])
+    composed._workload_identity.require_runtime.return_value = "management-workload"
+    application = FastAPI()
+    application.include_router(composed.router())
+    with TestClient(application, base_url="https://runtime.fixture.example") as client:
+        body = client.get("/v1/status", headers={"Authorization": "Bearer workload"}).json()
+    assert body["defaults"]["voice"] == "vesper"
+    assert body["defaults"]["maxOutputTokens"] == reviewed_runtime_options["max_output_tokens"]
+
+
 @pytest.mark.parametrize("path", RETIRED_PATHS)
 def test_retired_routes_are_not_found(path):
     with TestClient(create_app(), base_url="https://runtime.fixture.example") as client:

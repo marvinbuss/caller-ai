@@ -8,10 +8,11 @@ the runtime cannot be reached the values are shown read-only.
 
 import copy
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 import reflex as rx
 from fastapi import FastAPI
+from reflex.event import EventHandler
 from reflex_base.registry import RegistrationContext
 
 from management_app.services.configuration_validation import GRAPH_FIELDS
@@ -85,6 +86,7 @@ class SettingsState(rx.State):
     environment: list[dict[str, str]] = []
     # Unpublished edits; a page load keeps them and their starting revision.
     dirty: bool = False
+    notice_revision: int = 0
     _revision: Document = {}
     _etag: str = ""
     _defaults: Document = {}
@@ -125,6 +127,7 @@ class SettingsState(rx.State):
             if not keep:
                 self._revision = revision.json()
                 self._etag = revision.headers["ETag"]
+                self.notice_revision = 0
             runtime = status.json().get("status")
             current = self._revision.get("conversationSettings") or {}
             if isinstance(runtime, dict):
@@ -201,7 +204,7 @@ class SettingsState(rx.State):
             if response.status_code == 200:
                 self._revision = response.json()
                 self._etag = response.headers["ETag"]
-                self.dirty = False
+                self.dirty, self.notice_revision = False, 0
                 self.message = (
                     f"Published revision {self._revision.get('revisionNumber', '')}. "
                     "The settings apply to conversations started from now on; "
@@ -228,6 +231,33 @@ class SettingsState(rx.State):
             self.busy = False
 
     @rx.event
+    async def check_revision(self) -> None:
+        """Background check for a newer publication; the settings draft stays as it is."""
+        if not self._revision:
+            return
+        try:
+            response = await self._get("/v2/configuration")
+            if response.status_code != 200:
+                return
+            number = int(response.json().get("revisionNumber", 0))
+            if response.headers.get("ETag") != self._etag and number > int(
+                self._revision.get("revisionNumber", 0)
+            ):
+                self.notice_revision = number
+        except Exception:
+            return
+
+    @rx.event
+    async def reload(self) -> AsyncIterator[None]:
+        """Take the newer revision: keep unpublished settings, refresh unchanged ones."""
+        self.notice_revision = 0
+        if self.dirty:
+            await cast(EventHandler, SettingsState.rebase).fn(self)
+            return
+        async for _update in cast(EventHandler, SettingsState.load).fn(self):
+            yield
+
+    @rx.event
     async def rebase(self) -> None:
         """Take the newer active revision as the base and keep the settings being edited."""
         try:
@@ -235,6 +265,6 @@ class SettingsState(rx.State):
             if revision.status_code != 200:
                 raise ValueError("configuration_unavailable")
             self._revision, self._etag = revision.json(), revision.headers["ETag"]
-            self.conflict = ""
+            self.conflict, self.notice_revision = "", 0
         except Exception:
             self.message = "Reload unavailable. Your settings are kept."

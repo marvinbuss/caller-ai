@@ -9,7 +9,7 @@ discards them. Once the session has ended the browser goes to the login page, wh
 unpublished changes were discarded, so nothing unsaved is ever reported as saved.
 """
 
-from typing import Any, cast
+from typing import cast
 
 import reflex as rx
 from reflex_base.utils.imports import ImportDict, ImportVar
@@ -21,7 +21,7 @@ WARNING_CODE = """
 function callerResign() {
     window.location.assign("/auth/login?returnTo=" + encodeURIComponent(callerReturnPath()));
 }
-function CallerSessionWarning({onResign, warningSeconds = 300}) {
+function CallerSessionWarning({warningSeconds = 300}) {
     const session = useCallerSession();
     const [now, setNow] = useState(() => Date.now());
     const [busy, setBusy] = useState(false);
@@ -46,7 +46,7 @@ function CallerSessionWarning({onResign, warningSeconds = 300}) {
         setBusy(true);
         setFailed("");
         if (!renewable) {
-            if (onResign) onResign(); else callerResign();
+            callerResign();
             return;
         }
         fetch("/auth/session/extend", {
@@ -83,7 +83,6 @@ WARNING_CSS = """
 class SessionWarning(rx.Component):
     tag = "CallerSessionWarning"
     warning_seconds: rx.Var[int]
-    on_resign: rx.EventHandler
 
     def add_imports(self) -> ImportDict:
         return {
@@ -96,16 +95,11 @@ class SessionWarning(rx.Component):
     def add_custom_code(self) -> list[str]:
         return [_frame_code(), WARNING_CODE]
 
-    @classmethod
-    def get_event_triggers(cls) -> dict[str, Any]:
-        return super().get_event_triggers() | {"on_resign": lambda: []}
 
-
-def session_warning(on_resign: Any = None) -> rx.Component:
-    properties: dict[str, Any] = {"warning_seconds": WARNING_SECONDS}
-    if on_resign is not None:
-        properties["on_resign"] = on_resign
+def session_warning() -> rx.Component:
     return cast(
         rx.Component,
-        rx.fragment(rx.el.style(WARNING_CSS), SessionWarning.create(**properties)),
+        rx.fragment(
+            rx.el.style(WARNING_CSS), SessionWarning.create(warning_seconds=WARNING_SECONDS)
+        ),
     )

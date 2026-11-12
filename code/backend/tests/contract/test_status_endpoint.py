@@ -24,6 +24,7 @@ BINDINGS = StatusBindings(
     live_host="caller-int-live.openai.azure.com",
     live_region="swedencentral",
     max_output_tokens=1024,
+    voice="quartz",
 )
 
 
@@ -131,8 +132,9 @@ def test_status_body_matches_the_contract_and_names_no_secret() -> None:
     }
     assert [voice["id"] for voice in body["supportedVoices"]] == [voice.id for voice in CATALOG]
     assert set(body["supportedVoices"][0]) == {"id", "name", "language", "accent", "presentation"}
+    # The environment voice (CALLER_LIVE_VOICE), not the catalog's own default.
     assert body["defaults"] == {
-        "voice": "marin",
+        "voice": "quartz",
         "maxOutputTokens": 1024,
         "idleTimeoutSeconds": 120,
     }
