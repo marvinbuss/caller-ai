@@ -435,8 +435,13 @@ def stored_by_earlier_release(container: ContainerDouble, revision_id: str, **ch
 def test_revisions_from_earlier_releases_still_load_and_bootstrap(
     validator, configuration_graph, routable
 ) -> None:
-    from management_app.adapters.configuration_repository import CosmosConfigurationRepository
+    from management_app.adapters.configuration_repository import (
+        CosmosConfigurationRepository,
+        verified_revision,
+    )
+    from management_app.api.configuration import revision_response
     from management_app.services.bootstrap import bootstrap
+    from management_app.services.configuration_publication import runtime_projection
 
     async def scenario():
         container = ContainerDouble()
@@ -460,7 +465,12 @@ def test_revisions_from_earlier_releases_still_load_and_bootstrap(
         assert result.revision_id == active["id"] == initial[0]["id"] and etag == initial[1]
         assert result.configuration_ready
         assert all(community.get("routable", True) is True for community in active["communities"])
+        assert active["communities"] == communities
         assert await store.read_revision(initial[0]["id"]) == active
+        # int failed next: both configuration endpoints verify the repository's snapshot again.
+        assert verified_revision(active) == active
+        assert revision_response((active, etag), "c" * 32).status_code == 200
+        assert runtime_projection(verified_revision(active))["communities"] == communities
         assert len(container.batches) == batches
         container.items[initial[0]["id"]]["communities"][0]["name"] = "Unpublished mutation"
         with pytest.raises(RuntimeError, match="^configuration_store_unavailable$"):

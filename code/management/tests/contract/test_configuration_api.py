@@ -166,6 +166,33 @@ def test_authorized_get_returns_complete_revision_and_strong_etag(configuration_
     assert identity.calls == 1 and repository.publications == 0
 
 
+def test_get_serves_a_revision_published_before_routable_existed(
+    configuration_api, configuration_graph
+) -> None:
+    from management_app.adapters.configuration_repository import verified_revision
+
+    client, identity, validator, repository = configuration_api
+    graph = copy.deepcopy(configuration_graph) | {"schemaVersion": "2.0.0"}
+    for community in graph["communities"]:
+        del community["routable"]
+    stored = revision(graph, 1, "bootstrap-fixture")
+    stored |= {key: graph[key] for key in ("schemaVersion", "communities")}
+    stored["graphHash"] = hashlib.sha256(
+        json.dumps(
+            {key: stored[key] for key in (*COLLECTIONS, "schemaVersion")},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    # The repository hands over its verified snapshot; the endpoint verifies it once more.
+    repository.snapshot = verified_revision(stored)
+    response = client.get(PATH)
+    assert response.status_code == 200
+    assert response.json()["communities"] == graph["communities"]
+
+
 def test_put_publishes_complete_revision_with_actor_and_new_etag(
     configuration_api, configuration_graph
 ) -> None:
