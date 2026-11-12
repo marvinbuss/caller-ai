@@ -486,7 +486,8 @@ class CallerTestEngine {
         this.write("status", status.replaceAll("_", " "));
         const errors = {permission_denied: "Permission denied", unavailable: "Unavailable",
             invalid_input: "Invalid input", quota: "Quota unavailable",
-            manager_busy: "Another test active", protocol_error: "Invalid protocol",
+            manager_busy: "Another test is active or an earlier test is still being cleaned up",
+            protocol_error: "Invalid protocol",
             lifetime_expired: "Test expired", idle_expired: "Idle expired",
             auth_expired: "Permission expired"};
         this.write("error", this.playbackUnavailable ? "Playback unavailable" : errors[code] || "");

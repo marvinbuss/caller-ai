@@ -1145,6 +1145,7 @@ def test_speech_reader_tracks_authorized_generation_only_and_never_fault_reconne
 def test_text_stop_clears_volatile_context_but_only_definitive_work_releases(
     text_execution_case, admission_case, monkeypatch, completed
 ):
+    from caller_runtime.services.admission import AdmissionError
     from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
 
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -1171,7 +1172,8 @@ def test_text_stop_clears_volatile_context_but_only_definitive_work_releases(
             await asyncio.wait_for(entered.wait(), 1)
         released = await controller.close()
         assert released is completed
-        assert controller.retained_bytes == 0 and adapter.disposed
+        assert controller.retained_bytes == 0
+        assert adapter.disposed is completed
         slots = (
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority.slots
@@ -1181,6 +1183,17 @@ def test_text_stop_clears_volatile_context_but_only_definitive_work_releases(
             assert slots[0].terminal_fence and slots[0].resources["model"].attempted == 1
             assert slots[0].resources["model"].settled == 0
             assert processing.done() and not await controller.close()
+            # The held slot refuses the same manager until the stopped request finishes.
+            with pytest.raises(AdmissionError, match="manager_busy"):
+                await service.reserve(permit(2))
+            # The stopped request finishes in the background; its outcome releases the slot.
+            release.set()
+            await asyncio.wait_for(controller._late_cleanup, 5)
+            assert adapter.disposed and len(requests) == 1
+            assert not (
+                await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+            ).authority.slots
+            assert (await service.reserve(permit(3))).request_id == "request-3"
 
     asyncio.run(scenario())
 
@@ -1252,7 +1265,7 @@ def test_speech_transcript_budget_is_volatile_and_only_verified_user_speech_refr
     asyncio.run(scenario())
 
 
-def test_failed_work_purges_pending_input_and_never_dispatches_expired_queue(
+def test_failed_work_keeps_session_and_never_dispatches_expired_queue(
     text_execution_case, admission_case
 ):
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -1272,14 +1285,27 @@ def test_failed_work_purges_pending_input_and_never_dispatches_expired_queue(
         assert len(requests) == 1 and not any(
             message["type"] == "text.completed" for message in messages
         )
-        assert messages[-1]["type"] == "error"
-        assert controller.retained_bytes == 0 and adapter.disposed
+        assert messages[-1] == {
+            "type": "error",
+            "code": "work_unavailable",
+            "generation": controller.policy.slot.generation,
+            "messageId": "text-first",
+            "cleanupStatus": "active",
+        }
+        # A failure bounded to one item keeps the session; the expired item is dropped unsent.
+        assert not controller.ended
+        assert await controller.process_next(emit=emit)
+        assert len(requests) == 1 and messages[-1]["code"] == "work_unavailable"
         assert not await controller.process_next(emit=emit)
-        assert (
+        assert not (
             (await repository.read(deadline=asyncio.get_running_loop().time() + 1))
             .authority.slots[0]
             .terminal_fence
         )
+        await controller.close()
+        assert controller.retained_bytes == 0
+        await asyncio.wait_for(adapter.drained(), 5)
+        assert adapter.disposed
 
     asyncio.run(scenario())
 
@@ -1701,13 +1727,18 @@ def test_correlated_fragments_need_shared_backend_clarity_before_any_actions(
             requires_clarity_check=True,
         )
         deadline = accepted.receipt.work.work_deadline_utc
+        # A speech delegation gets the longer speech budget; text keeps 10 s.
+        assert deadline == accepted.receipt.work.work_accepted_at + timedelta(seconds=30)
         await controller.process_next(emit=emit)
         assert len(requests) == 1 + int(clear)
         assert requests[0]["instructions"] == "Synthetic welcome prompt"
         assert "Synthetic correlated fragment text" in json.dumps(requests[0]["input"])
+        # The clarity check and the speech work both ask for low reasoning effort.
+        assert all(request["reasoning"]["effort"] == "low" for request in requests)
         if clear:
             assert requests[1]["instructions"] == "Synthetic welcome prompt"
-            assert max(controls["timeouts"][1].values()) <= 6
+            # Client timeouts are the background cap; the work budget bounds the wait.
+            assert max(controls["timeouts"][1].values()) == 60
         final = [event for event in socket.sent if event["type"] == "session.commentary.append"]
         assert len(final) == 1 and final[0]["delegation_id"] == "delegation-fragments"
         assert ("clarify" in final[0]["content"].lower()) is not clear
@@ -1723,6 +1754,98 @@ def test_correlated_fragments_need_shared_backend_clarity_before_any_actions(
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority.slots[0]
         assert observed.resources["capability"].attempted == 0
+        await segment.close()
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
+def test_slow_speech_delegation_holds_then_fails_alone_and_next_delegation_runs(
+    live_case, text_execution_case
+):
+    from caller_runtime.observability import Telemetry
+    from caller_runtime.services.conversation import (
+        HOLDING_LINE,
+        WORK_FAILED_LINE,
+        ConversationExecutor,
+    )
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+
+    service, repository, clock, socket, opened = live_case
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+
+    async def scenario():
+        original, segment = await opened()
+        slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
+        policy = ConversationPolicy(
+            slot=slot, snapshot=service.configuration.pin(), admission=service
+        )
+        telemetry = Telemetry("caller-runtime", "local")
+        controller = ConversationExecutor(
+            policy=policy,
+            text_adapter=adapter,
+            utc_now=clock.utc_now,
+            telemetry=telemetry,
+            holding_seconds=0.05,
+        )
+
+        async def delegate(delegation_id):
+            event = segment.protocol.accept(
+                json.dumps(
+                    {
+                        "type": "session.delegation.created",
+                        "delegation": {
+                            "id": delegation_id,
+                            "type": "delegation",
+                            "target": "client",
+                        },
+                        "offset_ms": 20,
+                    }
+                )
+            )
+            return await controller.submit_delegation(
+                segment, event, task_text="Synthetic clear request", unambiguous=True
+            )
+
+        def said(delegation_id):
+            return [
+                event["content"]
+                for event in socket.sent
+                if event["type"] == "session.commentary.append"
+                and event["delegation_id"] == delegation_id
+            ]
+
+        controls["blocked"] = True
+        await delegate("delegation-slow")
+        processing = asyncio.create_task(controller.process_next(emit=emit))
+        await asyncio.wait_for(entered.wait(), 1)
+        await asyncio.sleep(0.2)
+        assert said("delegation-slow") == [HOLDING_LINE]
+        clock.advance(31)
+        release.set()
+        assert await asyncio.wait_for(processing, 5)
+        # Only this item failed: the caller hears why and the session stays open.
+        assert said("delegation-slow") == [HOLDING_LINE, WORK_FAILED_LINE]
+        assert messages[-1]["code"] == "work_unavailable" and not controller.ended
+        assert any(
+            event["event"] == "test.work" and event["outcome"] == "failure"
+            for event in telemetry.events
+        )
+        controls["blocked"] = False
+        entered.clear()
+        controller._holding_seconds = 60
+        # The late reply is discarded but still settles the attempt, unblocking new work.
+        await asyncio.wait_for(adapter.drained(), 5)
+        await delegate("delegation-next")
+        assert await controller.process_next(emit=emit)
+        assert said("delegation-next") == ["Synthetic shared streamed reply"]
+        observed = (
+            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        ).authority.slots[0]
+        assert not observed.terminal_fence
+        assert observed.resources["model"].attempted == observed.resources["model"].settled
+        assert len(requests) == 2
+        assert all(request["reasoning"]["effort"] == "low" for request in requests)
         await segment.close()
         await controller.close()
 

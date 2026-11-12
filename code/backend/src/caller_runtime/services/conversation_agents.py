@@ -7,11 +7,12 @@ duplicate names or non-function tools raise `unapproved_agent_tools`.
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from agents import Agent, FunctionTool, ModelSettings
 from agents.models.interface import Model
 from agents.retry import ModelRetrySettings
+from openai.types.shared import Reasoning
 
 from caller_runtime.domain.configuration import RevisionSnapshot
 
@@ -24,6 +25,7 @@ def build_agents(
     model: Model,
     capabilities: Callable[[Document], list[FunctionTool]],
     policy_tools: Callable[[Document], list[FunctionTool]],
+    reasoning_effort: Literal["low"] | None = None,
 ) -> dict[str, Agent[Any]]:
     if not isinstance(model, Model) or capabilities is None or policy_tools is None:
         raise ValueError("explicit_configured_agent_ports_required")
@@ -46,7 +48,11 @@ def build_agents(
             handoffs=[],
             mcp_servers=[],
             model_settings=ModelSettings(
-                store=False, parallel_tool_calls=False, retry=ModelRetrySettings(max_retries=0)
+                store=False,
+                parallel_tool_calls=False,
+                retry=ModelRetrySettings(max_retries=0),
+                # None keeps the deployment default; speech and clarity checks ask for low.
+                reasoning=None if reasoning_effort is None else Reasoning(effort=reasoning_effort),
             ),
         )
     return result

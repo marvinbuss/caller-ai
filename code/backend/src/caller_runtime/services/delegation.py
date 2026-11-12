@@ -13,7 +13,14 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from caller_runtime.domain.conversation import TestSlot, WorkBudget, utc
+from caller_runtime.domain.conversation import (
+    MAX_WORK_SECONDS,
+    SPEECH_WORK_SECONDS,
+    WORK_SECONDS,
+    TestSlot,
+    WorkBudget,
+    utc,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +129,13 @@ class SpeechFragments:
 
 
 class DelegationQueue:
-    def __init__(self) -> None:
+    def __init__(self, *, speech_work_seconds: int = SPEECH_WORK_SECONDS) -> None:
+        if (
+            type(speech_work_seconds) is not int
+            or not WORK_SECONDS <= speech_work_seconds <= MAX_WORK_SECONDS
+        ):
+            raise ValueError("invalid_speech_work_budget")
+        self._speech_work_seconds = speech_work_seconds
         self._seen: dict[str, WorkReceipt] = {}
         self._pending: WorkItem | None = None
         self._executing: WorkItem | None = None
@@ -186,6 +199,7 @@ class DelegationQueue:
         if self._pending is not None:
             raise PermissionError("work_queue_full")
         now = utc(now)
+        seconds = WORK_SECONDS if delegation_id is None else self._speech_work_seconds
         if (
             slot.terminal_fence
             or slot.ready_at is None
@@ -204,7 +218,7 @@ class DelegationQueue:
             WorkBudget(
                 now,
                 min(
-                    now + timedelta(seconds=10),
+                    now + timedelta(seconds=seconds),
                     slot.auth_expires_at,
                     slot.expires_at,
                     slot.idle_expires_at,

@@ -55,8 +55,8 @@ feed the `test.alert` classification.
 
 | Event | Service | Fields | Read it when |
 |-------|---------|--------|--------------|
-| `test.admission.failure` | Runtime | `error_class`, `error_code` | A session start failed: for example `authority_unavailable` names a stalled authority read |
-| `test.work.failure` | Runtime | `error_class`, `error_code` | A text or speech work item failed: for example `model_unavailable` names a failed model call |
+| `test.admission.failure` | Runtime | `error_class`, `error_code` | A session start failed: for example `authority_unavailable` names a stalled authority read. A refused start (`manager_busy`, `capacity_unavailable`) also logs `test.admission` with reason `denied`; repeated `manager_busy` for one manager after its test ended points at a held slot (see [scaling](scaling.md)) |
+| `test.work.failure` | Runtime | `error_class`, `error_code` | A text or speech work item failed: for example `model_unavailable` names a failed model call. `model_unavailable`, `work_deadline_exceeded` and `work_busy` end only that item; other codes end the session |
 | `test.speech.unobserved` | Runtime | `end_ms`, `since_first_frame_ms`, `since_last_frame_ms` | Speech did not renew the idle limit: the first rejected transcript of a generation |
 | `test.relay.failure` | Management | `error_class`, `received_close`, `sent_close`, `browser_close` | The browser saw "cleanup pending" after an unexpected relay close |
 

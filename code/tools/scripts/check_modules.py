@@ -28,7 +28,13 @@ TARGETS = {
     "backend": Target(
         ROOT / "code/backend/src",
         "caller_runtime",
-        ("caller_runtime.main", "caller_runtime.composition", "caller_runtime.entrypoint"),
+        (
+            "caller_runtime.main",
+            "caller_runtime.composition",
+            "caller_runtime.entrypoint",
+            # The operator's one-off `python -m caller_runtime.recovery` for held slots.
+            "caller_runtime.recovery",
+        ),
     ),
     "management": Target(
         ROOT / "code/management",

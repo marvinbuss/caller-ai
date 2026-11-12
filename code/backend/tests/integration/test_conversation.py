@@ -832,6 +832,16 @@ def test_composed_runtime_prepares_same_pinned_backend_and_resource_aware_cleanu
             assert slot.resources["capability"].attempted == 0
             assert slot.resources["live"].attempted == (2 if mode == "speech" else 0)
             assert len(sockets) == int(mode == "speech")
+            # A refused start is logged with its reason, so a held slot is visible in logs.
+            with pytest.raises(AdmissionError, match="manager_busy"):
+                await runtime.start(permit(2, mode=mode), emit=emit)
+            assert {
+                "event": "test.admission",
+                "outcome": "failure",
+                "reason_code": "denied",
+            }.items() <= telemetry.events[-2].items()
+            assert telemetry.events[-1]["event"] == "test.admission.failure"
+            assert telemetry.events[-1]["error_code"] == "manager_busy"
             assert await controller.close()
             assert controller.retained_bytes == 0
             assert not (

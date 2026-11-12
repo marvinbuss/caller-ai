@@ -27,7 +27,12 @@ from caller_runtime.adapters.capability_client import ConversationCapabilityClie
 from caller_runtime.adapters.foundry_text import FoundryTextAdapter
 from caller_runtime.adapters.gpt_live import GptLiveSession
 from caller_runtime.adapters.strict_json import unique_object
-from caller_runtime.domain.conversation import Metadata, TestSlot, WorkBudget
+from caller_runtime.domain.conversation import (
+    SPEECH_WORK_SECONDS,
+    Metadata,
+    TestSlot,
+    WorkBudget,
+)
 from caller_runtime.observability import Telemetry
 from caller_runtime.services.admission import AdmissionError
 from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
@@ -39,6 +44,15 @@ from caller_runtime.services.delegation import (
     SpeechFragments,
     WorkItem,
 )
+
+# The caller hears this when a speech delegation is still running after the holding delay.
+HOLDING_LINE = "One moment, I'm checking that."
+HOLDING_SECONDS = 5.0
+WORK_FAILED_LINE = "I could not finish that, please try again."
+# One work item failing within its own budget; the session and its slot stay usable.
+BOUNDED_WORK_FAILURES = frozenset({"model_unavailable", "work_deadline_exceeded", "work_busy"})
+# Cleanup retried once a detached model request has finished, held strongly until done.
+_LATE_CLEANUPS: set[asyncio.Task[None]] = set()
 
 
 class TaskClarity(Metadata):
@@ -61,11 +75,15 @@ class ConversationExecutor:
         speech_segments: SpeechSegments | None = None,
         cleanup_observations: CleanupObservations | None = None,
         telemetry: Telemetry | None = None,
+        speech_work_seconds: int = SPEECH_WORK_SECONDS,
+        holding_seconds: float = HOLDING_SECONDS,
     ) -> None:
         self.policy, self.text_adapter, self.utc_now = policy, text_adapter, utc_now
         self.capability_client = capability_client
         self.speech_segments = speech_segments
-        self.queue = DelegationQueue()
+        self.queue = DelegationQueue(speech_work_seconds=speech_work_seconds)
+        self._holding_seconds = holding_seconds
+        self._late_cleanup: asyncio.Task[None] | None = None
         self.speech_fragments = SpeechFragments()
         self._accepting, self._processing = asyncio.Lock(), asyncio.Lock()
         self._history: list[Any] = []
@@ -498,6 +516,7 @@ class ConversationExecutor:
             model=model,
             capabilities=lambda configured: [],
             policy_tools=lambda configured: [],
+            reasoning_effort="low",
         )
         agent = registry[slot.active_agent_id]
         agent.output_type = TaskClarity
@@ -559,6 +578,8 @@ class ConversationExecutor:
                     policy_tools=partial(
                         self._tools, item=item, source=slot, called=called, capabilities=False
                     ),
+                    # A caller waits in silence on speech; text keeps the deployment default.
+                    reasoning_effort="low" if slot.mode == "speech" else None,
                 )
                 agent = registry[slot.active_agent_id]
                 agent.tool_use_behavior = "stop_on_first_tool"
@@ -676,24 +697,51 @@ class ConversationExecutor:
                         self._sdk_drained = not self._runs
 
     async def _work_error(
-        self, emit: Callable[[dict[str, Any]], Awaitable[None]], task_id: str | None = None
+        self,
+        emit: Callable[[dict[str, Any]], Awaitable[None]],
+        task_id: str | None = None,
+        *,
+        active: bool = False,
     ) -> None:
         if self._telemetry is not None:
             self._telemetry.event(
                 "test.work", "failure", mode=self.policy.slot.mode, reason="unavailable"
             )
-        message = {
+        message: dict[str, Any] = {
             "type": "error",
             "code": "work_unavailable",
             "generation": self.policy.slot.generation,
         }
         if task_id is not None:
             message["messageId"] = task_id
+        if active:
+            # The session stays open, so the voice client must not treat this as its end.
+            message["cleanupStatus"] = "active"
         try:
             async with asyncio.timeout(0.1):
                 await emit(message)
         except Exception:
             pass
+
+    async def _tell_live(self, item: WorkItem, content: str) -> None:
+        """Best effort: give the Live model a fixed line for this delegation."""
+        segment = self._speech.get(item.receipt.task_id)
+        if segment is None:
+            return
+        delegation_id = item.receipt.delegation_id
+        try:
+            if segment.intent.generation != self.policy.slot.generation:
+                if self.speech_segments is None:
+                    return
+                segment, delegation_id = self.speech_segments.current, None
+            async with asyncio.timeout(1):
+                await segment.append_context(delegation_id, content)
+        except Exception:
+            pass
+
+    async def _hold(self, item: WorkItem) -> None:
+        await asyncio.sleep(self._holding_seconds)
+        await self._tell_live(item, HOLDING_LINE)
 
     async def process_next(self, *, emit: Callable[[dict[str, Any]], Awaitable[None]]) -> bool:
         if self._processing.locked():
@@ -703,7 +751,11 @@ class ConversationExecutor:
                 return False
             try:
                 item = self.queue.take(now=self.utc_now())
-            except PermissionError:
+            except PermissionError as error:
+                if error.args == ("work_deadline_exceeded",):
+                    # The pending item expired while earlier work ran; it is dropped, not run.
+                    await self._work_error(emit, active=True)
+                    return True
                 self._failed = True
                 await self._work_error(emit)
                 await self.close()
@@ -712,21 +764,39 @@ class ConversationExecutor:
                 return False
             self._processing_task = asyncio.current_task()
             failed_here = False
+            ending = False
             try:
-                await self._execute(item, emit)
+                holding = (
+                    asyncio.create_task(self._hold(item))
+                    if item.receipt.delegation_id is not None
+                    else None
+                )
+                try:
+                    await self._execute(item, emit)
+                finally:
+                    if holding is not None:
+                        holding.cancel()
             except Exception as error:
-                self._failed = True
+                code = (
+                    error.args[0]
+                    if isinstance(error, (PermissionError, AdmissionError)) and error.args
+                    else None
+                )
+                # Only a failure bounded to this item keeps the session; anything else ends it.
+                ending = not isinstance(error, TimeoutError) and code not in BOUNDED_WORK_FAILURES
+                if ending:
+                    self._failed = True
                 failed_here = True
                 if self._telemetry is not None:
                     self._telemetry.diagnostic(
                         "test.work.failure",
                         mode=self.policy.slot.mode,
                         error=type(error).__name__,
-                        code=error.args[0]
-                        if isinstance(error, (PermissionError, AdmissionError))
-                        else None,
+                        code=code,
                     )
-                await self._work_error(emit, item.receipt.task_id)
+                await self._work_error(emit, item.receipt.task_id, active=not ending)
+                if not ending:
+                    await self._tell_live(item, WORK_FAILED_LINE)
             finally:
                 self.queue.finish(item.receipt)
                 self._speech.pop(item.receipt.task_id, None)
@@ -740,7 +810,7 @@ class ConversationExecutor:
                     measurement="work_seconds",
                     value=(self.utc_now() - item.receipt.work.work_accepted_at).total_seconds(),
                 )
-            if failed_here:
+            if ending:
                 await self.close()
             return True
 
@@ -858,7 +928,23 @@ class ConversationExecutor:
                 correlation_id=self._cleanup_correlation,
             )
             self._reported_cleanup = result
+        if not result and self._late_cleanup is None and self.text_adapter.draining:
+            # A model request left running after its budget holds the slot until it finishes;
+            # retry cleanup then instead of leaving the slot held for good.
+            self._late_cleanup = asyncio.create_task(self._close_after_drain())
+            _LATE_CLEANUPS.add(self._late_cleanup)
+            self._late_cleanup.add_done_callback(_LATE_CLEANUPS.discard)
         return result
+
+    async def _close_after_drain(self) -> None:
+        try:
+            await self.text_adapter.drained()
+            async with self._closing:
+                if self._cleanup_result is False:
+                    self._cleanup_result = None
+            await self.close()
+        except Exception:
+            pass
 
     async def _close_resources(self, deadline: float) -> bool:
         async with asyncio.timeout_at(deadline):
