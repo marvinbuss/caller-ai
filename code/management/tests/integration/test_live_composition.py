@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from management_app.health import lifecycle
 from management_app.live import build_live_management, reviewed_fingerprint
 from management_app.settings import Settings, StartupError
+from tests.conftest import configuration_graph_document
 from tests.integration.test_configuration_persistence import ContainerDouble
 from tests.unit.test_live_settings import complete
 
@@ -209,6 +210,63 @@ def test_the_first_start_creates_the_protected_agents_and_a_restart_changes_noth
     asyncio.run(start())
     assert len(Cosmos.created) == 2
     assert Cosmos.created[1].containers["configuration"].items == first
+
+
+def earlier_release_store(changes: dict[str, Any]) -> ContainerDouble:
+    from tests.integration.test_configuration_persistence import stored_by_earlier_release
+
+    store = Cosmos.created[0].containers["configuration"]
+    stored_by_earlier_release(store, store.items["active"]["revisionId"], **changes)
+    return store
+
+
+def test_a_start_over_a_revision_from_the_previous_release_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = settings_for(monkeypatch)
+
+    async def start() -> None:
+        managed = await compose(settings)
+        async with lifecycle(managed.api, settings):
+            pass
+
+    asyncio.run(start())
+    graph = configuration_graph_document()
+    for community in graph["communities"]:
+        del community["routable"]
+    store = earlier_release_store(graph | {"schemaVersion": "2.0.0"})
+    before = copy.deepcopy(store.items)
+    # int: the 005 image stopped with store_unavailable on exactly this data shape.
+    asyncio.run(start())
+    assert store.items == before
+
+
+def test_a_startup_failure_logs_its_fixed_codes_but_no_content(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    settings = settings_for(monkeypatch)
+
+    async def start() -> None:
+        managed = await compose(settings)
+        async with lifecycle(managed.api, settings):
+            pass
+
+    asyncio.run(start())
+    store = Cosmos.created[0].containers["configuration"]
+    store.items[store.items["active"]["revisionId"]]["agents"][0]["prompt"] = "Synthetic secret"
+    with caplog.at_level("ERROR", logger="management.startup"):
+        with pytest.raises(StartupError) as raised:
+            asyncio.run(start())
+    assert raised.value.code == "store_unavailable"
+    [record] = [entry for entry in caplog.records if entry.name == "management.startup"]
+    event = json.loads(record.getMessage())
+    assert event["event"] == "management.startup.failure"
+    assert event["error_codes"] == [
+        "management_composition_unavailable",
+        "configuration_store_unavailable",
+        "invalid_snapshot",
+    ]
+    assert "Synthetic secret" not in record.getMessage()
 
 
 def test_readiness_reports_not_ready_when_the_identity_cannot_reach_the_store(

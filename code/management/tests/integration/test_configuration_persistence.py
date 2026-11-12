@@ -413,6 +413,76 @@ def test_tampered_snapshot_hash_fails_closed(validator, configuration_graph) -> 
     asyncio.run(scenario())
 
 
+def stored_by_earlier_release(container: ContainerDouble, revision_id: str, **changes) -> None:
+    """Rewrite a stored revision as an earlier writer left it, hashing the graph as stored."""
+    import hashlib
+
+    from management_app.services.configuration_validation import GRAPH_FIELDS, encoded
+
+    document = container.items[revision_id]
+    document.update(changes)
+    graph = {key: value for key, value in document.items() if key in GRAPH_FIELDS}
+    document["graphHash"] = hashlib.sha256(encoded(graph)).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "routable",
+    [
+        pytest.param(None, id="schema-2.0.0-without-routable"),
+        pytest.param(True, id="2.1.0-writer-with-explicit-routable"),
+    ],
+)
+def test_revisions_from_earlier_releases_still_load_and_bootstrap(
+    validator, configuration_graph, routable
+) -> None:
+    from management_app.adapters.configuration_repository import CosmosConfigurationRepository
+    from management_app.services.bootstrap import bootstrap
+
+    async def scenario():
+        container = ContainerDouble()
+        store = CosmosConfigurationRepository(container=container, validator=validator)
+        initial = await store.initialize(configuration_graph, actor_id="bootstrap")
+        communities = [
+            {key: value for key, value in community.items() if key != "routable"}
+            | ({} if routable is None else {"routable": routable})
+            for community in configuration_graph["communities"]
+        ]
+        stored_by_earlier_release(
+            container,
+            initial[0]["id"],
+            schemaVersion="2.0.0" if routable is None else "2.1.0",
+            communities=communities,
+        )
+        batches = len(container.batches)
+        # int failed here: startup read the active revision and rejected it as invalid_snapshot.
+        result = await bootstrap(store)
+        active, etag = await store.read_active()
+        assert result.revision_id == active["id"] == initial[0]["id"] and etag == initial[1]
+        assert result.configuration_ready
+        assert all(community.get("routable", True) is True for community in active["communities"])
+        assert await store.read_revision(initial[0]["id"]) == active
+        assert len(container.batches) == batches
+        container.items[initial[0]["id"]]["communities"][0]["name"] = "Unpublished mutation"
+        with pytest.raises(RuntimeError, match="^configuration_store_unavailable$"):
+            await store.read_active()
+
+    asyncio.run(scenario())
+
+
+def test_non_routable_community_round_trips(repository, configuration_graph) -> None:
+    store, _container = repository
+    graph = copy.deepcopy(configuration_graph)
+    graph["communities"][1]["routable"] = False
+
+    async def scenario():
+        published, _etag = await store.initialize(graph, actor_id="bootstrap")
+        alpha, beta = published["communities"]
+        assert alpha["routable"] is True and beta["routable"] is False
+        assert (await store.read_active())[0] == published
+
+    asyncio.run(scenario())
+
+
 def test_snapshot_limit_includes_server_metadata(repository, configuration_graph) -> None:
     from management_app.adapters.configuration_repository import ConfigurationRejected
     from management_app.services.configuration_validation import SNAPSHOT_LIMIT, encoded
