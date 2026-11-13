@@ -43,6 +43,8 @@ TARGETS = {
             "management_app.management_app",
             "management_app.start",
             "management_app.fingerprint",
+            # The operator's one-off `python -m management_app.services.apply_default_prompts`.
+            "management_app.services.apply_default_prompts",
         ),
     ),
 }

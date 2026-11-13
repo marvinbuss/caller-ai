@@ -42,6 +42,7 @@ RUNTIME_HOST = "runtime.e2e.example.net"
 MANAGEMENT_ORIGIN = f"https://{MANAGEMENT_HOST}"
 RUNTIME_ORIGIN = f"https://{RUNTIME_HOST}"
 MODEL_REPLY = "Hello from the model fixture."
+GREETING = "Welcome to the e2e fixture. How can I help?"
 PUBLISHED_PROMPT = "Published by the journey: greet the caller briefly."
 
 IDENTITY_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -177,7 +178,12 @@ def model_transport(requests: list[dict[str, Any]]) -> httpx2.MockTransport:
                 ).encode()
 
     async def dispatch(request: httpx2.Request) -> httpx2.Response:
-        requests.append(json.loads(request.content))
+        body = json.loads(request.content)
+        requests.append(body)
+        if not body.get("stream"):
+            # The Welcome agent's greeting is one non-streamed request.
+            greeting = {**message, "content": [{**message["content"][0], "text": GREETING}]}
+            return httpx2.Response(200, json={**reply, "output": [greeting]})
         return httpx2.Response(200, headers={"Content-Type": "text/event-stream"}, stream=Chunks())
 
     return httpx2.MockTransport(dispatch)
@@ -394,6 +400,9 @@ def test_a_tester_gets_a_model_reply_through_both_apps_and_one_correlation_id(
             opened = receive_until(socket, "ready")[-1]
             assert opened["mode"] == "text"
             session = opened["sessionId"]
+            # The conversation opens with the Welcome agent's greeting.
+            greeting = receive_until(socket, "text.completed")
+            assert "".join(m["text"] for m in greeting if m["type"] == "text.delta") == GREETING
             socket.send_text(
                 json.dumps(
                     {
@@ -423,10 +432,13 @@ def test_a_tester_gets_a_model_reply_through_both_apps_and_one_correlation_id(
         event["event"] == "request" and event["correlation_id"] == expected
         for event in runtime_events
     )
-    assert len(world.model_requests) == 1
-    assert PUBLISHED_PROMPT in json.dumps(world.model_requests[0]["instructions"])
+    greeting_requests = [request for request in world.model_requests if not request.get("stream")]
+    work_requests = [request for request in world.model_requests if request.get("stream")]
+    assert len(greeting_requests) == 1 and len(work_requests) == 1
+    assert PUBLISHED_PROMPT in json.dumps(work_requests[0]["instructions"])
     stored = world.runtime_stores["text-conversations"].records
     assert len(stored) == 1 and [t["role"] for t in next(iter(stored.values()))["turns"]] == [
+        "assistant",
         "user",
         "assistant",
     ]
