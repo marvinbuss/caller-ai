@@ -134,6 +134,8 @@ def endpoint(
             requests=requests,
             runtime=runtime,
             repository=repository,
+            controls=controls,
+            release=release,
         )
 
 
@@ -552,3 +554,316 @@ def test_each_refusal_sends_one_error_message_then_closes_with_its_code(
     while authority_slots(endpoint) and time.monotonic() < deadline:
         time.sleep(0.05)
     assert endpoint.provider_sockets[0].closed == 1
+
+
+def wait_for(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition_not_reached"
+        time.sleep(0.01)
+
+
+def general_commentary(provider):
+    return [
+        event
+        for event in provider.sent
+        if event["type"] == "session.commentary.append" and event["delegation_id"] is None
+    ]
+
+
+def greeting_events(endpoint):
+    return [
+        event
+        for event in endpoint.client.app.state.telemetry.events
+        if event["event"] == "test.greeting"
+    ]
+
+
+def provider_event(endpoint, event):
+    provider = endpoint.provider_sockets[0]
+
+    async def put():
+        await provider.events.put(json.dumps(event))
+
+    endpoint.client.portal.call(put)
+
+
+def release_model(endpoint):
+    async def release():
+        endpoint.release.set()
+
+    endpoint.client.portal.call(release)
+
+
+def stop(socket, ready, sequence=1):
+    socket.send_json({"type": "stop", "sequence": sequence, "sessionId": ready["sessionId"]})
+    assert next_event(socket, "ended")["cleanupStatus"] == "complete"
+
+
+@pytest.mark.parametrize("long", [False, True])
+def test_voice_session_greets_after_ready_through_general_commentary(endpoint, long):
+    from caller_runtime.services.greeting import VOICE_GREETING_INPUT
+
+    greeting = (
+        "This greeting sentence introduces the service in a friendly way. " * 20
+        if long
+        else "Hello and welcome to the service. How can I help you today?"
+    ).strip()
+    endpoint.controls["greeting"] = greeting
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        assert ready["type"] == "ready"
+        provider = endpoint.provider_sockets[0]
+        # The start event and its validator are unchanged: no greeting rides in session.input.
+        assert "input" not in provider.start["session"]
+        wait_for(lambda: general_commentary(provider))
+        if long:
+            wait_for(
+                lambda: "".join(e["content"] for e in general_commentary(provider)) == greeting
+            )
+        parts = general_commentary(provider)
+        assert "".join(part["content"] for part in parts) == greeting
+        assert len(parts) == (3 if long else 1)
+        assert all(len(part["content"].encode("utf-8")) <= 500 for part in parts)
+        asked = [
+            r
+            for r in endpoint.controls["greeting_requests"]
+            if r.get("input") == VOICE_GREETING_INPUT
+        ]
+        assert len(asked) == 1 and not asked[0].get("tools")
+        assert not greeting_events(endpoint)
+        provider_event(
+            endpoint,
+            {
+                "type": "session.output_audio.delta",
+                "delta": base64.b64encode(b"\x07\0" * 480).decode(),
+            },
+        )
+        while socket.receive().get("bytes") is None:
+            pass
+        events = greeting_events(endpoint)
+        assert [(e["outcome"], e["reason_code"], e["kind"]) for e in events] == [
+            ("success", "ready", "voice")
+        ]
+        assert events[0]["measurement"] == "greeting_seconds"
+        assert 0 <= float(events[0]["value"]) <= 5
+        assert greeting not in json.dumps(events)
+        stop(socket, ready)
+    assert len(greeting_events(endpoint)) == 1
+
+
+def test_a_greeting_without_text_by_the_deadline_is_cancelled_and_never_spoken(
+    endpoint, monkeypatch
+):
+    from caller_runtime.api import voice
+
+    monkeypatch.setattr(voice, "VOICE_GREETING_SECONDS", 0.3)
+    endpoint.controls["greeting"], endpoint.controls["greeting_block"] = "Too late", True
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        provider = endpoint.provider_sockets[0]
+        wait_for(lambda: greeting_events(endpoint))
+        events = greeting_events(endpoint)
+        assert [(e["outcome"], e["reason_code"], e["value"]) for e in events] == [
+            ("failure", "deadline", "0.3")
+        ]
+        release_model(endpoint)
+        time.sleep(0.2)
+        assert not general_commentary(provider)
+        socket.send_json(
+            {"type": "ping", "sequence": 1, "sessionId": ready["sessionId"], "nonce": "alive"}
+        )
+        assert next_event(socket, "pong")["nonce"] == "alive"
+        stop(socket, ready, 2)
+    assert len(greeting_events(endpoint)) == 1
+
+
+def test_a_failing_greeting_request_logs_deadline_without_a_fallback(endpoint):
+    # A 4xx answer is a definite provider outcome, so the attempt settles and cleanup completes.
+    endpoint.controls["greeting"], endpoint.controls["greeting_status"] = "unused", 429
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        provider = endpoint.provider_sockets[0]
+        wait_for(lambda: greeting_events(endpoint))
+        events = greeting_events(endpoint)
+        assert [(e["outcome"], e["reason_code"], e["value"]) for e in events] == [
+            ("failure", "deadline", "5.0")
+        ]
+        assert not general_commentary(provider)
+        stop(socket, ready)
+
+
+def test_live_gets_voice_instructions_a_context_note_and_a_quiet_handover(
+    endpoint, runtime_revision_v2
+):
+    from caller_runtime.services.modality_defaults import VOICE_INSTRUCTIONS
+    from caller_runtime.services.speech_parts import QUIET_HANDOVER
+
+    revision = runtime_revision_v2()
+    welcome = next(agent for agent in revision["agents"] if agent["role"] == "welcome")
+    routable = [
+        community
+        for community in revision["communities"]
+        if community["enabled"] and community.get("routable", True)
+    ]
+    endpoint.controls["greeting"], endpoint.controls["greeting_block"] = "Unused", True
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        provider = endpoint.provider_sockets[0]
+        instructions = provider.start["session"]["instructions"]
+        assert instructions.startswith(VOICE_INSTRUCTIONS + "\nDelegate reasoning")
+        assert len(instructions.encode("utf-8")) <= 16 * 1024
+        prompts = [agent["prompt"] for agent in revision["agents"]]
+        assert not any(prompt in instructions for prompt in prompts)
+        notes = [
+            event
+            for event in provider.sent
+            if event["type"] == "session.thinking.append" and event["delegation_id"] is None
+        ]
+        note = "".join(event["content"] for event in notes)
+        assert notes and all(len(event["content"].encode("utf-8")) <= 500 for event in notes)
+        assert len(note.encode("utf-8")) <= 2000
+        assert note.startswith(f"{welcome['name']} (welcome)")
+        assert "Communities you can route to:" in note
+        assert all(community["name"] + ": " in note for community in routable)
+        assert not any(prompt in note for prompt in prompts)
+        provider_event(
+            endpoint,
+            {
+                "type": "session.delegation.created",
+                "delegation": {"id": "delegation-quiet", "type": "delegation", "target": "client"},
+                "offset_ms": 10,
+            },
+        )
+
+        def quiet():
+            return [
+                event
+                for event in provider.sent
+                if event["type"] == "session.thinking.append"
+                and event["delegation_id"] == "delegation-quiet"
+            ]
+
+        wait_for(quiet)
+        assert [event["content"] for event in quiet()] == [QUIET_HANDOVER]
+        release_model(endpoint)
+        stop(socket, ready)
+
+
+def test_progress_is_spoken_with_the_delegation_and_sent_to_the_browser(endpoint):
+    # Without a greeting text the greeting request fails at once and holds no model slot.
+    endpoint.controls["clarity"] = True
+    endpoint.controls["wire_actions"] = [
+        ("report_progress", {"state": "still_working", "message": "Checking that for you."})
+    ]
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        # Readiness is done; later non-streamed requests are the clarity check.
+        endpoint.controls["prepare"] = False
+        provider = endpoint.provider_sockets[0]
+        socket.send_bytes(struct.pack(">BII", 1, ready["generation"], 1) + b"\x05\0" * 480)
+        wait_for(lambda: [e for e in provider.sent if e["type"] == "session.input_audio.append"])
+        provider_event(
+            endpoint,
+            {
+                "type": "session.input_transcript.delta",
+                "delta": "Synthetic caller request",
+                "start_ms": 0,
+                "end_ms": 20,
+                "event_id": "event_input",
+            },
+        )
+        provider_event(
+            endpoint,
+            {
+                "type": "session.delegation.created",
+                "delegation": {
+                    "id": "delegation-progress",
+                    "type": "delegation",
+                    "target": "client",
+                },
+                "offset_ms": 40,
+            },
+        )
+        progress = next_event_of(socket, "progress")
+        assert set(progress) == {"type", "sequence", "generation", "sessionId", "state", "text"}
+        assert (progress["state"], progress["text"]) == ("still_working", "Checking that for you.")
+
+        def spoken():
+            return [
+                e["content"]
+                for e in provider.sent
+                if e["type"] == "session.commentary.append"
+                and e["delegation_id"] == "delegation-progress"
+            ]
+
+        wait_for(lambda: len(spoken()) == 2)
+        assert spoken()[0] == "Checking that for you."
+        assert all(len(part.encode("utf-8")) <= 500 for part in spoken())
+        release_model(endpoint)
+        stop(socket, ready)
+
+
+def next_event_of(socket, kind):
+    """Read control events until one of `kind`, skipping audio frames and other controls."""
+    while True:
+        message = socket.receive()
+        if message.get("text") is None:
+            continue
+        event = json.loads(message["text"])
+        if event["type"] == kind:
+            return event
+        assert event["type"] not in {"error", "ended"}, event
+
+
+@pytest.mark.parametrize("first", ["speech", "delegation"])
+def test_caller_speech_or_a_delegation_first_skips_the_greeting(endpoint, first):
+    endpoint.controls["greeting"], endpoint.controls["greeting_block"] = "Skipped", True
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        provider = endpoint.provider_sockets[0]
+        wait_for(lambda: endpoint.controls.get("greeting_requests"))
+        if first == "speech":
+            socket.send_bytes(struct.pack(">BII", 1, ready["generation"], 1) + b"\x05\0" * 480)
+            wait_for(
+                lambda: [e for e in provider.sent if e["type"] == "session.input_audio.append"]
+            )
+            provider_event(
+                endpoint,
+                {
+                    "type": "session.input_transcript.delta",
+                    "delta": "Synthetic caller words",
+                    "start_ms": 0,
+                    "end_ms": 20,
+                    "event_id": "event_input",
+                },
+            )
+        else:
+            provider_event(
+                endpoint,
+                {
+                    "type": "session.delegation.created",
+                    "delegation": {
+                        "id": "delegation-first",
+                        "type": "delegation",
+                        "target": "client",
+                    },
+                    "offset_ms": 10,
+                },
+            )
+        wait_for(lambda: greeting_events(endpoint))
+        assert [(e["outcome"], e["reason_code"]) for e in greeting_events(endpoint)] == [
+            ("success", "skipped")
+        ]
+        assert "measurement" not in greeting_events(endpoint)[0]
+        release_model(endpoint)
+        time.sleep(0.2)
+        assert not general_commentary(provider)
+        stop(socket, ready)
+    assert len(greeting_events(endpoint)) == 1

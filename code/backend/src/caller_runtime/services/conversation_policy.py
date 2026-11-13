@@ -16,6 +16,50 @@ from caller_runtime.domain.configuration import RevisionSnapshot
 from caller_runtime.domain.conversation import TestSlot, WorkBudget
 from caller_runtime.domain.visibility import CommunityVisibility
 from caller_runtime.services.admission import AdmissionError, TestAdmissionService
+from caller_runtime.services.speech_parts import split_reply
+
+CONTEXT_NOTE_BYTES = 2000
+DESCRIPTION_CHARS = 160
+
+
+def context_note(snapshot: RevisionSnapshot, slot: TestSlot) -> list[str]:
+    """The quiet note for the speaking model: the active agent and the communities reachable
+    from it, in parts of at most 500 bytes and 2,000 bytes in total. It holds no instructions."""
+    graph = snapshot.for_runtime()
+    agent = next(item for item in graph["agents"] if item["agentId"] == slot.active_agent_id)
+    enabled = {
+        community["communityId"]: community
+        for community in graph["communities"]
+        if community["enabled"] is True
+    }
+    if agent["role"] == "goodbye":
+        reachable = []
+    elif slot.active_community_id is None:
+        reachable = [item for item in enabled.values() if item.get("routable", True) is True]
+    else:
+        reachable = [
+            enabled[edge["targetCommunityId"]]
+            for edge in graph["communityConnections"]
+            if edge["sourceCommunityId"] == slot.active_community_id
+            and edge["targetCommunityId"] in enabled
+        ]
+    lines = [
+        f"{agent['name']} ({agent['role']})",
+        "Communities you can route to:" + ("" if reachable else " none"),
+    ]
+
+    def size(values: list[str]) -> int:
+        return len("\n".join(values).encode("utf-8"))
+
+    for index, community in enumerate(reachable):
+        line = f"{community['name']}: {community['routingDescription'][:DESCRIPTION_CHARS]}"
+        left = len(reachable) - index - 1
+        tail = [f"…and {left} more communities"] if left else []
+        if size([*lines, line, *tail]) > CONTEXT_NOTE_BYTES:
+            lines.append(f"…and {left + 1} more communities")
+            break
+        lines.append(line)
+    return split_reply("\n".join(lines))
 
 
 class ConversationPolicy:
@@ -256,10 +300,12 @@ class SpeechSegments:
         current: GptLiveSession,
         instructions_for: Callable[[TestSlot], str],
         emit: Callable[[dict[str, Any]], Awaitable[None]],
+        context_for: Callable[[TestSlot], list[str]] | None = None,
     ) -> None:
         self._current: GptLiveSession | None = current
         self._adapter = current.adapter
         self._instructions_for, self._emit = instructions_for, emit
+        self._context_for = context_for
         self._lock = asyncio.Lock()
         self._confirmed: TestSlot | None = None
         self._failed = False
@@ -272,6 +318,15 @@ class SpeechSegments:
         if self._current is None:
             raise PermissionError("live_unavailable")
         return self._current
+
+    async def send_context(
+        self, segment: GptLiveSession, slot: TestSlot, work: WorkBudget | None = None
+    ) -> None:
+        """Send the context note as quiet thinking right after a segment starts."""
+        if self._context_for is None:
+            return
+        for part in self._context_for(slot):
+            await segment.append_context(None, part, quiet=True, work=work)
 
     async def _fail(self, slot: TestSlot | None = None) -> None:
         self._failed = True
@@ -338,6 +393,7 @@ class SpeechSegments:
                 self._current = await self._adapter.start(
                     slot, instructions=self._instructions_for(slot), work=work
                 )
+                await self.send_context(self._current, slot, work)
                 work.require(self._adapter.utc_now())
                 self._transition_work = None
                 self._changed.set()

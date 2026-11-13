@@ -479,6 +479,57 @@ def test_revisions_from_earlier_releases_still_load_and_bootstrap(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("version", ["2.0.0", "2.1.0"])
+def test_earlier_revisions_project_the_defaults_and_move_to_2_2_0_only_with_a_new_field(
+    validator, configuration_graph, version
+) -> None:
+    from management_app.adapters.configuration_repository import (
+        CosmosConfigurationRepository,
+        graph_document,
+        verified_revision,
+    )
+    from management_app.models.configuration import AGENT_ADDITIONS, MODALITY_SETTINGS
+    from management_app.services import default_prompts
+    from management_app.services.configuration_publication import runtime_projection
+
+    async def scenario():
+        container = ContainerDouble()
+        store = CosmosConfigurationRepository(container=container, validator=validator)
+        initial = await store.initialize(configuration_graph, actor_id="bootstrap")
+        stored_by_earlier_release(container, initial[0]["id"], schemaVersion=version)
+        active, etag = await store.read_active()
+        assert active["schemaVersion"] == version
+        # Verifying twice gives the stored shape both times (PR #43).
+        assert verified_revision(verified_revision(active)) == verified_revision(active) == active
+        projection = runtime_projection(verified_revision(active))
+        settings = projection["conversationSettings"]
+        assert settings == {key: default_prompts.SHIPPED[key] for key in MODALITY_SETTINGS}
+        assert all(
+            agent["voiceAddition"] == agent["textAddition"] == "" for agent in projection["agents"]
+        )
+        # Absent fields are never written into the stored revision.
+        stored = container.items[initial[0]["id"]]
+        assert "conversationSettings" not in stored
+        assert not any(key in agent for agent in stored["agents"] for key in AGENT_ADDITIONS)
+        # A republication without a 2.2.0 field keeps the earlier format.
+        unchanged = await store.publish(graph_document(active), if_match=etag, actor_id="manager")
+        assert unchanged is not None and unchanged[0]["schemaVersion"] == "2.1.0"
+        assert "conversationSettings" not in unchanged[0]
+        # One 2.2.0 edit writes 2.2.0 and stores only that field.
+        edited = graph_document(unchanged[0])
+        edited["conversationSettings"] = {"textGlobalPrompt": "Synthetic text global prompt"}
+        published = await store.publish(edited, if_match=unchanged[1], actor_id="manager")
+        assert published is not None and published[0]["schemaVersion"] == "2.2.0"
+        assert published[0]["conversationSettings"] == {
+            "textGlobalPrompt": "Synthetic text global prompt"
+        }
+        resolved = runtime_projection(verified_revision(published[0]))["conversationSettings"]
+        assert resolved["textGlobalPrompt"] == "Synthetic text global prompt"
+        assert resolved["voiceInstructions"] == default_prompts.VOICE_INSTRUCTIONS
+
+    asyncio.run(scenario())
+
+
 def test_non_routable_community_round_trips(repository, configuration_graph) -> None:
     store, _container = repository
     graph = copy.deepcopy(configuration_graph)

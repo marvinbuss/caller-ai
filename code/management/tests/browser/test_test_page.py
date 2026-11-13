@@ -421,7 +421,8 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.get_by_role("log", name="Conversation")).to_contain_text(
             "Synthetic shared reply"
         )
-        page.wait_for_function("window.callerTestCompleted === 1", timeout=EXPECT_TIMEOUT_MS)
+        # Each text session opens with the greeting turn, then the reply.
+        page.wait_for_function("window.callerTestCompleted === 2", timeout=EXPECT_TIMEOUT_MS)
         expect(page.locator("#test-agent")).to_have_text("agent-alpha")
         assert page.evaluate("window.callerTestCaptureCount") == 0
         page.get_by_role("button", name="Stop test", exact=True).click()
@@ -444,7 +445,7 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
         expect(page.get_by_role("log", name="Conversation")).to_contain_text(
             "Synthetic shared reply"
         )
-        page.wait_for_function("window.callerTestCompleted === 2", timeout=EXPECT_TIMEOUT_MS)
+        page.wait_for_function("window.callerTestCompleted === 4", timeout=EXPECT_TIMEOUT_MS)
         page.get_by_role("button", name="Stop test", exact=True).click()
         expect(page.locator("#test-status")).to_have_text("ended")
         trust = ssl.create_default_context(cafile=configuration_host["certificate"])

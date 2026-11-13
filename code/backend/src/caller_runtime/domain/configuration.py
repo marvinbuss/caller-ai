@@ -17,10 +17,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from caller_runtime.domain.visibility import CommunityVisibility
 from caller_runtime.domain.voices import voice_ids
+from caller_runtime.services import modality_defaults
 
 GRAPH_FIELDS = frozenset(
     {
@@ -53,6 +54,23 @@ class _Assignment(_Strict):
     allowedInputConstraints: dict[str, JsonValue]
 
 
+def _bounded(limit: int) -> Callable[[str | None], str | None]:
+    def check(value: str | None) -> str | None:
+        if value is not None and (len(value.encode("utf-8")) > limit or "\x00" in value):
+            raise ValueError("configuration_text_too_large")
+        return value
+
+    return check
+
+
+# Schema 2.2.0 texts (FR-033): management resolves absent fields before it serves the projection.
+Instructions = Annotated[str | None, AfterValidator(_bounded(12 * 1024))]
+Layer = Annotated[str | None, AfterValidator(_bounded(8 * 1024))]
+Addition = Annotated[str | None, AfterValidator(_bounded(4 * 1024))]
+COMPOSED_LIMIT = 36 * 1024
+MODES: tuple[Literal["speech", "text"], ...] = ("speech", "text")
+
+
 class _Agent(_Strict):
     agentId: Identifier
     name: Name
@@ -61,6 +79,8 @@ class _Agent(_Strict):
     role: Literal["ordinary", "welcome", "routing", "goodbye"]
     communityId: Identifier | None
     capabilityAssignments: list[_Assignment]
+    voiceAddition: Addition = None
+    textAddition: Addition = None
 
     @field_validator("prompt")
     @classmethod
@@ -134,6 +154,12 @@ class _ConversationSettings(_Strict):
     voice: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")] | None = None
     maxOutputTokens: int | None = Field(default=None, ge=1, le=MAX_OUTPUT_TOKENS)
     idleTimeoutSeconds: int | None = Field(default=None, ge=IDLE_SECONDS[0], le=IDLE_SECONDS[1])
+    voiceInstructions: Instructions = None
+    voicePlatformRules: Layer = None
+    voiceGlobalPrompt: Layer = None
+    textPlatformRules: Layer = None
+    textGlobalPrompt: Layer = None
+    quietHandover: bool | None = None
 
     @field_validator("voice")
     @classmethod
@@ -146,7 +172,7 @@ class _ConversationSettings(_Strict):
 class _Revision(_Strict):
     id: Identifier
     organizationId: Literal["default"]
-    schemaVersion: Literal["2.0.0", "2.1.0"]
+    schemaVersion: Literal["2.0.0", "2.1.0", "2.2.0"]
     revisionNumber: int = Field(ge=1)
     createdAt: datetime
     createdBy: Identifier
@@ -165,6 +191,30 @@ def encoded(value: object) -> bytes:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode()
+
+
+def compose_instructions(
+    graph: dict[str, Any], agent: dict[str, Any], mode: Literal["speech", "text"]
+) -> str:
+    """A working agent's instructions for one modality, blank-line separated and without empty
+    parts: platform rules, global prompt, prompt, addition (FR-026). A projection from slice 1
+    management carries no layers, so the runtime's shipped platform rules stand in."""
+    settings = graph.get("conversationSettings") or {}
+    prefix = "voice" if mode == "speech" else "text"
+    rules = settings.get(prefix + "PlatformRules")
+    if rules is None:
+        rules = (
+            modality_defaults.VOICE_PLATFORM_RULES
+            if mode == "speech"
+            else modality_defaults.TEXT_PLATFORM_RULES
+        )
+    parts = (
+        rules,
+        settings.get(prefix + "GlobalPrompt") or "",
+        str(agent["prompt"]),
+        agent.get(prefix + "Addition") or "",
+    )
+    return "\n\n".join(part for part in parts if part.strip())
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +293,12 @@ class RevisionSnapshot:
             for agent in model.agents:
                 if agent.role != "ordinary" and agent.capabilityAssignments:
                     raise ValueError("protected_capability_assignment")
+                if any(
+                    len(compose_instructions(detached, agent.model_dump(), mode).encode())
+                    > COMPOSED_LIMIT
+                    for mode in MODES
+                ):
+                    raise ValueError("configuration_text_too_large")
                 if (
                     sum(len(item.permittedActionNames) for item in agent.capabilityAssignments)
                     > 128

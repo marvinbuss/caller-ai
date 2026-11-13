@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from management_app.models.capabilities import ApprovedCapabilities, ConfigurationModel
 from management_app.models.configuration import ConfigurationGraph
+from management_app.services import default_prompts
 from management_app.services.secret_detection import Issue, SecretDetector, field_path
 
 SNAPSHOT_LIMIT = 512 * 1024
@@ -110,6 +111,18 @@ def required_relationship_pairs(
     return set()
 
 
+def unconfirmed_platform_changes(
+    payload: Mapping[str, Any], previous: Mapping[str, Any] | None
+) -> list[str]:
+    """Platform rules or voice instructions that differ from the active revision; an absent
+    value counts, so "Restore default" also needs the confirmation (FR-030, FR-037)."""
+    new = payload.get("conversationSettings") or {}
+    old = (previous or {}).get("conversationSettings") or {}
+    if not isinstance(new, Mapping) or not isinstance(old, Mapping):
+        return []
+    return [key for key in default_prompts.CONFIRMED_SETTINGS if new.get(key) != old.get(key)]
+
+
 class ConfigurationValidator:
     def __init__(
         self,
@@ -129,6 +142,17 @@ class ConfigurationValidator:
         """Keep the catalog and limits of the latest runtime status for later checks."""
         limits = ConversationLimits.from_status(status)
         self.conversation_limits = lambda: limits
+
+    def confirmation_issues(
+        self, payload: Mapping[str, Any], previous: Mapping[str, Any] | None
+    ) -> list[Issue]:
+        """`platform_rules_unconfirmed` for each changed field when the request is unconfirmed."""
+        return [
+            self.detector.issue(
+                "conversationSettings." + key, "platform_rules_unconfirmed", "platform_rules"
+            )
+            for key in unconfirmed_platform_changes(payload, previous)
+        ]
 
     def validate(
         self,
@@ -178,6 +202,36 @@ class ConfigurationValidator:
                 and settings.max_output_tokens > limits.max_output_tokens
             ):
                 reject("conversationSettings.maxOutputTokens", rule="conversation_limit")
+
+        # Schema 2.2.0 texts: each field within its limit, and every composed agent instruction
+        # within 36 KiB in both modes (FR-033). The path names the field or the agent.
+        stored_settings = settings.model_dump(by_alias=True) if settings is not None else {}
+        for key, (low, high) in default_prompts.TEXT_LIMITS.items():
+            value = stored_settings.get(key)
+            if value is None:
+                continue
+            size = len(value.encode("utf-8"))
+            if size > high:
+                reject(f"conversationSettings.{key}", "configuration_text_too_large", "text_limit")
+            elif size < low or (low and not value.strip()):
+                reject(f"conversationSettings.{key}", rule="text_required")
+        for index, agent in enumerate(graph.agents):
+            for key, value in (
+                ("voiceAddition", agent.voice_addition),
+                ("textAddition", agent.text_addition),
+            ):
+                if (
+                    value is not None
+                    and len(value.encode("utf-8")) > default_prompts.ADDITION_LIMIT
+                ):
+                    reject(f"agents[{index}].{key}", "configuration_text_too_large", "text_limit")
+            document = agent.model_dump(by_alias=True)
+            if any(
+                len(default_prompts.compose(stored_settings, document, mode).encode("utf-8"))
+                > default_prompts.COMPOSED_LIMIT
+                for mode in ("speech", "text")
+            ):
+                reject(f"agents[{index}]", "configuration_text_too_large", "composed_limit")
 
         groups: list[tuple[Sequence[ConfigurationModel], str, str]] = [
             (graph.agents, "agent_id", "agents"),

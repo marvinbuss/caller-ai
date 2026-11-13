@@ -119,6 +119,7 @@ def endpoint(
             history=history,
             requests=requests,
             controls=controls,
+            release=release,
             runtime=runtime,
             repository=repository,
             clock=clock,
@@ -153,7 +154,28 @@ def test_turn_streams_conversation_then_deltas_then_completion(endpoint):
     assert events[0][1]["conversationId"]
     assert "".join(data["text"] for kind, data in events if kind == "text.delta") == REPLY
     assert events[-1][1]["text"] == ""
-    assert endpoint.requests[0]["instructions"] == "Synthetic welcome prompt"
+    from caller_runtime.services.modality_defaults import TEXT_PLATFORM_RULES
+
+    expected = TEXT_PLATFORM_RULES + "\n\nSynthetic welcome prompt"
+    assert endpoint.requests[0]["instructions"] == expected
+
+
+def test_progress_events_stream_during_a_turn_that_still_ends_with_completion(endpoint):
+    endpoint.controls["wire_actions"] = [
+        ("report_progress", {"state": "still_working", "message": "Checking the order status."}),
+        ("report_progress", {"state": "completed", "message": "The order was found."}),
+    ]
+    events = parse_sse(endpoint.post(1).text)
+    kinds = [kind for kind, _ in events]
+    assert kinds[0] == "conversation" and kinds[-1] == "text.completed"
+    progress = [data for kind, data in events if kind == "progress"]
+    message_id = events[-1][1]["messageId"]
+    assert progress == [
+        {"messageId": message_id, "state": "still_working", "text": "Checking the order status."},
+        {"messageId": message_id, "state": "completed", "text": "The order was found."},
+    ]
+    # Updates come before the answer text of the same turn.
+    assert kinds.index("progress") < kinds.index("text.delta")
 
 
 def test_new_conversation_is_stored_for_its_owner_only_with_item_expiry(endpoint):
@@ -277,7 +299,9 @@ def test_invalid_body_is_invalid_request(endpoint, case):
         elif case == "blank-text":
             document["text"] = "   "
         elif case == "missing-text":
+            # Without a conversation id this is the open request; with one it is invalid.
             del document["text"]
+            document["conversationId"] = "a" * 32
         else:
             content_type = "text/plain"
         content = json.dumps(document).encode()
@@ -364,3 +388,94 @@ def test_update_conflict_is_capacity_unavailable_and_keeps_the_stored_conversati
         events[-1][1]["code"] == "capacity_unavailable" and events[-1][1]["reason"] == "work_busy"
     )
     assert json.dumps(endpoint.history.records[identifier]) == stored
+
+
+def open_conversation(endpoint, number, **fields):
+    document = endpoint.body(number) | fields
+    document.pop("text")
+    return endpoint.client.post(PATH, headers=WORKLOAD, json=document)
+
+
+def greeting_events(endpoint):
+    return [
+        event
+        for event in endpoint.application.state.telemetry.events
+        if event["event"] == "test.greeting"
+    ]
+
+
+def test_open_request_streams_the_welcome_greeting_and_stores_it_first(endpoint):
+    from caller_runtime.services.greeting import TEXT_GREETING_INPUT
+
+    greeting = "Hello and welcome to the service. How can I help you today?"
+    endpoint.controls["greeting"] = greeting
+    response = open_conversation(endpoint, 1)
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    assert [kind for kind, _ in events] == ["conversation", "text.delta", "text.completed"]
+    identifier = events[0][1]["conversationId"]
+    assert events[1][1]["text"] == greeting and events[1][1]["messageId"]
+    assert events[2][1] == {"messageId": events[1][1]["messageId"], "text": ""}
+    asked = endpoint.controls["greeting_requests"]
+    assert len(asked) == 1 and asked[0]["input"] == TEXT_GREETING_INPUT
+    assert not endpoint.requests
+    record = endpoint.history.records[identifier]
+    assert record["turns"] == [{"role": "assistant", "content": greeting}]
+    events = greeting_events(endpoint)
+    assert [(e["outcome"], e["reason_code"], e["kind"]) for e in events] == [
+        ("success", "ready", "text")
+    ]
+    assert float(events[0]["value"]) <= 5 and greeting not in json.dumps(events)
+    assert not authority_slots(endpoint)
+    follow_up = endpoint.post(2, conversationId=identifier, text="Synthetic question")
+    assert follow_up.status_code == 200
+    sent = endpoint.requests[0]["input"]
+    assert sent[0]["role"] == "assistant" and greeting in json.dumps(sent[0])
+    assert [turn["role"] for turn in endpoint.history.records[identifier]["turns"]] == [
+        "assistant",
+        "user",
+        "assistant",
+    ]
+
+
+def test_slow_greeting_falls_back_to_the_fixed_greeting(endpoint, monkeypatch):
+    from caller_runtime.services import conversation
+
+    monkeypatch.setattr(conversation, "TEXT_GREETING_SECONDS", 0.2)
+    endpoint.controls["greeting"], endpoint.controls["greeting_block"] = "Too late", True
+    response = open_conversation(endpoint, 1)
+    events = parse_sse(response.text)
+    assert [kind for kind, _ in events] == ["conversation", "text.delta", "text.completed"]
+    assert events[1][1]["text"] == "Hello and welcome! How can I help you today?"
+    identifier = events[0][1]["conversationId"]
+    assert endpoint.history.records[identifier]["turns"] == [
+        {"role": "assistant", "content": "Hello and welcome! How can I help you today?"}
+    ]
+    assert [(e["outcome"], e["reason_code"]) for e in greeting_events(endpoint)] == [
+        ("success", "fallback")
+    ]
+
+    async def release():
+        endpoint.release.set()
+
+    # The cancelled request still finishes in the background before the slot is released.
+    endpoint.client.portal.call(release)
+    deadline = time.monotonic() + 5
+    while authority_slots(endpoint) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not authority_slots(endpoint)
+
+
+def test_text_without_a_conversation_starts_without_a_greeting(endpoint):
+    endpoint.controls["greeting"] = "Unused greeting"
+    events = parse_sse(endpoint.post(1).text)
+    assert "".join(data["text"] for kind, data in events if kind == "text.delta") == REPLY
+    assert not endpoint.controls.get("greeting_requests") and not greeting_events(endpoint)
+
+
+def test_a_conversation_id_without_text_is_invalid(endpoint):
+    identifier = parse_sse(endpoint.post(1).text)[0][1]["conversationId"]
+    response = open_conversation(endpoint, 2, conversationId=identifier)
+    assert response.status_code == 400
+    assert error_of(response)["code"] == "invalid_request"
+    assert len(endpoint.history.records[identifier]["turns"]) == 2

@@ -518,3 +518,112 @@ def test_library_request_logs_stay_out_of_the_structured_application_log():
         assert logging.getLogger("caller-runtime.events").isEnabledFor(logging.INFO)
     finally:
         telemetry.close()
+
+
+def test_greeting_speech_parts_and_progress_events_use_closed_sets(caplog):
+    telemetry = Telemetry("caller-runtime", "local")
+    try:
+        telemetry.event(
+            "test.greeting",
+            "success",
+            mode="speech",
+            reason="ready",
+            measurement="greeting_seconds",
+            value=1.5,
+        )
+        telemetry.event(
+            "test.greeting",
+            "success",
+            mode="text",
+            reason="fallback",
+            measurement="greeting_seconds",
+            value=4.0,
+        )
+        telemetry.event(
+            "test.greeting",
+            "failure",
+            mode="speech",
+            reason="deadline",
+            measurement="greeting_seconds",
+            value=5.0,
+        )
+        telemetry.event("test.greeting", "success", mode="speech", reason="skipped")
+        telemetry.event(
+            "test.speech_parts",
+            "success",
+            mode="speech",
+            reason="ready",
+            measurement="parts",
+            value=5,
+        )
+        telemetry.event(
+            "test.speech_parts",
+            "success",
+            mode="speech",
+            reason="ready",
+            measurement="dropped_parts",
+            value=2,
+        )
+        for reason in ("still_working", "waiting_for_input", "completed", "failed"):
+            telemetry.event("test.progress", "success", mode="text", reason=reason)
+        telemetry.event("test.progress", "success", mode="speech", reason="cancellation_confirmed")
+        for reason in ("rate_limited", "stale", "fallback_line"):
+            telemetry.event("test.progress", "failure", mode="speech", reason=reason)
+        events = telemetry.events
+        assert len(events) == 14
+        assert events[0]["event"] == "test.greeting" and events[0]["kind"] == "voice"
+        assert events[0]["measurement"] == "greeting_seconds" and events[0]["value"] == "1.5"
+        assert events[1]["reason_code"] == "fallback" and events[1]["kind"] == "text"
+        assert events[3]["reason_code"] == "skipped" and "measurement" not in events[3]
+        assert events[5]["measurement"] == "dropped_parts"
+        with pytest.raises(ValueError, match="unsafe_test_metadata"):
+            telemetry.event("test.progress", "success", mode="text", reason="synthetic-private")
+        with pytest.raises(ValueError, match="unsafe_test_measurement"):
+            telemetry.event(
+                "test.greeting",
+                "success",
+                mode="text",
+                reason="ready",
+                measurement="parts",
+                value=1,
+            )
+        with pytest.raises(ValueError, match="unsafe_test_measurement"):
+            telemetry.event(
+                "test.speech_parts",
+                "success",
+                mode="speech",
+                reason="ready",
+                measurement="greeting_seconds",
+                value=1,
+            )
+        with pytest.raises(ValueError, match="unsafe_test_measurement"):
+            telemetry.event(
+                "test.greeting",
+                "success",
+                mode="text",
+                reason="ready",
+                measurement="greeting_seconds",
+                value="synthetic-private-text",
+            )
+        assert len(telemetry.events) == 14 and "synthetic-private" not in caplog.text
+        assert all(
+            set(event)
+            <= {
+                "timestamp",
+                "severity",
+                "service",
+                "environment",
+                "event",
+                "outcome",
+                "correlation_id",
+                "trace_id",
+                "span_id",
+                "kind",
+                "reason_code",
+                "measurement",
+                "value",
+            }
+            for event in events
+        )
+    finally:
+        telemetry.close()

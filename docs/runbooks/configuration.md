@@ -75,6 +75,40 @@ Access to a graph in the manager UI does not authorize reproducing its content i
 | Session/draft disappears after restart | Process-local session/draft state is expected to be lost; reauthenticate and fetch the committed revision. Local storage is volatile. Do not call a double reconstruction real durability evidence. |
 | Build/readiness timeout | Keep the 180/120-second bounds and retain owned-process diagnostics. Stop only owned process trees. Do not repeatedly retry to hide a failure, disable certificate checks, change feeds or patch framework code without a reviewed fix. |
 
+## Slice 1 Default Prompts
+
+The modality-aware release ships new Welcome, Routing and Goodbye prompts. A new store gets them
+from bootstrap. An existing store gets them once, in the slice 1 rollout, from the operator
+command inside the management container:
+
+```text
+az containerapp exec -n <management app> -g <resource group> \
+  --command "/app/.venv/bin/python -m management_app.services.apply_default_prompts"
+```
+
+The command needs the same reviewed settings as the running app (`CALLER_REVIEWED_FINGERPRINT`
+must match). It reads the active revision, replaces only the three protected agents' `prompt`
+(found by role) and publishes one revision through the normal publication path, with history and
+a publication audit record under the actor `system-apply-default-prompts`. Every other field is
+copied as stored and no default is written into another field. It prints `published revision N`,
+or `already current` when the three prompts already equal the defaults, so a second run publishes
+nothing. No release runs it on its own; editors can still change the prompts afterwards, and the
+agent settings panel offers **Restore default**.
+
+## Schema 2.2.0 Rollback Order
+
+Management writes schema `2.2.0` only when a revision carries a 2.2.0 field (voice instructions,
+platform rules, global prompts, `quietHandover` or an agent addition). A slice 1 management
+release refuses to load such a revision (`invalid_snapshot`), and a slice 1 runtime refuses the
+resolved projection's unknown fields. To roll back:
+
+1. While the current management still runs, publish the last `2.1.0` revision's content again as
+   a new revision without any 2.2.0 field (remove the texts with **Restore default** and switch
+   the quiet update back to its default). Confirm `schemaVersion` is `2.1.0`.
+2. Roll management back.
+3. Roll the runtime back only together with management, never alone while management serves
+   2.2.0 projections.
+
 ## Conditional Store Recovery
 
 The Cosmos adapter requests Strong reads in the exact organization partition. The owner must

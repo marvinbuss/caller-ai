@@ -26,6 +26,17 @@ They are not production telephone-call counters or proof of approved sink delive
 [revision model](../management/management_app/models/configuration.py). It describes complete
 schema `2.0.0` publications: global protected roles, ordinary community membership, directed
 ordinary-agent and community connections, reviewed capabilities and presentation-only layout.
+Schema `2.1.0` adds `routable` and `conversationSettings`. Schema `2.2.0` adds the optional
+modality texts in `conversationSettings` (`voiceInstructions`, `voicePlatformRules`,
+`voiceGlobalPrompt`, `textPlatformRules`, `textGlobalPrompt`), the optional `quietHandover`
+flag and the optional per-agent `voiceAddition` and `textAddition`. An absent field means the
+shipped default: management never writes a default into a stored revision, and it writes
+`2.2.0` only when a revision carries at least one of these fields. The runtime projection always
+carries all six settings and both additions, resolved before `policyHash` is computed. Both
+services accept `2.0.0`, `2.1.0` and `2.2.0`; unknown fields are refused. Changing platform
+rules or voice instructions needs the `X-Caller-Confirm-Platform-Rules: confirmed` header
+(`platform_rules_unconfirmed` otherwise), and a text over its limit is refused with
+`configuration_text_too_large` and the field's `path`.
 The fresh-start contract rejects schema 1; there is no compatibility translation or reset.
 The independent health contract above stays at its existing version.
 

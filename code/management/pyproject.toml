@@ -19,6 +19,7 @@ dependencies = [
   "opentelemetry-sdk>=1.30,<2",
   "aiohttp>=3.12,<4",
   "granian>=2.8,<3",
+  "markdown-it-py>=4.2,<5",
 ]
 
 [dependency-groups]

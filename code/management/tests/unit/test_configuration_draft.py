@@ -436,6 +436,54 @@ def test_protected_roles_cannot_be_deleted_disabled_or_moved(draft, role) -> Non
     assert draft.graph == before
 
 
+def restore_state(draft):
+    from types import SimpleNamespace
+
+    changes = []
+    return SimpleNamespace(
+        _editing=lambda: draft, _changed=lambda: changes.append(1), error=""
+    ), changes
+
+
+@pytest.mark.parametrize("role", ["welcome", "routing", "goodbye"])
+def test_restore_default_sets_the_shipped_prompt_for_a_predefined_agent(draft, role) -> None:
+    from management_app.services import default_prompts
+    from management_app.state.configuration_editor import ConfigurationEditorState
+
+    agent_id = "agent-" + role
+    draft.edit_agent(agent_id, "prompt", "Synthetic edited prompt")
+    state, changes = restore_state(draft)
+    ConfigurationEditorState.restore_default_prompt.fn(state, agent_id)
+    agent = next(agent for agent in draft.graph["agents"] if agent["agentId"] == agent_id)
+    assert agent["prompt"] == getattr(default_prompts, role.upper() + "_PROMPT")
+    assert changes == [1] and state.error == ""
+
+
+def test_restore_default_is_not_offered_for_custom_agents(draft) -> None:
+    from management_app.pages.agents import agent_row
+    from management_app.state.configuration_editor import ConfigurationEditorState
+
+    before = copy.deepcopy(draft.graph)
+    state, changes = restore_state(draft)
+    ConfigurationEditorState.restore_default_prompt.fn(state, "agent-alpha")
+    assert draft.graph == before and not changes
+    assert state.error == "Restore default unavailable"
+    # The button sits inside the branch rendered only for protected agents.
+    source = repr(agent_row(ConfigurationEditorState.selected_agent_row))
+    assert "Restore default" in source
+
+
+def test_predefined_prompt_stays_editable_and_publishable_after_defaults(draft, validator) -> None:
+    from management_app.state.configuration_editor import ConfigurationEditorState
+
+    state, _changes = restore_state(draft)
+    ConfigurationEditorState.restore_default_prompt.fn(state, "agent-welcome")
+    draft.edit_agent("agent-welcome", "prompt", "Synthetic manager welcome prompt")
+    agent = next(agent for agent in draft.graph["agents"] if agent["agentId"] == "agent-welcome")
+    assert agent["prompt"] == "Synthetic manager welcome prompt"
+    assert validator.validate(draft.graph) == []
+
+
 def test_field_errors_do_not_replace_other_unsaved_edits(draft) -> None:
     draft.edit_agent("agent-alpha", "name", "")
     draft.edit_agent("agent-alpha", "prompt", "Retained synthetic edit")
@@ -884,3 +932,29 @@ def test_editor_api_client_uses_real_session_and_rechecks_revocation(
             await services.request("fixture-sid", token, "GET")
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("role", ["welcome", "ordinary"])
+def test_voice_and_text_additions_are_drafted_and_an_empty_one_is_removed(draft, role) -> None:
+    agent_id = "agent-welcome" if role == "welcome" else "agent-alpha"
+    draft.edit_agent(agent_id, "voiceAddition", "Synthetic voice addition")
+    draft.edit_agent(agent_id, "textAddition", "Synthetic text addition")
+    agent = next(item for item in draft.graph["agents"] if item["agentId"] == agent_id)
+    assert agent["voiceAddition"] == "Synthetic voice addition"
+    assert agent["textAddition"] == "Synthetic text addition"
+    # Clearing an addition removes it, so the stored revision keeps "absent means default".
+    draft.edit_agent(agent_id, "voiceAddition", "")
+    assert "voiceAddition" not in agent and agent["textAddition"]
+    with pytest.raises(ValueError, match="invalid_field_type"):
+        draft.edit_agent(agent_id, "textAddition", True)
+
+
+def test_empty_platform_rules_raise_a_notice_on_the_test_page() -> None:
+    from management_app.state.test_console import empty_rule_notices
+
+    assert empty_rule_notices({}) == []
+    assert empty_rule_notices({"voicePlatformRules": "Rules", "textPlatformRules": "Rules"}) == []
+    assert empty_rule_notices({"voicePlatformRules": "", "textPlatformRules": " "}) == [
+        "Platform rules for voice are empty",
+        "Platform rules for text are empty",
+    ]

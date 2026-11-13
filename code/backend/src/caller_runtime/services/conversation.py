@@ -13,7 +13,8 @@ import hashlib
 import json
 import math
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from functools import partial
 from typing import Any, TypedDict
 from uuid import uuid4
@@ -36,7 +37,7 @@ from caller_runtime.domain.conversation import (
 from caller_runtime.observability import Telemetry
 from caller_runtime.services.admission import AdmissionError
 from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
-from caller_runtime.services.conversation_agents import build_agents
+from caller_runtime.services.conversation_agents import Mode, agent_instructions, build_agents
 from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
 from caller_runtime.services.delegation import (
     Acceptance,
@@ -44,11 +45,43 @@ from caller_runtime.services.delegation import (
     SpeechFragments,
     WorkItem,
 )
+from caller_runtime.services.greeting import (
+    GREETING_TARGET_SECONDS,
+    TEXT_FALLBACK_GREETING,
+    TEXT_GREETING_INPUT,
+    TEXT_GREETING_SECONDS,
+    VOICE_GREETING_INPUT,
+)
+from caller_runtime.services.speech_parts import QUIET_HANDOVER, dropped_note, split_reply
 
-# The caller hears this when a speech delegation is still running after the holding delay.
-HOLDING_LINE = "One moment, I'm checking that."
-HOLDING_SECONDS = 5.0
+# The caller hears this only when work fails before the agent reported a final state.
 WORK_FAILED_LINE = "I could not finish that, please try again."
+# `report_progress` (FR-018-FR-025): the states, the ones that end the work and the ones that
+# enter history, the still-working repeat interval and the rounds one item may spend on updates.
+PROGRESS_STATES = (
+    "still_working",
+    "waiting_for_input",
+    "completed",
+    "failed",
+    "cancellation_confirmed",
+)
+FINAL_STATES = frozenset({"completed", "failed", "cancellation_confirmed"})
+HISTORY_STATES = FINAL_STATES | {"waiting_for_input"}
+STILL_WORKING_REPEAT_SECONDS = 10.0
+PROGRESS_ROUNDS = 6
+PROGRESS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "state": {"type": "string", "enum": list(PROGRESS_STATES)},
+        "message": {"type": "string", "minLength": 1, "maxLength": 200},
+    },
+    "required": ["state", "message"],
+    "additionalProperties": False,
+}
+# A spoken part waits this long for the previous part's acknowledgement.
+PART_ACK_SECONDS = 2.0
+# Parts stop this close to the end of the work budget, so a long reply never fails the item.
+PART_MARGIN_SECONDS = 0.25
 # One work item failing within its own budget; the session and its slot stay usable.
 BOUNDED_WORK_FAILURES = frozenset({"model_unavailable", "work_deadline_exceeded", "work_busy"})
 # Cleanup retried once a detached model request has finished, held strongly until done.
@@ -64,6 +97,17 @@ class SourceBinding(TypedDict):
     source_agent_epoch: int
 
 
+@dataclass(slots=True)
+class ProgressState:
+    """Progress of one work item: the rate limit, whether a final state came and history."""
+
+    last_state: str | None = None
+    last_still_working_at: datetime | None = None
+    final_reported: bool = False
+    rounds: int = 0
+    entries: list[dict[str, str]] = field(default_factory=list)
+
+
 class ConversationExecutor:
     def __init__(
         self,
@@ -76,20 +120,24 @@ class ConversationExecutor:
         cleanup_observations: CleanupObservations | None = None,
         telemetry: Telemetry | None = None,
         speech_work_seconds: int = SPEECH_WORK_SECONDS,
-        holding_seconds: float = HOLDING_SECONDS,
     ) -> None:
         self.policy, self.text_adapter, self.utc_now = policy, text_adapter, utc_now
         self.capability_client = capability_client
         self.speech_segments = speech_segments
         self.queue = DelegationQueue(speech_work_seconds=speech_work_seconds)
-        self._holding_seconds = holding_seconds
+        self._current_item: WorkItem | None = None
+        self._progress: dict[str, ProgressState] = {}
         self._late_cleanup: asyncio.Task[None] | None = None
         self.speech_fragments = SpeechFragments()
         self._accepting, self._processing = asyncio.Lock(), asyncio.Lock()
         self._history: list[Any] = []
         self._transcripts: list[dict[str, Any]] = []
+        # Assistant speech before the caller's first words or delegation is the greeting.
+        self._greeting_parts: list[str] | None = [] if policy.slot.mode == "speech" else None
         self._failed = False
         self._speech: dict[str, GptLiveSession] = {}
+        self._speaking = False
+        self._interrupted = asyncio.Event()
         self._cleanup_observations = cleanup_observations
         self._telemetry = telemetry
         self._cleanup_correlation = uuid4().hex
@@ -144,6 +192,86 @@ class ConversationExecutor:
                 )
             finally:
                 self._processing_task = None
+
+    async def greeting_text(self, mode: Mode, work: WorkBudget) -> str:
+        """Ask the pinned Welcome agent for this modality's greeting; cancelling abandons it."""
+        slot = self.policy.slot
+        if self._failed or mode != slot.mode:
+            raise PermissionError("mode_mismatch")
+        welcome = next(
+            agent
+            for agent in self.policy.snapshot.for_runtime()["agents"]
+            if agent["agentId"] == self.policy.visibility.lifecycle_target("welcome")
+        )
+        return await self.text_adapter.greeting(
+            slot,
+            work,
+            instructions=agent_instructions(welcome, mode, self.policy.snapshot.for_runtime()),
+            prompt=VOICE_GREETING_INPUT if mode == "speech" else TEXT_GREETING_INPUT,
+        )
+
+    async def open_text(
+        self, emit: Callable[[dict[str, Any]], Awaitable[None]], *, started: float
+    ) -> None:
+        """Stream the opening greeting of a new text conversation and keep it as its first turn.
+
+        `started` is the loop time the open request arrived. Without a complete model greeting
+        by `TEXT_GREETING_SECONDS` after it, the request is cancelled and the fixed fallback is
+        streamed instead.
+        """
+        slot = self.policy.slot
+        if self._failed or slot.mode != "text" or self._history:
+            raise PermissionError("mode_mismatch")
+        loop = asyncio.get_running_loop()
+        now = self.utc_now()
+        work = WorkBudget(
+            now,
+            min(
+                now + timedelta(seconds=TEXT_GREETING_SECONDS),
+                slot.auth_expires_at,
+                slot.expires_at,
+                slot.idle_expires_at,
+            ),
+        )
+        reason = "ready"
+        try:
+            async with asyncio.timeout_at(started + TEXT_GREETING_SECONDS):
+                greeting = await self.greeting_text("text", work)
+        except Exception:
+            greeting, reason = TEXT_FALLBACK_GREETING, "fallback"
+        await self.policy.admission.check_output(
+            slot.session_id, slot.owner_epoch, generation=slot.generation
+        )
+        message_id = "greeting-" + uuid4().hex
+        for offset in range(0, len(greeting), 512):
+            await emit(
+                {
+                    "type": "text.delta",
+                    "messageId": message_id,
+                    "text": greeting[offset : offset + 512],
+                    "generation": slot.generation,
+                }
+            )
+            if offset == 0 and self._telemetry is not None:
+                seconds = loop.time() - started
+                late = seconds > GREETING_TARGET_SECONDS
+                self._telemetry.event(
+                    "test.greeting",
+                    "failure" if late else "success",
+                    mode="text",
+                    reason="deadline" if late else reason,
+                    measurement="greeting_seconds",
+                    value=max(0.0, seconds),
+                )
+        await emit(
+            {
+                "type": "text.completed",
+                "messageId": message_id,
+                "text": "",
+                "generation": slot.generation,
+            }
+        )
+        self._history = [{"role": "assistant", "content": greeting}]
 
     def restore_history(self, turns: list[dict[str, str]]) -> None:
         """Seed a fresh text session with the owner's stored turns before the first message."""
@@ -247,7 +375,17 @@ class ConversationExecutor:
                 requires_clarity_check=requires_clarity_check,
             )
             if not accepted.duplicate:
+                self._close_greeting()
                 self._speech[task_id] = segment
+                # Editors can switch the quiet update off; a missing setting means on (FR-017).
+                quiet = self.policy.snapshot.conversation_settings().get("quietHandover", True)
+                try:
+                    # A quiet update tells the speaking model the work is under way (FR-016).
+                    if quiet is not False:
+                        async with asyncio.timeout(1):
+                            await segment.append_context(delegation_id, QUIET_HANDOVER, quiet=True)
+                except Exception:
+                    pass
                 if self._telemetry is not None:
                     self._telemetry.event(
                         "test.delegation",
@@ -319,7 +457,25 @@ class ConversationExecutor:
                 generation=generation,
                 mode="speech",
             )
+            self._close_greeting()
+        elif (
+            row["speaker"] == "assistant"
+            and self._greeting_parts is not None
+            and sum(len(part.encode("utf-8")) for part in self._greeting_parts)
+            + len(event["delta"].encode("utf-8"))
+            <= 4096
+        ):
+            self._greeting_parts.append(event["delta"])
         self._transcripts = candidate
+
+    def _close_greeting(self) -> None:
+        """Keep the spoken greeting as the first assistant history entry (FR-039)."""
+        if self._greeting_parts is None:
+            return
+        greeting = "".join(self._greeting_parts).strip()
+        self._greeting_parts = None
+        if greeting and not self._history:
+            self._history.append({"role": "assistant", "content": greeting})
 
     async def _gate(self, item: WorkItem, *, initial: bool = False) -> TestSlot:
         if self._failed:
@@ -445,6 +601,8 @@ class ConversationExecutor:
         called: list[bool],
         *,
         capabilities: bool,
+        emit: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        reported: list[bool] | None = None,
     ) -> list[FunctionTool]:
         if configured["agentId"] != source.active_agent_id:
             return []
@@ -466,8 +624,13 @@ class ConversationExecutor:
                 for grant in configured["capabilityAssignments"]
                 for action in grant["permittedActionNames"]
             ]
+        progress = (
+            [self._progress_tool(item, called, reported, emit)]
+            if emit is not None and reported is not None
+            else []
+        )
         if role == "goodbye":
-            return []
+            return progress
         result = [self._tool("goodbye", {}, item, source, called)]
         if role == "welcome":
             result.append(self._tool("enter_routing", {}, item, source, called))
@@ -505,7 +668,121 @@ class ConversationExecutor:
                     ),
                 ]
             )
-        return result
+        return result + progress
+
+    def _progress_tool(
+        self,
+        item: WorkItem,
+        called: list[bool],
+        reported: list[bool],
+        emit: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> FunctionTool:
+        async def invoke(context: RunContextWrapper[Any], arguments: str) -> str:
+            if called[0]:
+                raise PermissionError("stale_agent_epoch")
+            # The answer goes back to the model either way, so the agent loop continues.
+            called[0] = True
+            progress = self._progress.get(item.receipt.task_id)
+            values: Any = None
+            if len(arguments.encode("utf-8")) <= 8192:
+                try:
+                    values = json.loads(arguments, object_pairs_hook=unique_object)
+                except ValueError:
+                    values = None
+            if (
+                progress is None
+                or progress.rounds >= PROGRESS_ROUNDS
+                or not isinstance(values, dict)
+                or not Draft202012Validator(PROGRESS_SCHEMA).is_valid(values)
+                or not values["message"].strip()
+            ):
+                return json.dumps("refused")
+            progress.rounds += 1
+            reported[0] = True
+            await self._report_progress(item, progress, values["state"], values["message"], emit)
+            return json.dumps("reported")
+
+        return FunctionTool(
+            name="report_progress",
+            description=(
+                "Tell the user how the current request is going. Use still_working before a "
+                "tool or external call, waiting_for_input when you ask the user something, and "
+                "completed, failed or cancellation_confirmed only once the outcome is known."
+            ),
+            params_json_schema=PROGRESS_SCHEMA,
+            on_invoke_tool=invoke,
+            strict_json_schema=False,
+        )
+
+    def _progress_event(self, outcome: str, reason: str) -> None:
+        if self._telemetry is not None:
+            self._telemetry.event(
+                "test.progress", outcome, mode=self.policy.slot.mode, reason=reason
+            )
+
+    async def _report_progress(
+        self,
+        item: WorkItem,
+        progress: ProgressState,
+        state: str,
+        message: str,
+        emit: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        """Deliver one update unless it is stale or rate-limited (FR-024, FR-025)."""
+        now = self.utc_now()
+        slot = self.policy.slot
+        if (
+            self._failed
+            or item is not self._current_item
+            or item.generation != slot.generation
+            or item.receipt.work.remaining(now) <= 0
+        ):
+            self._progress_event("failure", "stale")
+            return
+        if state == progress.last_state and (
+            state != "still_working"
+            or progress.last_still_working_at is None
+            or (now - progress.last_still_working_at).total_seconds() < STILL_WORKING_REPEAT_SECONDS
+        ):
+            self._progress_event("failure", "rate_limited")
+            return
+        if slot.mode == "speech":
+            segment = self._speech.get(item.receipt.task_id)
+            if segment is None:
+                self._progress_event("failure", "stale")
+                return
+            delegation_id = item.receipt.delegation_id
+            if segment.intent.generation != slot.generation:
+                if self.speech_segments is None:
+                    self._progress_event("failure", "stale")
+                    return
+                segment, delegation_id = self.speech_segments.current, None
+            for part in split_reply(message):
+                if part.strip():
+                    await segment.append_context(delegation_id, part, work=item.receipt.work)
+            await emit(
+                {"type": "progress", "state": state, "text": message, "generation": slot.generation}
+            )
+        else:
+            await emit(
+                {
+                    "type": "progress",
+                    "messageId": item.receipt.task_id,
+                    "state": state,
+                    "text": message,
+                    "generation": slot.generation,
+                }
+            )
+        progress.last_state = state
+        if state == "still_working":
+            progress.last_still_working_at = now
+        if state in FINAL_STATES:
+            progress.final_reported = True
+        if state in HISTORY_STATES:
+            progress.entries.append(
+                {"role": "assistant", "content": f"Status ({state}): {message}"}
+            )
+        self._progress_event("success", state)
 
     async def _clear_task(self, item: WorkItem) -> bool:
         slot = await self._gate(item)
@@ -514,6 +791,7 @@ class ConversationExecutor:
         registry = build_agents(
             self.policy.snapshot,
             model=model,
+            mode=slot.mode,
             capabilities=lambda configured: [],
             policy_tools=lambda configured: [],
             reasoning_effort="low",
@@ -563,20 +841,32 @@ class ConversationExecutor:
         inputs = self._history + [{"role": "user", "content": item.text}]
         reply_bytes = 0
         first_text = False
+        progress_round = False
         async with asyncio.timeout(item.receipt.work.remaining(self.utc_now())):
             while True:
                 slot = await self._gate(item)
-                item.step(self.utc_now())
+                if progress_round:
+                    # A round after a progress update is bounded by PROGRESS_ROUNDS instead.
+                    item.receipt.work.require(self.utc_now())
+                else:
+                    item.step(self.utc_now())
                 model = self.text_adapter.model_for(slot, item.receipt.work)
-                called = [False]
+                called, reported = [False], [False]
                 registry = build_agents(
                     self.policy.snapshot,
                     model=model,
+                    mode=slot.mode,
                     capabilities=partial(
                         self._tools, item=item, source=slot, called=called, capabilities=True
                     ),
                     policy_tools=partial(
-                        self._tools, item=item, source=slot, called=called, capabilities=False
+                        self._tools,
+                        item=item,
+                        source=slot,
+                        called=called,
+                        capabilities=False,
+                        emit=emit,
+                        reported=reported,
                     ),
                     # A caller waits in silence on speech; text keeps the deployment default.
                     reasoning_effort="low" if slot.mode == "speech" else None,
@@ -639,6 +929,7 @@ class ConversationExecutor:
                             )
                     run_completed = True
                     await self._gate(item)
+                    progress_round = reported[0]
                     if called[0]:
                         if self.policy.agent_epoch != slot.agent_epoch:
                             inputs = [
@@ -662,7 +953,15 @@ class ConversationExecutor:
                         else:
                             inputs = run.to_input_list()
                         continue
-                    self._history = inputs + [{"role": "assistant", "content": "".join(reply)}]
+                    # Final and waiting progress states stay in history before the answer.
+                    progress = self._progress.get(item.receipt.task_id)
+                    entries = progress.entries if progress is not None else []
+                    self._history = [
+                        *inputs,
+                        *entries,
+                        {"role": "assistant", "content": "".join(reply)},
+                    ]
+                    entries.clear()
                     if self._context_bytes(self._history) > 256 * 1024:
                         raise PermissionError("conversation_context_limit")
                     if slot.mode == "speech":
@@ -677,9 +976,7 @@ class ConversationExecutor:
                             if segment.intent.generation != slot.generation:
                                 raise PermissionError("stale_generation")
                             delegation_id = None
-                        await segment.append_context(
-                            delegation_id, "".join(reply), work=item.receipt.work
-                        )
+                        await self._speak(item, segment, delegation_id, "".join(reply))
                     else:
                         await emit(
                             {
@@ -723,6 +1020,75 @@ class ConversationExecutor:
         except Exception:
             pass
 
+    def interrupt_speech(self) -> None:
+        """Verified caller speech or a new delegation: drop the reply parts not yet sent."""
+        if self._speaking:
+            self._interrupted.set()
+
+    async def _speak(
+        self, item: WorkItem, segment: GptLiveSession, delegation_id: str | None, reply: str
+    ) -> None:
+        """Send a spoken reply in parts of at most 500 bytes, each after the previous one's
+        acknowledgement or 2 s; an interruption drops the rest into one quiet note."""
+        # A blank reply goes to the adapter unchanged, which refuses it as before.
+        parts = [part for part in split_reply(reply) if part.strip()] or [reply]
+        work = item.receipt.work
+        sent = 0
+        interrupted = False
+        self._speaking = True
+        self._interrupted.clear()
+        try:
+            for index, part in enumerate(parts):
+                if index:
+                    if self._interrupted.is_set():
+                        interrupted = True
+                        break
+                    if work.remaining(self.utc_now()) <= PART_MARGIN_SECONDS:
+                        # The work budget is spent; the rest is dropped without a note.
+                        break
+                last = index == len(parts) - 1
+                event_id = None if last else "part_" + uuid4().hex
+                await segment.append_context(delegation_id, part, work=work, event_id=event_id)
+                sent += 1
+                if event_id is not None:
+                    waits = {
+                        asyncio.create_task(
+                            segment.acknowledged(
+                                event_id,
+                                within=max(
+                                    0.0,
+                                    min(
+                                        PART_ACK_SECONDS,
+                                        work.remaining(self.utc_now()) - PART_MARGIN_SECONDS,
+                                    ),
+                                ),
+                            )
+                        ),
+                        asyncio.create_task(self._interrupted.wait()),
+                    }
+                    try:
+                        await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+                    finally:
+                        for waiting in waits:
+                            waiting.cancel()
+                        await asyncio.wait(waits)
+        finally:
+            self._speaking = False
+        dropped = len(parts) - sent
+        if interrupted:
+            for note in dropped_note("".join(parts[sent:])):
+                await segment.append_context(delegation_id, note, quiet=True, work=work)
+        if self._telemetry is not None and (len(parts) > 1 or dropped):
+            for measurement, value in (("parts", len(parts)), ("dropped_parts", dropped)):
+                self._telemetry.event(
+                    "test.speech_parts",
+                    "success",
+                    mode="speech",
+                    reason="ready",
+                    measurement=measurement,
+                    value=value,
+                )
+
     async def _tell_live(self, item: WorkItem, content: str) -> None:
         """Best effort: give the Live model a fixed line for this delegation."""
         segment = self._speech.get(item.receipt.task_id)
@@ -738,10 +1104,6 @@ class ConversationExecutor:
                 await segment.append_context(delegation_id, content)
         except Exception:
             pass
-
-    async def _hold(self, item: WorkItem) -> None:
-        await asyncio.sleep(self._holding_seconds)
-        await self._tell_live(item, HOLDING_LINE)
 
     async def process_next(self, *, emit: Callable[[dict[str, Any]], Awaitable[None]]) -> bool:
         if self._processing.locked():
@@ -763,19 +1125,12 @@ class ConversationExecutor:
             if item is None:
                 return False
             self._processing_task = asyncio.current_task()
+            self._current_item = item
+            progress = self._progress[item.receipt.task_id] = ProgressState()
             failed_here = False
             ending = False
             try:
-                holding = (
-                    asyncio.create_task(self._hold(item))
-                    if item.receipt.delegation_id is not None
-                    else None
-                )
-                try:
-                    await self._execute(item, emit)
-                finally:
-                    if holding is not None:
-                        holding.cancel()
+                await self._execute(item, emit)
             except Exception as error:
                 code = (
                     error.args[0]
@@ -796,10 +1151,19 @@ class ConversationExecutor:
                     )
                 await self._work_error(emit, item.receipt.task_id, active=not ending)
                 if not ending:
-                    await self._tell_live(item, WORK_FAILED_LINE)
+                    if progress.entries and (
+                        self._context_bytes([*self._history, *progress.entries]) <= 256 * 1024
+                    ):
+                        self._history.extend(progress.entries)
+                    # The fixed line only stands in when the agent reported no final state.
+                    if not progress.final_reported and item.receipt.delegation_id is not None:
+                        self._progress_event("failure", "fallback_line")
+                        await self._tell_live(item, WORK_FAILED_LINE)
             finally:
                 self.queue.finish(item.receipt)
                 self._speech.pop(item.receipt.task_id, None)
+                self._progress.pop(item.receipt.task_id, None)
+                self._current_item = None
                 self._processing_task = None
             if self._telemetry is not None:
                 self._telemetry.event(
@@ -864,6 +1228,7 @@ class ConversationExecutor:
         self.queue.close()
         self._history.clear()
         self._transcripts.clear()
+        self._greeting_parts = None
         self.speech_fragments.clear()
         self.policy.transfer_context.clear()
         self._speech.clear()

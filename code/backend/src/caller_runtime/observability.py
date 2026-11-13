@@ -40,6 +40,9 @@ TEST_OPERATIONS = frozenset(
         "test.usage",
         "test.latency",
         "test.alert",
+        "test.greeting",
+        "test.speech_parts",
+        "test.progress",
     }
 )
 TEST_MEASUREMENTS = {
@@ -55,6 +58,8 @@ TEST_MEASUREMENTS = {
     "test.latency": frozenset(
         {"backend_first_text_seconds", "work_seconds", "cleanup_seconds", "admission_seconds"}
     ),
+    "test.greeting": frozenset({"greeting_seconds"}),
+    "test.speech_parts": frozenset({"parts", "dropped_parts"}),
     "history.store": frozenset({"store_seconds"}),
     "status.probe": frozenset({"text_probe_seconds", "voice_probe_seconds"}),
 }
@@ -88,6 +93,16 @@ TEST_REASONS = frozenset(
         "cleanup_uncertain",
         "dependency_failures",
         "latency_high",
+        "fallback",
+        "skipped",
+        "still_working",
+        "waiting_for_input",
+        "completed",
+        "failed",
+        "cancellation_confirmed",
+        "fallback_line",
+        "rate_limited",
+        "stale",
     }
 )
 OPERATIONS = (

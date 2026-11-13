@@ -33,7 +33,7 @@ from management_app.adapters.backend_connection import (
 )
 from management_app.adapters.backend_errors import BACKEND_CLOSE_CODES, PUBLIC_CODES, BackendRefusal
 from management_app.adapters.relay_frames import RelayFrames, RelayLimit, parse_control
-from management_app.adapters.text_relay import ActiveRevision, TextRelay
+from management_app.adapters.text_relay import ActiveRevision, TextRelay, valid_progress
 from management_app.models.test_session import ConsoleSnapshot, StartPermit, utc
 from management_app.observability import Telemetry
 from management_app.security import ServerSession
@@ -369,6 +369,7 @@ class TestSessionClient:
                     "ended": {"code", "cleanupStatus", "correlationId"},
                     "audio.credit": {"availableSamples", "acceptedAudioSequence"},
                     "transcript.delta": {"speaker", "fragment", "start_ms", "end_ms"},
+                    "progress": {"state", "text"},
                 }
                 if kind not in fields or set(value) != {
                     "type",
@@ -433,6 +434,10 @@ class TestSessionClient:
                         for field in ("start_ms", "end_ms")
                     )
                     or not 0 <= value["start_ms"] <= value["end_ms"] <= 3600000
+                ):
+                    raise PermissionError("invalid_test_control")
+                if kind == "progress" and (
+                    permit.mode != "speech" or not valid_progress(value["state"], value["text"])
                 ):
                     raise PermissionError("invalid_test_control")
                 if kind not in {"error", "ended"}:

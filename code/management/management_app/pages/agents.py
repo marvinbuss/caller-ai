@@ -19,6 +19,7 @@ ERRORS = cast(ObjectVar[dict[str, str]], Editor.errors)
 EDIT_AGENT = cast(EventHandler, Editor.edit_agent)
 DELETE_AGENT = cast(EventHandler, Editor.delete_agent)
 ENABLE_AGENT = cast(EventHandler, Editor.set_agent_enabled)
+RESTORE_PROMPT = cast(EventHandler, Editor.restore_default_prompt)
 
 
 def field_control(label: str, control: rx.Component, identifier: Any, path: Any) -> rx.Component:
@@ -40,6 +41,44 @@ def field_control(label: str, control: rx.Component, identifier: Any, path: Any)
             flex_direction="column",
             gap="6px",
             min_width="0",
+        ),
+    )
+
+
+def addition_control(
+    agent: ObjectVar[dict[str, Any]], field: str, label: str, prefix: Any
+) -> rx.Component:
+    """A per-modality addition, appended after the prompt in that modality only (FR-027)."""
+    identifier = agent["agentId"].to(str) + "-" + field
+    return cast(
+        rx.Component,
+        rx.el.div(
+            field_control(
+                label,
+                rx.el.textarea(
+                    id=identifier,
+                    value=agent[field].to(str),
+                    on_change=EDIT_AGENT(agent["agentId"].to(str), field),
+                    rows=2,
+                    aria_invalid=ERRORS.contains(prefix + field),
+                    aria_describedby=identifier + "-bytes",
+                    width="100%",
+                    padding="10px",
+                    border="1px solid #b8c3bd",
+                    border_radius="4px",
+                    resize="vertical",
+                ),
+                identifier,
+                prefix + field,
+            ),
+            rx.text(
+                agent[field + "Bytes"].to(str),
+                id=identifier + "-bytes",
+                size="1",
+                color="#4f5852",
+                text_align="right",
+            ),
+            width="100%",
         ),
     )
 
@@ -168,12 +207,28 @@ def agent_row(agent: ObjectVar[dict[str, Any]]) -> rx.Component:
                 prompt_id,
                 prefix + "prompt",
             ),
+            addition_control(agent, "voiceAddition", "Voice addition", prefix),
+            addition_control(agent, "textAddition", "Text addition", prefix),
             rx.cond(
                 agent["protected"].to(bool),
-                rx.text(
-                    "Pre-defined agent: it cannot be deleted, moved, disabled or given tools.",
-                    size="2",
-                    color="#4f5852",
+                rx.flex(
+                    rx.text(
+                        "Pre-defined agent: it cannot be deleted, moved, disabled or given tools.",
+                        size="2",
+                        color="#4f5852",
+                    ),
+                    rx.button(
+                        "Restore default",
+                        type="button",
+                        variant="soft",
+                        size="1",
+                        aria_label="Restore default prompt for " + agent["name"].to(str),
+                        on_click=RESTORE_PROMPT(identifier),
+                    ),
+                    align="center",
+                    justify="between",
+                    wrap="wrap",
+                    gap="8px",
                 ),
             ),
             rx.el.label(

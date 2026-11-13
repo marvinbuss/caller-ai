@@ -304,9 +304,11 @@ Open **Settings** (`/settings`); it needs the editor role. It groups the service
 
 - **Voice**: the voice drop-down lists the runtime's voice catalog grouped by language, labeled
   like "Quartz — English (Australian), feminine", with the environment default marked. The idle
-  timeout is an integer from 30 to 120 seconds.
+  timeout is an integer from 30 to 120 seconds. The voice conversation instructions, voice
+  platform rules, voice global prompt and the quiet update switch are described below.
 - **Text**: the reply length limit is an integer from 1 to the runtime's limit; it applies to text
-  replies and delegated work, not to spoken output.
+  replies and delegated work, not to spoken output. The text platform rules and text global
+  prompt are described below.
 - **Service (read-only)**: the Foundry service host, the text and voice model deployments and the
   voice region.
 
@@ -322,6 +324,56 @@ catalog and limits are unknown, so the settings are read-only with an explanatio
 Management validation refuses a voice outside the runtime catalog (rule `conversation_voice`) and
 values outside the limits (rule `conversation_limit`); until the runtime status has been read, only
 an unchanged voice is accepted. The runtime refuses a revision whose settings break the same rules.
+
+### Voice and text behavior (schema 2.2.0)
+
+The Voice and Text sections also hold the texts that shape each modality. Every text shows a byte
+counter and **Restore default**; a text that is not stored shows the shipped default and a
+**Default** marker.
+
+| Field | Section | Limit | Used by |
+|-------|---------|-------|---------|
+| `voiceInstructions` | Voice | 1 byte to 12 KiB | The speaking model (GPT-Live) only |
+| `voicePlatformRules` | Voice | 0 to 8 KiB | Every working agent in voice conversations |
+| `voiceGlobalPrompt` | Voice | 0 to 8 KiB | Every working agent in voice conversations |
+| `textPlatformRules` | Text | 0 to 8 KiB | Every working agent in text conversations |
+| `textGlobalPrompt` | Text | 0 to 8 KiB | Every working agent in text conversations |
+| `quietHandover` | Voice (switch) | on or off | The quiet update the speaking model gets on each delegation |
+| Agent `voiceAddition`, `textAddition` | Agent settings panel | 0 to 4 KiB each | That agent, in that modality only |
+
+A working agent's instructions are composed per modality in this order, separated by a blank
+line, with empty parts left out:
+
+1. the modality's platform rules,
+2. the modality's global prompt,
+3. the agent's prompt,
+4. the agent's addition for that modality.
+
+The composed text is at most 36 KiB in either modality. The speaking model never receives
+platform rules, global prompts, agent prompts or additions: it gets the voice conversation
+instructions and a short automatic context note naming the active agent and the communities it
+can route to.
+
+- **Absent means default.** **Restore default** removes the stored value, and an empty agent
+  addition is not stored. A revision is written as schema `2.2.0` only when it carries at least one
+  of these fields; otherwise it keeps `2.1.0`. The runtime receives every setting resolved.
+- **Confirmation.** Publishing changed platform rules or voice instructions (including restoring
+  them) opens "This can break voice or text behavior. Publish anyway?". The API refuses such a
+  change without the confirmation with `platform_rules_unconfirmed`.
+- **Limits.** A text over its limit, or a composed agent instruction over 36 KiB, is refused with
+  `configuration_text_too_large` and the field's path.
+- **Empty platform rules** are allowed; the Test page then shows "Platform rules for voice are
+  empty" (or text).
+- **Quiet update on handover** is on by default. Switched off, the speaking model gets no quiet
+  note when it hands a request to the agents.
+- Users with only the tester role never receive these texts.
+- New values apply to conversations started after publication; a running conversation keeps the
+  revision it started with.
+
+**Pre-defined agents.** Their settings panel offers **Restore default**, which sets the draft
+prompt to the current shipped Welcome, Routing or Goodbye default; the prompt stays editable.
+The shipped defaults are applied to an existing configuration once, by the operator command in
+the [configuration runbook](runbooks/configuration.md#slice-1-default-prompts).
 
 US1 local checkpoint on 2026-10-30: all 534 management tests passed, including every compiled
 editor/shell browser case, with no skipped/deselected required tests. The eight US1 browser

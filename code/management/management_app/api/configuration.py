@@ -24,6 +24,7 @@ from management_app.adapters.configuration_repository import (
     verified_revision,
 )
 from management_app.api.problems import problem_response
+from management_app.models.configuration import AGENT_ADDITIONS, MODALITY_SETTINGS
 from management_app.observability import sanitize_correlation_id
 from management_app.services.audit import AuditRecord
 from management_app.services.configuration_validation import SNAPSHOT_LIMIT, encoded
@@ -31,6 +32,8 @@ from management_app.services.graph_view import unreachable
 from management_app.services.secret_detection import Issue
 
 ETAG = re.compile(r'^"[A-Za-z0-9_-]{1,128}"$')
+# Sent by the Settings page after the user confirmed a platform rules or voice instructions change.
+CONFIRMATION_HEADER = "X-Caller-Confirm-Platform-Rules"
 ERROR_CODES = {
     401: "authentication_required",
     403: "permission_denied",
@@ -51,6 +54,8 @@ class IdentityPort(Protocol):
 
 class ValidationPort(Protocol):
     def validate(self, payload: Document) -> list[Issue]: ...
+
+    def confirmation_issues(self, payload: Document, previous: Document | None) -> list[Issue]: ...
 
 
 class RepositoryPort(Protocol):
@@ -84,6 +89,8 @@ def problem(status: int, correlation: str, issues: list[Issue] | None = None) ->
         "invalid_configuration",
         "configuration_too_large",
         "publication_too_large",
+        "configuration_text_too_large",
+        "platform_rules_unconfirmed",
     }
     code = next((item["code"] for item in safe if item["code"] in allowed), ERROR_CODES[status])
     return problem_response(status, correlation, code, safe)
@@ -126,6 +133,14 @@ def revision_response(
     revision = verified_revision(snapshot)
     if not editor:
         revision.pop("publication", None)
+        # Tester-only users never receive the modality texts (FR-036).
+        settings = revision.get("conversationSettings")
+        if isinstance(settings, dict):
+            for key in MODALITY_SETTINGS:
+                settings.pop(key, None)
+        for agent in revision.get("agents", []):
+            for key in AGENT_ADDITIONS:
+                agent.pop(key, None)
     # Advisory only: an unreachable community never blocks publication.
     revision["warnings"] = [
         {"code": "community_unreachable", "communityId": identifier}
@@ -217,6 +232,15 @@ def create_router(
                 issues = validator.validate(payload)
                 if issues:
                     raise ConfigurationRejected(issues)
+                # Platform rules and voice instructions change only with the Settings page's
+                # explicit confirmation (FR-030, FR-037).
+                if request.headers.get(CONFIRMATION_HEADER) != "confirmed":
+                    current = await repository.read_active()
+                    unconfirmed = validator.confirmation_issues(
+                        payload, current[0] if current is not None else None
+                    )
+                    if unconfirmed:
+                        raise ConfigurationRejected(unconfirmed)
                 published = await repository.publish(
                     payload,
                     if_match=values[0],

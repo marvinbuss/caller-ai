@@ -32,6 +32,7 @@ custom code is retained. Add a row when a dependency is added or custom code rep
 | Backend upstream socket | `websockets` | See the decision below. |
 | Cosmos DB and credentials | `azure-cosmos`, `azure-identity` | Configuration store and managed identity. |
 | Async HTTP transport for the Azure SDK | `aiohttp` | Same reason as for the backend. |
+| Formatted text in the Test page chat | `markdown-it-py` (direct, `>=4.2,<5`; already locked through Reflex) | The text relay parses each completed reply with `html=False` into an allowlisted node tree (`services/formatted_text.py`). The browser builds DOM nodes from that tree with `textContent`, so no HTML string reaches the DOM. `rx.markdown` does not apply because chat rows are built by `components/live_audio_js.py`, not Reflex state. Browser-side Markdown with an HTML sanitizer, or server-side HTML through `nh3`, would add an HTML injection surface and a new dependency. |
 
 ### Management upstream `websockets` usage
 

@@ -85,12 +85,17 @@ class TextConversationService:
         self,
         permit: StartPermit,
         *,
-        text: str,
+        text: str | None,
         conversation_id: str | None,
         emit: Emit,
     ) -> TurnResult:
         owner = permit.actor_key
         stored: StoredConversation | None = None
+        if text is None:
+            # The open request starts a new conversation with the greeting and nothing else.
+            if conversation_id is not None:
+                raise PermissionError("invalid_control")
+            return await self._open(permit, emit=emit)
         if conversation_id is not None:
             # Load before admission so an unknown or foreign id never takes a slot.
             stored = await self._store(
@@ -120,6 +125,18 @@ class TextConversationService:
             return TurnResult(identifier, completed)
         finally:
             # Cleanup must finish even if the client disconnects and cancels this request.
+            await asyncio.shield(controller.close())
+
+    async def _open(self, permit: StartPermit, *, emit: Emit) -> TurnResult:
+        started = asyncio.get_running_loop().time()
+        identifier = new_conversation_id()
+        controller = await self._runtime.start(permit, emit=emit)
+        try:
+            await emit({"type": "conversation", "conversationId": identifier})
+            await controller.open_text(emit, started=started)
+            await self._save(controller, permit.actor_key, identifier, None)
+            return TurnResult(identifier, True)
+        finally:
             await asyncio.shield(controller.close())
 
     async def _resume(

@@ -76,6 +76,16 @@ TEXT_RETENTION_NOTICE = (
     "Text test conversations are stored for 30 days after the last message "
     "and are visible only to their owner."
 )
+# Status rows (`data-kind="status"`, written by the console script) look distinct from replies.
+STATUS_ROW = "& [data-kind='status']"
+STATUS_STYLE = {
+    "color": "#3f4b45",
+    "font_style": "italic",
+    "background": "#f1f4f2",
+    "border_left": "3px solid #6b7c73",
+    "padding": "4px 8px",
+    "margin": "6px 0",
+}
 
 
 def console_controls() -> rx.Component:
@@ -177,6 +187,16 @@ def console_controls() -> rx.Component:
                 wrap="wrap",
                 font_size="14px",
             ),
+            rx.foreach(
+                Console.rule_notices,
+                lambda notice: rx.callout(
+                    notice,
+                    color_scheme="orange",
+                    role="status",
+                    data_testid="test-rules-notice",
+                    width="100%",
+                ),
+            ),
             rx.el.div(
                 id="test-messages",
                 role="log",
@@ -189,6 +209,8 @@ def console_controls() -> rx.Component:
                 overflow_wrap="anywhere",
                 border_bottom="1px solid #dce1df",
                 padding="12px 0",
+                # Progress updates: a distinct, quieter row next to the replies (FR-041).
+                style={STATUS_ROW: STATUS_STYLE},
             ),
             rx.el.div(
                 id="test-error",

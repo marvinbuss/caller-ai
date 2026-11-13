@@ -14,12 +14,15 @@ from uuid import uuid4
 
 from management_app.models.configuration import (
     EMPTY_LAYOUT,
+    MODALITY_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ConfigurationGraph,
     ConfigurationRevision,
     PublicationRecord,
+    uses_modality_fields,
 )
 from management_app.models.permissions import AUTHORITY_LIMIT, PermissionAuthority
+from management_app.services import default_prompts
 from management_app.services.configuration_validation import (
     BATCH_LIMIT,
     GRAPH_FIELDS,
@@ -39,7 +42,11 @@ class ConfigurationRejected(ValueError):
 
 
 def runtime_projection(snapshot: Document) -> Document:
-    """Project an integrity-verified revision without claiming to recompute its full hash."""
+    """Project an integrity-verified revision without claiming to recompute its full hash.
+
+    Absent 2.2.0 fields are resolved to the shipped defaults (empty additions as `""`) before
+    `policyHash` is computed, so the runtime always receives every setting and addition.
+    """
     policy = {
         key: copy.deepcopy(value)
         for key, value in snapshot.items()
@@ -47,6 +54,12 @@ def runtime_projection(snapshot: Document) -> Document:
     }
     for connection in policy["mcpConnections"]:
         connection.pop("credentialRef")
+    policy["conversationSettings"] = default_prompts.resolve_settings(
+        policy.get("conversationSettings")
+    )
+    for agent in policy["agents"]:
+        agent.setdefault("voiceAddition", "")
+        agent.setdefault("textAddition", "")
     provenance = {
         key: snapshot[key]
         for key in ("id", "organizationId", "revisionNumber", "createdAt", "createdBy", "graphHash")
@@ -93,8 +106,10 @@ def publication(
     if errors:
         raise ConfigurationRejected(errors)
     graph = ConfigurationGraph.model_validate(payload).model_dump(mode="json", by_alias=True)
-    # Positions live in the browser now; a revision keeps only the empty 2.1.0 layout.
-    graph |= {"schemaVersion": SCHEMA_VERSION, "layout": copy.deepcopy(EMPTY_LAYOUT)}
+    # Positions live in the browser now; a revision keeps only the empty layout. Only a revision
+    # that carries a 2.2.0 field is written as 2.2.0, so earlier releases can still read the rest.
+    version = MODALITY_SCHEMA_VERSION if uses_modality_fields(graph) else SCHEMA_VERSION
+    graph |= {"schemaVersion": version, "layout": copy.deepcopy(EMPTY_LAYOUT)}
     now = datetime.now(UTC)
     number = previous["revisionNumber"] + 1 if previous else 1
     stamped_at = now.isoformat().replace("+00:00", "Z")

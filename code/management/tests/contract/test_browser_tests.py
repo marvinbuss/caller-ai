@@ -141,6 +141,15 @@ def test_owned_manager_relay_enforces_stable_actor_and_five_occupied_slots(edito
                     text = await begin(actors[1], mode="text")
                     opened = await message_of(text, "ready")
                     assert opened["mode"] == "text" and opened["agentId"] == "agent-welcome"
+                    # The open request brings the greeting as the first reply.
+                    greeting = []
+                    while True:
+                        value = json.loads(await asyncio.wait_for(text.recv(), 10))
+                        if value["type"] == "text.completed":
+                            break
+                        assert value["type"] == "text.delta", value
+                        greeting.append(value["text"])
+                    assert "".join(greeting).strip()
                     for sequence, content in ((1, "First question"), (2, "Second question")):
                         await text.send(
                             json.dumps(

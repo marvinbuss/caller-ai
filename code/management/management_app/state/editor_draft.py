@@ -46,17 +46,18 @@ class EditorServices:
         graph: Document | None = None,
         etag: str | None = None,
         path: str = "/v2/configuration",
+        headers: dict[str, str] | None = None,
     ) -> httpx.Response:
-        headers = self.guard.request_headers(sid, token, mutation=method == "PUT")
+        sent = self.guard.request_headers(sid, token, mutation=method == "PUT") | (headers or {})
         if etag is not None:
-            headers["If-Match"] = etag
+            sent["If-Match"] = etag
         async with asyncio.timeout(10):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=self.api),
                 base_url=self.guard.identity.policy.origin,
                 trust_env=False,
             ) as client:
-                return await client.request(method, path, headers=headers, json=graph)
+                return await client.request(method, path, headers=sent, json=graph)
 
 
 @dataclass(slots=True)
@@ -104,6 +105,15 @@ class EditorDraft:
 
     def edit_agent(self, identifier: str, name: str, value: str | bool) -> None:
         agent = self._agent(identifier)
+        if name in {"voiceAddition", "textAddition"}:
+            if not isinstance(value, str):
+                raise ValueError("invalid_field_type")
+            # An empty addition is the default, so it is not stored (schema 2.2.0, FR-034).
+            if value:
+                agent[name] = value
+            else:
+                agent.pop(name, None)
+            return
         if name not in {"name", "prompt", "enabled", "communityId"}:
             raise ValueError("protected_role")
         if agent["role"] != "ordinary" and name in {"enabled", "communityId"}:

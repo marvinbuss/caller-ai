@@ -6,6 +6,7 @@ from datetime import timedelta
 
 import pytest
 
+from caller_runtime.services import modality_defaults
 from tests.doubles import model_capped, model_reply, model_stream
 from tests.unit.test_admission import admission_case as admission_case
 from tests.unit.test_admission import authority_store as authority_store
@@ -471,7 +472,11 @@ def text_execution_case(admission_case):
                 )
 
         async def __aiter__(self):
-            text = "x" * 65537 if controls["oversized"] else "Synthetic shared streamed reply"
+            text = (
+                "x" * 65537
+                if controls["oversized"]
+                else controls.get("reply", "Synthetic shared streamed reply")
+            )
             call = None
             if self.action is not None:
                 call_name, arguments = self.action
@@ -499,6 +504,29 @@ def text_execution_case(admission_case):
 
     async def dispatch(request):
         body = json.loads(request.content)
+        if body.get("max_output_tokens") == 256:
+            # Greeting requests are kept apart so dispatch counts stay those of the work.
+            controls.setdefault("greeting_requests", []).append(body)
+            if controls.get("greeting_delays"):
+                # Load tests draw Welcome-agent latency from a fixed list, one per request.
+                delay = controls["greeting_delays"].pop(0)
+                controls["greeting_in_flight"] = controls.get("greeting_in_flight", 0) + 1
+                controls["greeting_peak"] = max(
+                    controls.get("greeting_peak", 0), controls["greeting_in_flight"]
+                )
+                try:
+                    await asyncio.sleep(delay)
+                finally:
+                    controls["greeting_in_flight"] -= 1
+            if controls.get("greeting_block"):
+                entered.set()
+                await release.wait()
+            if "greeting" not in controls or controls.get("greeting_status"):
+                return httpx2.Response(
+                    controls.get("greeting_status", 400),
+                    json={"error": {"message": "synthetic-private-provider-response"}},
+                )
+            return httpx2.Response(200, json=model_reply(controls["greeting"]))
         requests.append(body)
         if controls.get("prepare") and not body.get("stream"):
             assert not body.get("tools") and body["store"] is False
@@ -588,7 +616,8 @@ def test_text_executor_streams_real_sdk_reply_without_live_and_bounds_complete_r
         assert accepted.receipt.work.work_deadline_utc == clock.utc_now() + timedelta(seconds=10)
         await controller.process_next(emit=emit)
         assert len(requests) == 1
-        assert requests[0]["instructions"] == "Synthetic prompt for b-entry"
+        expected = modality_defaults.TEXT_PLATFORM_RULES + "\n\nSynthetic prompt for b-entry"
+        assert requests[0]["instructions"] == expected
         observed = (
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority.slots[0]
@@ -663,7 +692,8 @@ def test_text_executor_applies_directed_tool_handover_with_filtered_context(text
         await controller.process_next(emit=emit)
         assert controller.policy.active_agent_id == "b-peer"
         assert controller.policy.agent_epoch == original_epoch + 1 and len(requests) == 2
-        assert requests[1]["instructions"] == "Synthetic prompt for b-peer"
+        expected = modality_defaults.TEXT_PLATFORM_RULES + "\n\nSynthetic prompt for b-peer"
+        assert requests[1]["instructions"] == expected
         target_context = json.dumps(requests[1]["input"])
         assert "Synthetic approved summary" in target_context
         assert "Synthetic original source-only detail" not in target_context
@@ -681,6 +711,7 @@ def test_speech_delegation_uses_shared_executor_and_exact_id_without_guessing(
 ):
     from caller_runtime.services.conversation import ConversationExecutor
     from caller_runtime.services.conversation_policy import ConversationPolicy
+    from caller_runtime.services.modality_defaults import VOICE_PLATFORM_RULES
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -721,7 +752,9 @@ def test_speech_delegation_uses_shared_executor_and_exact_id_without_guessing(
         assert len(appended[0]["content"].encode("utf-8")) <= 500
         if clear:
             assert appended[0]["content"] == "Synthetic shared streamed reply"
-            assert requests[0]["instructions"] == "Synthetic welcome prompt"
+            assert (
+                requests[0]["instructions"] == VOICE_PLATFORM_RULES + "\n\nSynthetic welcome prompt"
+            )
         else:
             assert "clarify" in appended[0]["content"].lower()
         assert not any(event["type"].startswith("text.") for event in messages)
@@ -732,6 +765,187 @@ def test_speech_delegation_uses_shared_executor_and_exact_id_without_guessing(
         ).duplicate
         assert not await controller.process_next(emit=emit)
         assert accepted.receipt.delegation_id == "delegation-bound"
+        await segment.close()
+        await adapter.close()
+
+    asyncio.run(scenario())
+
+
+LONG_SPOKEN_REPLY = "This spoken sentence carries one part of a long answer to the caller. " * 30
+
+
+@pytest.mark.parametrize(
+    "scenario_name", ["acknowledged", "unacknowledged", "interrupted", "spent"]
+)
+def test_long_speech_reply_is_delivered_in_paced_parts(
+    live_case, text_execution_case, monkeypatch, scenario_name
+):
+    from caller_runtime.observability import Telemetry
+    from caller_runtime.services import conversation
+    from caller_runtime.services.conversation import WORK_FAILED_LINE, ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+    from caller_runtime.services.speech_parts import QUIET_HANDOVER
+
+    service, repository, clock, socket, opened = live_case
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    telemetry = Telemetry("caller-runtime", "local")
+    controls["reply"] = LONG_SPOKEN_REPLY
+    if scenario_name == "unacknowledged":
+        monkeypatch.setattr(conversation, "PART_ACK_SECONDS", 0.05)
+    original_send = socket.send
+
+    async def send(raw):
+        await original_send(raw)
+        event = json.loads(raw)
+        if event["type"] != "session.commentary.append" or event.get("delegation_id") is None:
+            return
+        if scenario_name == "acknowledged" and "event_id" in event:
+            await socket.events.put(
+                json.dumps(
+                    {"type": "session.commentary.appended", "client_event_id": event["event_id"]}
+                )
+            )
+        if scenario_name == "spent":
+            clock.advance(40)
+
+    socket.send = send
+
+    async def scenario():
+        original, segment = await opened()
+        slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
+        policy = ConversationPolicy(
+            slot=slot, snapshot=service.configuration.pin(), admission=service
+        )
+        controller = ConversationExecutor(
+            policy=policy, text_adapter=adapter, utc_now=clock.utc_now, telemetry=telemetry
+        )
+
+        async def read():
+            while True:
+                await segment.next_event()
+
+        await socket.events.put(
+            json.dumps(
+                {
+                    "type": "session.delegation.created",
+                    "delegation": {
+                        "id": "delegation-long",
+                        "type": "delegation",
+                        "target": "client",
+                    },
+                    "offset_ms": 10,
+                }
+            )
+        )
+        event = await segment.next_event()
+        reader = asyncio.create_task(read())
+        await controller.submit_delegation(
+            segment, event, task_text="Synthetic correlated task", unambiguous=True
+        )
+        work = asyncio.create_task(controller.process_next(emit=emit))
+        if scenario_name == "interrupted":
+            for _ in range(1000):
+                if [e for e in socket.sent if e["type"] == "session.commentary.append"]:
+                    break
+                await asyncio.sleep(0.01)
+            controller.interrupt_speech()
+        await asyncio.wait_for(work, 10)
+        reader.cancel()
+        await asyncio.wait({reader})
+        spoken = [e for e in socket.sent if e["type"] == "session.commentary.append"]
+        thinking = [e for e in socket.sent if e["type"] == "session.thinking.append"]
+        # The first quiet append is the handover update; any after it is the dropped note.
+        assert thinking[0]["content"] == QUIET_HANDOVER
+        notes = thinking[1:]
+        assert all(e["delegation_id"] == "delegation-long" for e in spoken + notes)
+        assert all(len(e["content"].encode("utf-8")) <= 500 for e in spoken + notes)
+        assert WORK_FAILED_LINE not in json.dumps(spoken)
+        if scenario_name in {"acknowledged", "unacknowledged"}:
+            assert "".join(e["content"] for e in spoken) == LONG_SPOKEN_REPLY
+            assert len(spoken) >= 5 and not notes
+            assert all("event_id" in e for e in spoken[:-1]) and "event_id" not in spoken[-1]
+        elif scenario_name == "interrupted":
+            assert len(spoken) == 1 and 1 <= len(notes) <= 3
+            assert notes[0]["content"].startswith("The rest of the earlier answer was not spoken: ")
+        else:
+            assert len(spoken) == 1 and not notes
+        await segment.close()
+        await adapter.close()
+        return len(spoken)
+
+    try:
+        sent = asyncio.run(scenario())
+        measured = {
+            e["measurement"]: int(e["value"])
+            for e in telemetry.events
+            if e["event"] == "test.speech_parts"
+        }
+        assert measured["parts"] >= 5
+        assert measured["dropped_parts"] == measured["parts"] - sent
+    finally:
+        telemetry.close()
+
+
+def test_spoken_greeting_is_the_first_assistant_history_entry(live_case, text_execution_case):
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+
+    service, repository, clock, socket, opened = live_case
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+
+    async def scenario():
+        original, segment = await opened()
+        slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
+        policy = ConversationPolicy(
+            slot=slot, snapshot=service.configuration.pin(), admission=service
+        )
+        controller = ConversationExecutor(
+            policy=policy, text_adapter=adapter, utc_now=clock.utc_now
+        )
+        for start, delta in ((0, "Hello and welcome. "), (100, "How can I help?")):
+            await controller.accept_transcript(
+                {
+                    "type": "session.output_transcript.delta",
+                    "delta": delta,
+                    "start_ms": start,
+                    "end_ms": start + 50,
+                },
+                generation=1,
+                input_audio_accepted=False,
+            )
+        await socket.events.put(
+            json.dumps(
+                {
+                    "type": "session.delegation.created",
+                    "delegation": {
+                        "id": "delegation-after",
+                        "type": "delegation",
+                        "target": "client",
+                    },
+                    "offset_ms": 200,
+                }
+            )
+        )
+        event = await segment.next_event()
+        await controller.submit_delegation(
+            segment, event, task_text="Synthetic correlated task", unambiguous=True
+        )
+        await controller.accept_transcript(
+            {
+                "type": "session.output_transcript.delta",
+                "delta": "Later answer speech",
+                "start_ms": 300,
+                "end_ms": 350,
+            },
+            generation=1,
+            input_audio_accepted=False,
+        )
+        await controller.process_next(emit=emit)
+        sent = requests[-1]["input"]
+        assert sent[0]["role"] == "assistant"
+        assert "Hello and welcome. How can I help?" in json.dumps(sent[0])
+        assert "Later answer speech" not in json.dumps(sent)
+        assert "Synthetic correlated task" in json.dumps(sent[1])
         await segment.close()
         await adapter.close()
 
@@ -750,9 +964,12 @@ def test_text_executor_runs_initial_welcome_routing_and_exact_entry_on_one_budge
         await controller.process_next(emit=emit)
         assert controller.policy.active_agent_id == "b-entry" and len(requests) == 3
         assert [request["instructions"] for request in requests] == [
-            "Synthetic welcome prompt",
-            "Synthetic routing prompt",
-            "Synthetic prompt for b-entry",
+            modality_defaults.TEXT_PLATFORM_RULES + "\n\n" + prompt
+            for prompt in (
+                "Synthetic welcome prompt",
+                "Synthetic routing prompt",
+                "Synthetic prompt for b-entry",
+            )
         ]
         assert all("Synthetic beta request" in json.dumps(request["input"]) for request in requests)
         assert controller.queue.lookup("text-initial") == accepted.receipt
@@ -830,6 +1047,7 @@ def test_speech_handover_retires_actual_socket_before_any_continuation(
             current=segment,
             instructions_for=lambda current: "Synthetic continuation instructions",
             emit=emit,
+            context_for=lambda current: [f"Synthetic note for {current.active_agent_id}"],
         )
         policy = ConversationPolicy(
             slot=slot,
@@ -842,6 +1060,12 @@ def test_speech_handover_retires_actual_socket_before_any_continuation(
         if confirmed:
             await policy.enter_routing(work)
             assert policy.active_agent_id == "routing" and len(created) == 1
+            # The new segment gets the context note for the new agent as quiet thinking.
+            assert [
+                (event["delegation_id"], event["content"])
+                for event in created[0].sent
+                if event["type"] == "session.thinking.append"
+            ] == [(None, "Synthetic note for routing")]
             assert segments.current.intent.generation == policy.slot.generation > slot.generation
             assert (
                 policy.slot.actor_key == slot.actor_key
@@ -1692,6 +1916,7 @@ def test_correlated_fragments_need_shared_backend_clarity_before_any_actions(
 ):
     from caller_runtime.services.conversation import ConversationExecutor
     from caller_runtime.services.conversation_policy import ConversationPolicy
+    from caller_runtime.services.modality_defaults import VOICE_PLATFORM_RULES
 
     service, repository, clock, socket, opened = live_case
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
@@ -1731,12 +1956,13 @@ def test_correlated_fragments_need_shared_backend_clarity_before_any_actions(
         assert deadline == accepted.receipt.work.work_accepted_at + timedelta(seconds=30)
         await controller.process_next(emit=emit)
         assert len(requests) == 1 + int(clear)
-        assert requests[0]["instructions"] == "Synthetic welcome prompt"
+        expected = VOICE_PLATFORM_RULES + "\n\nSynthetic welcome prompt"
+        assert requests[0]["instructions"] == expected
         assert "Synthetic correlated fragment text" in json.dumps(requests[0]["input"])
         # The clarity check and the speech work both ask for low reasoning effort.
         assert all(request["reasoning"]["effort"] == "low" for request in requests)
         if clear:
-            assert requests[1]["instructions"] == "Synthetic welcome prompt"
+            assert requests[1]["instructions"] == expected
             # Client timeouts are the background cap; the work budget bounds the wait.
             assert max(controls["timeouts"][1].values()) == 60
         final = [event for event in socket.sent if event["type"] == "session.commentary.append"]
@@ -1760,15 +1986,11 @@ def test_correlated_fragments_need_shared_backend_clarity_before_any_actions(
     asyncio.run(scenario())
 
 
-def test_slow_speech_delegation_holds_then_fails_alone_and_next_delegation_runs(
+def test_slow_speech_delegation_has_no_holding_line_then_fails_alone_and_next_delegation_runs(
     live_case, text_execution_case
 ):
     from caller_runtime.observability import Telemetry
-    from caller_runtime.services.conversation import (
-        HOLDING_LINE,
-        WORK_FAILED_LINE,
-        ConversationExecutor,
-    )
+    from caller_runtime.services.conversation import WORK_FAILED_LINE, ConversationExecutor
     from caller_runtime.services.conversation_policy import ConversationPolicy
 
     service, repository, clock, socket, opened = live_case
@@ -1786,7 +2008,6 @@ def test_slow_speech_delegation_holds_then_fails_alone_and_next_delegation_runs(
             text_adapter=adapter,
             utc_now=clock.utc_now,
             telemetry=telemetry,
-            holding_seconds=0.05,
         )
 
         async def delegate(delegation_id):
@@ -1820,12 +2041,18 @@ def test_slow_speech_delegation_holds_then_fails_alone_and_next_delegation_runs(
         processing = asyncio.create_task(controller.process_next(emit=emit))
         await asyncio.wait_for(entered.wait(), 1)
         await asyncio.sleep(0.2)
-        assert said("delegation-slow") == [HOLDING_LINE]
+        # The fixed holding line is gone; progress comes only from the agent (FR-023).
+        assert said("delegation-slow") == []
         clock.advance(31)
         release.set()
         assert await asyncio.wait_for(processing, 5)
-        # Only this item failed: the caller hears why and the session stays open.
-        assert said("delegation-slow") == [HOLDING_LINE, WORK_FAILED_LINE]
+        # Only this item failed: without a final state the caller hears the fallback line.
+        assert said("delegation-slow") == [WORK_FAILED_LINE]
+        assert [
+            (e["outcome"], e["reason_code"])
+            for e in telemetry.events
+            if e["event"] == "test.progress"
+        ] == [("failure", "fallback_line")]
         assert messages[-1]["code"] == "work_unavailable" and not controller.ended
         assert any(
             event["event"] == "test.work" and event["outcome"] == "failure"
@@ -1833,7 +2060,6 @@ def test_slow_speech_delegation_holds_then_fails_alone_and_next_delegation_runs(
         )
         controls["blocked"] = False
         entered.clear()
-        controller._holding_seconds = 60
         # The late reply is discarded but still settles the attempt, unblocking new work.
         await asyncio.wait_for(adapter.drained(), 5)
         await delegate("delegation-next")
@@ -2031,6 +2257,334 @@ def test_server_control_field_values_are_closed_not_only_key_names(event):
 
 
 @pytest.mark.parametrize(
+    "event",
+    [
+        {"type": "progress", "state": "unknown", "text": "Checking."},
+        {"type": "progress", "state": "completed", "text": ""},
+        {"type": "progress", "state": "completed", "text": "x" * 201},
+        {"type": "progress", "state": "completed", "text": "Done.", "messageId": "m1"},
+    ],
+    ids=["state", "empty", "long", "extra-field"],
+)
+def test_voice_progress_control_is_validated(event):
+    from caller_runtime.api.voice import server_control
+
+    with pytest.raises(PermissionError):
+        server_control(event)
+    valid = {"type": "progress", "state": "still_working", "text": "Checking.", "generation": 1}
+    assert server_control(valid) == valid
+
+
+def progress_actions(*pairs):
+    return [("report_progress", {"state": state, "message": message}) for state, message in pairs]
+
+
+def tool_outputs(request):
+    return [
+        item["output"]
+        for item in request["input"]
+        if isinstance(item, dict) and item.get("type") == "function_call_output"
+    ]
+
+
+def test_report_progress_validates_streams_and_lets_the_agent_continue(
+    text_execution_case, admission_case
+):
+    from caller_runtime.observability import Telemetry
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    controls["telemetry"] = telemetry = Telemetry("caller-runtime", "local")
+    controls["wire_actions"] = progress_actions(
+        ("still_working", "Checking the order status."),
+        ("bogus", "Not a state."),
+        ("completed", ""),
+        ("completed", "x" * 201),
+        ("still_working", "Still checking."),
+        ("waiting_for_input", "Which order do you mean?"),
+        ("completed", "Your order was updated."),
+    )
+
+    async def scenario():
+        controller = await setup()
+        await controller.submit_text("text-progress", "Synthetic order request")
+        assert await controller.process_next(emit=emit)
+        progress = [message for message in messages if message["type"] == "progress"]
+        assert [(p["messageId"], p["state"], p["text"]) for p in progress] == [
+            ("text-progress", "still_working", "Checking the order status."),
+            ("text-progress", "waiting_for_input", "Which order do you mean?"),
+            ("text-progress", "completed", "Your order was updated."),
+        ]
+        # Every call answers the model, which then continues; the turn still completes.
+        assert [tool_outputs(request)[-1] for request in requests[1:]] == [
+            '"reported"',
+            '"refused"',
+            '"refused"',
+            '"refused"',
+            '"reported"',
+            '"reported"',
+            '"reported"',
+        ]
+        assert messages[-1]["type"] == "text.completed"
+        tools = [tool["name"] for tool in requests[0]["tools"]]
+        assert "report_progress" in tools
+        schema = next(t for t in requests[0]["tools"] if t["name"] == "report_progress")
+        assert schema["parameters"]["properties"]["state"]["enum"] == [
+            "still_working",
+            "waiting_for_input",
+            "completed",
+            "failed",
+            "cancellation_confirmed",
+        ]
+        # Final and waiting states enter history before the answer; still_working does not.
+        turns = controller.text_turns()
+        assert [turn["content"] for turn in turns if turn["content"].startswith("Status")] == [
+            "Status (waiting_for_input): Which order do you mean?",
+            "Status (completed): Your order was updated.",
+        ]
+        assert turns[-1]["content"] == "Synthetic shared streamed reply"
+        reasons = [
+            (event["outcome"], event["reason_code"])
+            for event in telemetry.events
+            if event["event"] == "test.progress"
+        ]
+        assert reasons == [
+            ("success", "still_working"),
+            ("failure", "rate_limited"),
+            ("success", "waiting_for_input"),
+            ("success", "completed"),
+        ]
+        assert "Checking the order" not in json.dumps(telemetry.events)
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
+def test_progress_rate_limit_repeats_still_working_after_ten_seconds_and_drops_stale(
+    text_execution_case, admission_case
+):
+    from types import SimpleNamespace
+
+    from caller_runtime.domain.conversation import WorkBudget
+    from caller_runtime.observability import Telemetry
+    from caller_runtime.services.conversation import ProgressState
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    service, repository, container, clock, permit, cache = admission_case
+    controls["telemetry"] = telemetry = Telemetry("caller-runtime", "local")
+
+    async def scenario():
+        controller = await setup()
+        work = WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=60))
+        item = SimpleNamespace(
+            generation=controller.policy.slot.generation,
+            receipt=SimpleNamespace(task_id="text-rate", work=work, delegation_id=None),
+        )
+        controller._current_item = item
+        state = ProgressState()
+
+        async def report(name, text="Working on it."):
+            await controller._report_progress(item, state, name, text, emit)
+
+        await report("still_working")
+        await report("still_working")
+        clock.advance(10)
+        await report("still_working")
+        await report("completed")
+        await report("completed")
+        controller._current_item = None
+        await report("failed")
+        assert [m["state"] for m in messages if m["type"] == "progress"] == [
+            "still_working",
+            "still_working",
+            "completed",
+        ]
+        assert state.final_reported
+        reasons = [e["reason_code"] for e in telemetry.events if e["event"] == "test.progress"]
+        assert reasons == [
+            "still_working",
+            "rate_limited",
+            "still_working",
+            "completed",
+            "rate_limited",
+            "stale",
+        ]
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("setting", "sent"), [(None, True), (True, True), (False, False)])
+def test_quiet_handover_follows_the_published_switch(
+    live_case, text_execution_case, monkeypatch, setting, sent
+):
+    from caller_runtime.domain.configuration import RevisionSnapshot
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+    from caller_runtime.services.speech_parts import QUIET_HANDOVER
+
+    service, repository, clock, socket, opened = live_case
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    settings = {} if setting is None else {"quietHandover": setting}
+    monkeypatch.setattr(RevisionSnapshot, "conversation_settings", lambda self: dict(settings))
+
+    async def scenario():
+        original, segment = await opened()
+        slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
+        policy = ConversationPolicy(
+            slot=slot, snapshot=service.configuration.pin(), admission=service
+        )
+        controller = ConversationExecutor(
+            policy=policy, text_adapter=adapter, utc_now=clock.utc_now
+        )
+        event = segment.protocol.accept(
+            json.dumps(
+                {
+                    "type": "session.delegation.created",
+                    "delegation": {
+                        "id": "delegation-quiet",
+                        "type": "delegation",
+                        "target": "client",
+                    },
+                    "offset_ms": 10,
+                }
+            )
+        )
+        await controller.submit_delegation(segment, event, task_text=None, unambiguous=False)
+        quiet = [
+            e["content"]
+            for e in socket.sent
+            if e["type"] == "session.thinking.append" and e["delegation_id"] == "delegation-quiet"
+        ]
+        assert quiet == ([QUIET_HANDOVER] if sent else [])
+        await segment.close()
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("final", [False, True])
+def test_failure_line_stands_in_only_without_a_final_progress_state(
+    live_case, text_execution_case, monkeypatch, final
+):
+    from caller_runtime.observability import Telemetry
+    from caller_runtime.services.conversation import WORK_FAILED_LINE, ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+
+    service, repository, clock, socket, opened = live_case
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+
+    async def scenario():
+        original, segment = await opened()
+        slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
+        policy = ConversationPolicy(
+            slot=slot, snapshot=service.configuration.pin(), admission=service
+        )
+        telemetry = Telemetry("caller-runtime", "local")
+        controller = ConversationExecutor(
+            policy=policy, text_adapter=adapter, utc_now=clock.utc_now, telemetry=telemetry
+        )
+
+        async def failing(item, emit):
+            if final:
+                progress = controller._progress[item.receipt.task_id]
+                await controller._report_progress(
+                    item, progress, "failed", "The lookup failed.", emit
+                )
+            raise PermissionError("model_unavailable")
+
+        monkeypatch.setattr(controller, "_execute", failing)
+        event = segment.protocol.accept(
+            json.dumps(
+                {
+                    "type": "session.delegation.created",
+                    "delegation": {
+                        "id": "delegation-fail",
+                        "type": "delegation",
+                        "target": "client",
+                    },
+                    "offset_ms": 10,
+                }
+            )
+        )
+        await controller.submit_delegation(
+            segment, event, task_text="Synthetic clear request", unambiguous=True
+        )
+        assert await controller.process_next(emit=emit)
+        spoken = [
+            e["content"]
+            for e in socket.sent
+            if e["type"] == "session.commentary.append" and e["delegation_id"] == "delegation-fail"
+        ]
+        reasons = [e["reason_code"] for e in telemetry.events if e["event"] == "test.progress"]
+        if final:
+            assert spoken == ["The lookup failed."] and reasons == ["failed"]
+            assert controller.text_turns()[-1]["content"] == "Status (failed): The lookup failed."
+        else:
+            assert spoken == [WORK_FAILED_LINE] and reasons == ["fallback_line"]
+        await segment.close()
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
+def test_speech_progress_is_spoken_with_the_delegation_and_shown_in_the_browser(
+    live_case, text_execution_case
+):
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+
+    service, repository, clock, socket, opened = live_case
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    controls["wire_actions"] = progress_actions(("still_working", "Checking that for you."))
+
+    async def scenario():
+        original, segment = await opened()
+        slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
+        policy = ConversationPolicy(
+            slot=slot, snapshot=service.configuration.pin(), admission=service
+        )
+        controller = ConversationExecutor(
+            policy=policy, text_adapter=adapter, utc_now=clock.utc_now
+        )
+        event = segment.protocol.accept(
+            json.dumps(
+                {
+                    "type": "session.delegation.created",
+                    "delegation": {
+                        "id": "delegation-progress",
+                        "type": "delegation",
+                        "target": "client",
+                    },
+                    "offset_ms": 10,
+                }
+            )
+        )
+        await controller.submit_delegation(
+            segment, event, task_text="Synthetic clear request", unambiguous=True
+        )
+        assert await controller.process_next(emit=emit)
+        spoken = [
+            e["content"]
+            for e in socket.sent
+            if e["type"] == "session.commentary.append"
+            and e["delegation_id"] == "delegation-progress"
+        ]
+        assert spoken == ["Checking that for you.", "Synthetic shared streamed reply"]
+        assert [m for m in messages if m["type"] == "progress"] == [
+            {
+                "type": "progress",
+                "state": "still_working",
+                "text": "Checking that for you.",
+                "generation": slot.generation,
+            }
+        ]
+        await segment.close()
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
     ("end_ms", "since_first_s", "since_last_s", "verified"),
     [
         # Recorded on int: Live transcript time against time since the first forwarded frame.
@@ -2101,6 +2655,134 @@ def test_shared_model_readiness_uses_pinned_welcome_before_initial_ready_without
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("mode", ["text", "speech"])
+def test_greeting_request_uses_welcome_with_mode_rules_low_effort_and_no_tools(
+    text_execution_case, admission_case, mode
+):
+    from caller_runtime.domain.conversation import WorkBudget
+    from caller_runtime.services import modality_defaults
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+    from caller_runtime.services.greeting import TEXT_GREETING_INPUT, VOICE_GREETING_INPUT
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1, mode=mode))
+        slot = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        controller = ConversationExecutor(
+            policy=ConversationPolicy(
+                slot=slot, snapshot=service.snapshot_for(slot), admission=service
+            ),
+            text_adapter=adapter,
+            utc_now=clock.utc_now,
+        )
+        controls["greeting"] = "  Hello, welcome to the service. How can I help?  "
+        now = clock.utc_now()
+        work = WorkBudget(now, now + timedelta(seconds=5))
+        assert await controller.greeting_text(mode, work) == (
+            "Hello, welcome to the service. How can I help?"
+        )
+        body = controls["greeting_requests"][-1]
+        rules = (
+            modality_defaults.VOICE_PLATFORM_RULES
+            if mode == "speech"
+            else modality_defaults.TEXT_PLATFORM_RULES
+        )
+        assert body["instructions"] == rules + "\n\nSynthetic welcome prompt"
+        assert body["input"] == (VOICE_GREETING_INPUT if mode == "speech" else TEXT_GREETING_INPUT)
+        assert body["reasoning"] == {"effort": "low"}
+        assert body["max_output_tokens"] == 256 and body["store"] is False
+        assert not body.get("tools") and not body.get("stream")
+        with pytest.raises(PermissionError, match="^mode_mismatch$"):
+            await controller.greeting_text("text" if mode == "speech" else "speech", work)
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
+def test_greeting_request_is_cancellable_and_still_settles(text_execution_case, admission_case):
+    from caller_runtime.domain.conversation import WorkBudget
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1, mode="speech"))
+        slot = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        controller = ConversationExecutor(
+            policy=ConversationPolicy(
+                slot=slot, snapshot=service.snapshot_for(slot), admission=service
+            ),
+            text_adapter=adapter,
+            utc_now=clock.utc_now,
+        )
+        controls["greeting"], controls["greeting_block"] = "Late greeting", True
+        now = clock.utc_now()
+        task = asyncio.create_task(
+            controller.greeting_text("speech", WorkBudget(now, now + timedelta(seconds=5)))
+        )
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        await adapter.drained()
+        observed = (
+            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        ).authority.slots[0]
+        assert observed.resources["model"].attempted == observed.resources["model"].settled == 1
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["model", "failed"])
+def test_text_open_streams_the_greeting_and_keeps_it_as_the_first_assistant_turn(
+    text_execution_case, outcome
+):
+    from caller_runtime.observability import Telemetry
+    from caller_runtime.services.greeting import TEXT_FALLBACK_GREETING
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    telemetry = Telemetry("caller-runtime", "local")
+
+    async def scenario():
+        controls["telemetry"] = telemetry
+        controller = await setup()
+        controls["greeting"] = "Welcome! How can I help?"
+        if outcome == "failed":
+            controls["greeting_status"] = 429
+        await controller.open_text(emit, started=asyncio.get_running_loop().time())
+        expected = "Welcome! How can I help?" if outcome == "model" else TEXT_FALLBACK_GREETING
+        assert [m["type"] for m in messages] == ["text.delta", "text.completed"]
+        assert messages[0]["text"] == expected
+        assert controller.text_turns() == [{"role": "assistant", "content": expected}]
+        # One request per turn: the open request makes only the greeting call.
+        assert not requests and len(controls["greeting_requests"]) == 1
+        with pytest.raises(PermissionError, match="^mode_mismatch$"):
+            await controller.open_text(emit, started=asyncio.get_running_loop().time())
+        await controller.close()
+
+    try:
+        asyncio.run(scenario())
+        greeting = [e for e in telemetry.events if e["event"] == "test.greeting"]
+        assert [(e["outcome"], e["reason_code"]) for e in greeting] == [
+            ("success", "ready" if outcome == "model" else "fallback")
+        ]
+    finally:
+        telemetry.close()
+
+
 @pytest.mark.parametrize("reason", ["content_filter", "max_input_tokens"])
 def test_readiness_fails_on_another_incomplete_reason_but_still_settles(
     text_execution_case, admission_case, reason
@@ -2164,6 +2846,7 @@ def test_configured_agent_registry_reuses_pinned_publication_and_reviewed_tools(
 
     from caller_runtime.domain.configuration import RevisionSnapshot
     from caller_runtime.services.conversation_agents import build_agents
+    from caller_runtime.services.modality_defaults import TEXT_PLATFORM_RULES, VOICE_PLATFORM_RULES
 
     snapshot = RevisionSnapshot.validate(runtime_revision_v2(), etag='"agents-current"')
     model = Mock(spec=Model)
@@ -2190,18 +2873,95 @@ def test_configured_agent_registry_reuses_pinned_publication_and_reviewed_tools(
         ]
 
     agents = build_agents(
-        snapshot, model=model, capabilities=capabilities, policy_tools=lambda _agent: []
+        snapshot,
+        model=model,
+        mode="text",
+        capabilities=capabilities,
+        policy_tools=lambda _agent: [],
     )
     configured = snapshot.for_runtime()["agents"]
     assert set(agents) == {agent["agentId"] for agent in configured}
     for agent in configured:
         sdk = agents[agent["agentId"]]
-        assert sdk.name == agent["name"] and sdk.instructions == agent["prompt"]
+        assert sdk.name == agent["name"]
+        assert sdk.instructions == TEXT_PLATFORM_RULES + "\n\n" + agent["prompt"]
         assert sdk.model is model and sdk.handoffs == []
         assert sdk.model_settings.store is False and sdk.model_settings.parallel_tool_calls is False
         assert sdk.model_settings.retry.max_retries == 0
         assert len(sdk.tools) == (1 if agent["capabilityAssignments"] else 0)
     assert selected == [agent["agentId"] for agent in configured if agent["role"] == "ordinary"]
+    speech = build_agents(
+        snapshot, model=model, mode="speech", capabilities=capabilities, policy_tools=lambda _: []
+    )
+    for agent in configured:
+        assert speech[agent["agentId"]].instructions == (
+            VOICE_PLATFORM_RULES + "\n\n" + agent["prompt"]
+        )
+
+
+def note_graph(count, *, description="Synthetic routing description"):
+    return {
+        "agents": [
+            {"agentId": "welcome", "name": "Welcome", "role": "welcome", "prompt": "Secret A"},
+            {"agentId": "goodbye", "name": "Goodbye", "role": "goodbye", "prompt": "Secret B"},
+            {
+                "agentId": "entry-0",
+                "name": "Entry",
+                "role": "ordinary",
+                "prompt": "Secret C",
+                "communityId": "c-0",
+            },
+        ],
+        "communities": [
+            {
+                "communityId": f"c-{index}",
+                "name": f"Community {index}",
+                "routingDescription": description,
+                "enabled": index != 1,
+                **({"routable": False} if index == 2 else {}),
+            }
+            for index in range(count)
+        ],
+        "communityConnections": [
+            {"sourceCommunityId": "c-0", "targetCommunityId": "c-3"},
+            {"sourceCommunityId": "c-0", "targetCommunityId": "c-1"},
+        ],
+    }
+
+
+def note_for(graph, agent_id, community_id=None):
+    from types import SimpleNamespace
+
+    from caller_runtime.services.conversation_policy import context_note
+
+    snapshot = SimpleNamespace(for_runtime=lambda: graph)
+    slot = SimpleNamespace(active_agent_id=agent_id, active_community_id=community_id)
+    return context_note(snapshot, slot)
+
+
+def test_context_note_names_the_agent_and_reachable_communities_without_prompts():
+    parts = note_for(note_graph(5, description="d" * 400), "welcome")
+    note = "".join(parts)
+    assert note.startswith("Welcome (welcome)\nCommunities you can route to:\n")
+    # Disabled and non-routable communities are left out; descriptions stop at 160 characters.
+    assert "Community 0: " + "d" * 160 + "\n" in note
+    assert "Community 1" not in note and "Community 2" not in note
+    assert "d" * 161 not in note and "Secret" not in note
+    entry = "".join(note_for(note_graph(5), "entry-0", "c-0"))
+    assert entry.splitlines()[0] == "Entry (ordinary)" and "Community 3: " in entry
+    assert "Community 1" not in entry and "Community 4" not in entry
+    assert "".join(note_for(note_graph(5), "goodbye")).endswith(
+        "Communities you can route to: none"
+    )
+
+
+def test_context_note_is_capped_at_2000_bytes_in_parts_of_500():
+    parts = note_for(note_graph(60, description="é" * 160), "welcome")
+    note = "".join(parts)
+    assert all(len(part.encode("utf-8")) <= 500 for part in parts)
+    assert len(note.encode("utf-8")) <= 2000
+    shown = note.count("Community ")
+    assert note.rstrip().endswith(f"…and {58 - shown} more communities")
 
 
 @pytest.mark.parametrize("corruption", ["hosted", "over-budget", "duplicate-name"])
@@ -2242,6 +3002,7 @@ def test_agent_registry_rejects_hosted_or_over_budget_tools_without_provider_wor
         build_agents(
             snapshot,
             model=Mock(spec=Model),
+            mode="text",
             capabilities=lambda _agent: tools,
             policy_tools=lambda _agent: [],
         )

@@ -42,7 +42,7 @@ class TextService(Protocol):
         self,
         permit: StartPermit,
         *,
-        text: str,
+        text: str | None,
         conversation_id: str | None,
         emit: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> TurnResult: ...
@@ -52,7 +52,8 @@ class TextRequest(Metadata):
     permit: str = Field(min_length=1, max_length=6144, repr=False)
     request_id: Identifier = Field(alias="requestId")
     conversation_id: Identifier | None = Field(default=None, alias="conversationId")
-    text: str = Field(min_length=1, repr=False)
+    # Absent only in the open request, which starts a conversation with the greeting.
+    text: str | None = Field(default=None, min_length=1, repr=False)
     settings: Any = None
 
 
@@ -80,6 +81,11 @@ def parse_request(body: bytes) -> TextRequest:
         value = TextRequest.model_validate(document)
     except (ValueError, ValidationError):
         raise PermissionError("invalid_control") from None
+    if value.text is None:
+        # A stored conversation is continued only with a message.
+        if value.conversation_id is not None:
+            raise PermissionError("invalid_control")
+        return value
     if not value.text.strip():
         raise PermissionError("invalid_work_input")
     if len(value.text.encode("utf-8")) > MAX_TEXT_BYTES:

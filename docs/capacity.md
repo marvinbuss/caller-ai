@@ -9,6 +9,26 @@ authenticate, converse and recover; it is not sized or priced for traffic. Do no
 forecast for a production environment. The test console is a way to try a configuration, not a call-handling
 feature, so it carries no throughput promise.
 
+## Greeting (feature 006)
+
+Each new text conversation and each new voice session makes **one extra bounded model call**: the
+Welcome agent writes the greeting with low reasoning effort, at most 256 output tokens and no
+tools. It runs after `ready`, outside the admission budget, so it never delays or refuses
+admission. Voice cancels it at 5 seconds and speaks nothing late; text waits at most 4 seconds and
+then sends the fixed fallback. At most one greeting request is in flight per session.
+
+| Target | Declared | Local load test (synthetic latency up to 3 s) | int measurement |
+|--------|----------|-----------------------------------------------|-----------------|
+| Voice: first greeting audio after `ready` | 5 s for at least 90 % of silent sessions (SC-001) | 5 concurrent sessions at the 5-slot limit: all within 5 s | Pending (T091, query in [monitoring](runbooks/monitoring.md#greeting-spoken-parts-and-progress-events)) |
+| Text: greeting after the open request | 5 s | 5 concurrent conversations: all within 5 s | Pending |
+| Slow or failing Welcome agent | Voice cancels and logs `deadline`; text streams the fallback | All 5 voice greetings cancelled, nothing spoken late, sessions still answer; all 5 text conversations got the fallback within 5 s | Pending |
+| Slots and cleanup | Unchanged by greetings | No extra refusal; every slot released after the sessions end; no greeting request left in flight | Pending |
+
+The local results come from `code/backend/tests/load/test_greeting_capacity.py`, which uses the
+test doubles and a fixed latency list (0.3, 0.9, 1.5, 2.2 and 3.0 seconds). They prove the bounds
+and the failure behavior, not model latency on int; the int measurement is recorded here when it
+is taken.
+
 ## Current State
 
 Actual model cost per turn and per Live voice second, Cosmos RU demand, deployed instance and
