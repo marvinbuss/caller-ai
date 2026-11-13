@@ -9,7 +9,7 @@ numbered; the active pointer is a separate document.
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final, Literal
 
-from pydantic import Field, StringConstraints, field_validator
+from pydantic import AfterValidator, Field, StringConstraints, field_validator
 
 from management_app.models.capabilities import (
     CapabilityAssignment,
@@ -21,6 +21,21 @@ from management_app.models.capabilities import (
 )
 
 
+def _absent(value: object) -> bool:
+    return value is None
+
+
+def _no_nul(value: str | None) -> str | None:
+    if value is not None and "\x00" in value:
+        raise ValueError("nul_character")
+    return value
+
+
+# Schema 2.2.0 text fields; an absent field means the shipped default (`default_prompts.py`).
+# Their byte limits are checked by the validator, which names the field (FR-033).
+OptionalText = Annotated[str | None, AfterValidator(_no_nul)]
+
+
 class Agent(ConfigurationModel):
     agent_id: Identifier = Field(alias="agentId")
     name: Name
@@ -29,6 +44,8 @@ class Agent(ConfigurationModel):
     role: Literal["ordinary", "welcome", "routing", "goodbye"]
     community_id: Identifier | None = Field(alias="communityId")
     capability_assignments: list[CapabilityAssignment] = Field(alias="capabilityAssignments")
+    voice_addition: OptionalText = Field(default=None, alias="voiceAddition", exclude_if=_absent)
+    text_addition: OptionalText = Field(default=None, alias="textAddition", exclude_if=_absent)
 
     @field_validator("prompt")
     @classmethod
@@ -83,12 +100,9 @@ class GraphLayout(ConfigurationModel):
     agents_by_community: dict[Identifier, list[GraphPosition]] = Field(alias="agentsByCommunity")
 
 
-def _absent(value: object) -> bool:
-    return value is None
-
-
 class ConversationSettings(ConfigurationModel):
-    """Per-conversation values; an absent field means the runtime's environment default."""
+    """Per-conversation values; an absent field means the runtime's environment default, or for
+    the 2.2.0 text fields and `quietHandover` the shipped default."""
 
     voice: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,63}$")] | None = Field(
         default=None, exclude_if=_absent
@@ -99,14 +113,48 @@ class ConversationSettings(ConfigurationModel):
     idle_timeout_seconds: int | None = Field(
         default=None, alias="idleTimeoutSeconds", ge=30, le=120, exclude_if=_absent
     )
+    voice_instructions: OptionalText = Field(
+        default=None, alias="voiceInstructions", exclude_if=_absent
+    )
+    voice_platform_rules: OptionalText = Field(
+        default=None, alias="voicePlatformRules", exclude_if=_absent
+    )
+    voice_global_prompt: OptionalText = Field(
+        default=None, alias="voiceGlobalPrompt", exclude_if=_absent
+    )
+    text_platform_rules: OptionalText = Field(
+        default=None, alias="textPlatformRules", exclude_if=_absent
+    )
+    text_global_prompt: OptionalText = Field(
+        default=None, alias="textGlobalPrompt", exclude_if=_absent
+    )
+    quiet_handover: bool | None = Field(default=None, alias="quietHandover", exclude_if=_absent)
 
 
 EMPTY_LAYOUT: Final[dict[str, Any]] = {"communities": [], "agentsByCommunity": {}}
 SCHEMA_VERSION: Final = "2.1.0"
+MODALITY_SCHEMA_VERSION: Final = "2.2.0"
+# The 2.2.0 fields: their presence alone makes a published revision 2.2.0.
+MODALITY_SETTINGS: Final = (
+    "voiceInstructions",
+    "voicePlatformRules",
+    "voiceGlobalPrompt",
+    "textPlatformRules",
+    "textGlobalPrompt",
+    "quietHandover",
+)
+AGENT_ADDITIONS: Final = ("voiceAddition", "textAddition")
+
+
+def uses_modality_fields(graph: dict[str, Any]) -> bool:
+    settings = graph.get("conversationSettings") or {}
+    return any(key in settings for key in MODALITY_SETTINGS) or any(
+        key in agent for agent in graph.get("agents", []) for key in AGENT_ADDITIONS
+    )
 
 
 class ConfigurationGraph(ConfigurationModel):
-    schema_version: Literal["2.0.0", "2.1.0"] = Field(alias="schemaVersion")
+    schema_version: Literal["2.0.0", "2.1.0", "2.2.0"] = Field(alias="schemaVersion")
     agents: list[Agent] = Field(max_length=200)
     communities: list[Community] = Field(max_length=50)
     relationships: list[Relationship] = Field(max_length=1000)

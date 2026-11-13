@@ -25,11 +25,18 @@ from reflex.event import EventHandler
 from reflex_base.registry import RegistrationContext
 
 from management_app.services import graph_view
+from management_app.services.default_prompts import (
+    ADDITION_LIMIT,
+    GOODBYE_PROMPT,
+    ROUTING_PROMPT,
+    WELCOME_PROMPT,
+)
 from management_app.state.editor_draft import Document, EditorDraft, EditorServices
 from management_app.theme import COLORS, NODE_STYLES
 
 COMMUNITY_WIDTH, AGENT_WIDTH, AGENT_HEIGHT, GAP = 340, 150, 64, 60
 PATH_ITEM = re.compile(r"^(agents|communities|relationships|tools)\[(\d+)\]")
+DEFAULT_PROMPTS = {"welcome": WELCOME_PROMPT, "routing": ROUTING_PROMPT, "goodbye": GOODBYE_PROMPT}
 
 
 def node_id(kind: str, identifier: str) -> str:
@@ -103,6 +110,12 @@ class ConfigurationEditorState(rx.State):
                 "protected": agent["role"] != "ordinary",
                 "communityOptions": customs,
                 "lastChanged": self._stamp_text(agent["agentId"]),
+                **{field: agent.get(field, "") for field in ("voiceAddition", "textAddition")},
+                **{
+                    field + "Bytes": f"{len(agent.get(field, '').encode('utf-8'))} of "
+                    f"{ADDITION_LIMIT} bytes"
+                    for field in ("voiceAddition", "textAddition")
+                },
             }
             for index, agent in enumerate(self._draft.graph["agents"])
         ]
@@ -895,6 +908,22 @@ class ConfigurationEditorState(rx.State):
             self._changed()
         except ValueError:
             self.error = "Agent change unavailable"
+
+    @rx.event
+    def restore_default_prompt(self, identifier: str) -> None:
+        """Set a pre-defined agent's draft prompt to the current shipped default."""
+        try:
+            draft = self._editing()
+            role = next(
+                agent["role"] for agent in draft.graph["agents"] if agent["agentId"] == identifier
+            )
+            default = DEFAULT_PROMPTS.get(role)
+            if default is None:
+                raise ValueError("restore_default_unavailable")
+            draft.edit_agent(identifier, "prompt", default)
+            self._changed()
+        except (StopIteration, ValueError):
+            self.error = "Restore default unavailable"
 
     @rx.event
     def set_agent_enabled(self, identifier: str, value: bool) -> None:

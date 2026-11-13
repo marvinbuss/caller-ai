@@ -146,6 +146,9 @@ def run_owned_browser_runtime(fixture_path):
                 )
             elif kind == "session.close":
                 await self.events.put(live_closed(self.start, self.session_id, self.offset / 1000))
+            elif kind in {"session.thinking.append", "session.commentary.append"}:
+                # Context notes, quiet handovers and the greeting are accepted silently.
+                pass
             else:
                 raise AssertionError("unexpected_fixture_live_event")
 

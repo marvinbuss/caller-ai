@@ -481,8 +481,15 @@ async def compose_management(
             if request.tests is not None and signer is not None and startup.test_relay is not None:
                 from management_app.api.test_sessions import create_router as test_router
 
+                async def active_settings() -> dict[str, Any]:
+                    publication = await repository.read_active()
+                    stored = (publication[0] if publication else {}).get("conversationSettings")
+                    return dict(stored) if isinstance(stored, dict) else {}
+
                 api.state.test_console_services = ConsoleServices(
-                    guard=editor.guard, test_role=request.tests.test_role
+                    guard=editor.guard,
+                    test_role=request.tests.test_role,
+                    active_settings=active_settings,
                 )
                 api.include_router(
                     test_router(

@@ -8,6 +8,7 @@ any authorization failure moves the console to `unavailable` rather than showing
 """
 
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -93,10 +94,23 @@ class ConsoleControl:
         self.snapshot = incoming.model_copy(update=retained)
 
 
+def empty_rule_notices(settings: dict[str, Any]) -> list[str]:
+    """A notice per modality whose stored platform rules are empty (allowed, with a warning)."""
+    return [
+        f"Platform rules for {modality} are empty"
+        for modality, key in (("voice", "voicePlatformRules"), ("text", "textPlatformRules"))
+        if isinstance(settings.get(key), str) and not settings[key].strip()
+    ]
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleServices:
     guard: ReflexEventGuard = field(repr=False)
     test_role: str
+    # Reads the active revision's `conversationSettings`, for the empty platform rules notice.
+    active_settings: Callable[[], Awaitable[dict[str, Any]]] | None = field(
+        default=None, repr=False
+    )
 
     def authorize(self, sid: str, token: str) -> None:
         headers = self.guard.request_headers(sid, token, mutation=True)
@@ -122,6 +136,8 @@ class TestConsoleState(rx.State):
     status: str = "idle"
     mode: str = "text"
     metadata: dict[str, Any] = {}
+    # "Platform rules for <modality> are empty" for each modality whose stored rules are empty.
+    rule_notices: list[str] = []
     _control: ConsoleControl = ConsoleControl()
 
     def _services(self) -> ConsoleServices:
@@ -147,15 +163,21 @@ class TestConsoleState(rx.State):
         self._publish()
 
     @rx.event
-    def enter_view(self) -> None:
+    async def enter_view(self) -> None:
         try:
-            self._services()
+            services = self._services()
         except (HTTPException, PermissionError):
             self._unavailable()
             return
         self.authorized = True
         self._control = ConsoleControl()
         self._publish()
+        self.rule_notices = []
+        if services.active_settings is not None:
+            try:
+                self.rule_notices = empty_rule_notices(await services.active_settings())
+            except Exception:
+                self.rule_notices = []
 
     @rx.event
     def begin(self, mode: str) -> None:

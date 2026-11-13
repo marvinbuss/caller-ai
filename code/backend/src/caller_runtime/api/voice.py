@@ -36,7 +36,9 @@ from caller_runtime.api.connection import (
 from caller_runtime.domain.conversation import Identifier, Metadata, StartPermit, WorkBudget
 from caller_runtime.observability import Telemetry, sanitize_correlation_id
 from caller_runtime.services.admission import AdmissionError
-from caller_runtime.services.conversation import ConversationExecutor
+from caller_runtime.services.conversation import PROGRESS_STATES, ConversationExecutor
+from caller_runtime.services.greeting import VOICE_GREETING_SECONDS, GreetingState
+from caller_runtime.services.speech_parts import split_reply
 
 PATH = "/v1/conversations/voice"
 SUBPROTOCOL = "caller.voice.v1"
@@ -171,6 +173,7 @@ def server_control(event: dict[str, Any]) -> dict[str, Any]:
         "transcript.delta": ({"speaker", "fragment", "start_ms", "end_ms"}, set()),
         "generation.changed": ({"reason"}, set()),
         "agent.changed": ({"agentId", "communityId"}, set()),
+        "progress": ({"state", "text"}, set()),
         "audio.credit": ({"availableSamples"}, {"acceptedAudioSequence"}),
         "command.ack": ({"acceptedSequence"}, set()),
         "pong": ({"nonce"}, set()),
@@ -200,6 +203,12 @@ def server_control(event: dict[str, Any]) -> dict[str, Any]:
         if checked["cleanupStatus"] not in {"active", "complete", "pending"}:
             raise PermissionError("invalid_server_control")
         checked["correlationId"] = sanitize_correlation_id(checked.get("correlationId"))
+    if kind == "progress" and (
+        checked["state"] not in PROGRESS_STATES
+        or not isinstance(checked["text"], str)
+        or not 1 <= len(checked["text"]) <= 200
+    ):
+        raise PermissionError("invalid_server_control")
     if kind == "generation.changed" and checked["reason"] not in {
         "segment_retired",
         "agent_changed",
@@ -633,6 +642,8 @@ def create_router(
         session: ConversationExecutor | None = None
         wire = VoiceWire(socket)
         tasks: set[asyncio.Task[Any]] = set()
+        # The greeting request ends on its own, so it is kept out of the tasks the handler awaits.
+        greeters: set[asyncio.Task[None]] = set()
         stopped = asyncio.Event()
         pre_auth_counted = False
         verified_actor: str | None = None
@@ -738,6 +749,9 @@ def create_router(
             writer = asyncio.create_task(wire.write())
             tasks.add(writer)
             work_ready = asyncio.Event()
+            greeting = GreetingState(
+                asyncio.get_running_loop().time(), deadline=VOICE_GREETING_SECONDS
+            )
             await wire.emit(
                 {
                     "type": "ready",
@@ -786,6 +800,67 @@ def create_router(
             speech_end: dict[int, float] = {}
             unobserved_logged: set[int] = set()
 
+            def greeting_event(outcome: str, reason: str, seconds: float | None = None) -> None:
+                activity.event(
+                    "test.greeting",
+                    outcome,
+                    mode="speech",
+                    reason=reason,
+                    measurement=None if seconds is None else "greeting_seconds",
+                    value=seconds,
+                )
+
+            def greeting_output() -> None:
+                seconds = greeting.output(asyncio.get_running_loop().time())
+                if seconds is not None:
+                    greeting_event("success", "ready", seconds)
+
+            def skip_greeting() -> None:
+                if greeting.user_input(asyncio.get_running_loop().time()):
+                    for task in greeters:
+                        task.cancel()
+                    greeting_event("success", "skipped")
+
+            async def greet() -> None:
+                """Have the Welcome agent write the greeting; never send it after the deadline."""
+                loop = asyncio.get_running_loop()
+                deadline = greeting.expires_at
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        now = utc_now()
+                        budget = WorkBudget(
+                            now,
+                            min(
+                                now + timedelta(seconds=VOICE_GREETING_SECONDS),
+                                slot.auth_expires_at,
+                                slot.expires_at,
+                                slot.idle_expires_at,
+                            ),
+                        )
+                        text = await session.greeting_text("speech", budget)
+                        segments = session.speech_segments
+                        if (
+                            segments is None
+                            or not greeting.pending
+                            or session.policy.slot.generation != slot.generation
+                        ):
+                            return
+                        current = segments.current
+                        for part in split_reply(text):
+                            if part.strip():
+                                await current.append_context(None, part)
+                        greeting.sent()
+                    await asyncio.sleep(max(0.0, deadline - loop.time()))
+                except TimeoutError:
+                    pass
+                except Exception:
+                    if greeting.fail():
+                        greeting_event("failure", "deadline", VOICE_GREETING_SECONDS)
+                    return
+                # The loop may wake within its clock resolution before the deadline.
+                if greeting.expire(max(loop.time(), deadline)):
+                    greeting_event("failure", "deadline", VOICE_GREETING_SECONDS)
+
             async def credit() -> None:
                 while True:
                     await wire.emit(
@@ -812,6 +887,7 @@ def create_router(
                         continue
                     kind = event["type"]
                     if kind == "session.output_audio.delta":
+                        greeting_output()
                         playback.put(generation, event["pcm"])
                     elif kind in {
                         "session.input_transcript.delta",
@@ -823,6 +899,11 @@ def create_router(
                             event["end_ms"], frames, now
                         )
                         input_speech = observed and event["end_ms"] > speech_end.get(generation, -1)
+                        if kind == "session.output_transcript.delta":
+                            greeting_output()
+                        elif input_speech and event["delta"].strip():
+                            skip_greeting()
+                            session.interrupt_speech()
                         if (
                             kind == "session.input_transcript.delta"
                             and not observed
@@ -871,6 +952,8 @@ def create_router(
                                 }
                             )
                     elif kind == "session.delegation.created":
+                        skip_greeting()
+                        session.interrupt_speech()
                         correlated = session.speech_fragments.consume(
                             offset_ms=event["offset_ms"], generation=generation
                         )
@@ -895,6 +978,8 @@ def create_router(
             tasks.add(asyncio.create_task(credit()))
             tasks.add(asyncio.create_task(voice()))
             tasks.add(asyncio.create_task(play()))
+            # After ready, outside the admission budget; later segments never greet.
+            greeters.add(asyncio.create_task(greet()))
 
             async def read() -> None:
                 while True:
@@ -981,7 +1066,7 @@ def create_router(
             if reader not in completed:
                 raise AdmissionError("terminal")
             stopped.set()
-            background = tasks - {writer, reader}
+            background = (tasks | greeters) - {writer, reader}
             for task in background:
                 task.cancel()
             if background:
@@ -1006,11 +1091,11 @@ def create_router(
             terminate_local()
             stopped.set()
             release_pre_auth()
-            for task in tasks:
+            for task in tasks | greeters:
                 task.cancel()
             # Not gather: it re-raises a child's bare CancelledError, which hides a server cancel.
-            if tasks:
-                await asyncio.wait(tasks)
+            if tasks or greeters:
+                await asyncio.wait(tasks | greeters)
             wire.dispose()
             if session is not None:
                 await session.close()

@@ -268,12 +268,74 @@ def test_conversation_settings_out_of_bounds_are_refused(cache, runtime_revision
         cache.install(schema_two_one(runtime_revision_v2(), **settings), etag='"bounds"')
 
 
-@pytest.mark.parametrize("version", ["1.0.0", "2.2.0", "3.0.0"])
+@pytest.mark.parametrize("version", ["1.0.0", "2.3.0", "3.0.0"])
 def test_other_schema_versions_are_still_refused(cache, runtime_revision_v2, version):
     document = runtime_revision_v2()
     document["schemaVersion"] = version
     with pytest.raises(ValueError, match="invalid_configuration_snapshot"):
         cache.install(rehashed(document), etag='"other-version"')
+
+
+RESOLVED_SETTINGS = {
+    "voiceInstructions": "Synthetic voice instructions",
+    "voicePlatformRules": "Synthetic voice rules",
+    "voiceGlobalPrompt": "",
+    "textPlatformRules": "Synthetic text rules",
+    "textGlobalPrompt": "Synthetic text global",
+    "quietHandover": False,
+}
+
+
+@pytest.mark.parametrize("version", ["2.0.0", "2.1.0", "2.2.0"])
+def test_schema_2_2_0_and_the_resolved_projection_fields_are_accepted(
+    cache, runtime_revision_v2, version
+):
+    document = schema_two_one(runtime_revision_v2(), **RESOLVED_SETTINGS)
+    document["schemaVersion"] = version
+    for agent in document["agents"]:
+        agent["voiceAddition"], agent["textAddition"] = "", "Synthetic text addition"
+    snapshot = cache.install(rehashed(document), etag='"resolved"')
+    assert snapshot.schema_version == version
+    runtime = snapshot.for_runtime()
+    assert runtime["conversationSettings"] == RESOLVED_SETTINGS
+    assert all(agent["textAddition"] == "Synthetic text addition" for agent in runtime["agents"])
+
+
+@pytest.mark.parametrize(
+    ("place", "field", "value"),
+    [
+        ("settings", "voiceInstructions", "x" * (12 * 1024 + 1)),
+        ("settings", "voicePlatformRules", "x" * (8 * 1024 + 1)),
+        ("settings", "textGlobalPrompt", "x" * (8 * 1024 + 1)),
+        ("settings", "unknownLayer", "x"),
+        ("agent", "voiceAddition", "x" * (4 * 1024 + 1)),
+        ("agent", "unknownAddition", "x"),
+    ],
+)
+def test_oversized_or_unknown_modality_fields_are_refused(
+    cache, runtime_revision_v2, place, field, value
+):
+    document = schema_two_one(runtime_revision_v2(), **RESOLVED_SETTINGS)
+    if place == "settings":
+        document["conversationSettings"][field] = value
+    else:
+        document["agents"][0][field] = value
+    with pytest.raises(ValueError, match="invalid_configuration_snapshot"):
+        cache.install(rehashed(document), etag='"refused"')
+
+
+def test_composed_instructions_over_36_kib_are_refused_on_load(cache, runtime_revision_v2):
+    settings = RESOLVED_SETTINGS | {
+        "textPlatformRules": "r" * 8 * 1024,
+        "textGlobalPrompt": "g" * 8 * 1024,
+    }
+    document = schema_two_one(runtime_revision_v2(), **settings)
+    document["agents"][0]["prompt"] = "p" * 16 * 1024
+    document["agents"][0]["textAddition"] = "a" * 4 * 1024
+    with pytest.raises(ValueError, match="invalid_configuration_snapshot"):
+        cache.install(rehashed(document), etag='"composed"')
+    document["agents"][0]["textAddition"] = "a" * (4 * 1024 - 8)
+    assert cache.install(rehashed(document), etag='"composed-fits"')
 
 
 def test_conversation_setup_clock_advances_utc_and_monotonic_without_sleep(conversation_clock):

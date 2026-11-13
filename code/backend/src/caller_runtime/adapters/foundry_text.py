@@ -45,6 +45,8 @@ Reply = TypeVar("Reply")
 READINESS_INPUT = "Initialize the published Welcome conversation without invoking actions."
 # The provider minimum; a full Welcome reply on a reasoning model can outlast the startup budget.
 READINESS_OUTPUT_TOKENS = 16
+# A greeting is at most two short sentences; low reasoning effort keeps it fast.
+GREETING_OUTPUT_TOKENS = 256
 # A request still running when its work budget ends is left to finish in the background up to
 # this cap, so its outcome is known and the slot can be released; it is never sent again.
 MODEL_REQUEST_CAP_SECONDS = 60.0
@@ -305,7 +307,8 @@ class FoundryTextAdapter:
             )
         except (ValueError, TypeError, RecursionError):
             raise PermissionError("invalid_model_context") from None
-        if (instructions is not None and len(instructions.encode("utf-8")) > 16 * 1024) or (
+        # A prompt (16 KiB) plus the modality's platform rules and agent additions fit in 36 KiB.
+        if (instructions is not None and len(instructions.encode("utf-8")) > 36 * 1024) or (
             size + 4096 + len(tools) * 1024 > self.max_input_tokens
         ):
             raise PermissionError("model_context_limit")
@@ -400,6 +403,37 @@ class FoundryTextAdapter:
         )
         if (response.status != "completed" and not capped) or not response.output:
             raise PermissionError("model_unavailable")
+
+    async def greeting(
+        self, slot: TestSlot, work: WorkBudget, *, instructions: str, prompt: str
+    ) -> str:
+        """Ask for a short, tool-free greeting; cancelling the caller abandons the request."""
+        if self._closed:
+            raise PermissionError("model_unavailable")
+        self._settings(instructions, prompt, ModelSettings(), [], [], None, None, None)
+
+        async def request(client: AsyncOpenAI) -> Response:
+            return await client.responses.create(
+                model=self.deployment,
+                instructions=instructions,
+                input=prompt,
+                store=False,
+                reasoning={"effort": "low"},
+                max_output_tokens=GREETING_OUTPUT_TOKENS,
+            )
+
+        response = await self._attempt(slot, work, request)
+        if self._telemetry is not None and response.usage is not None:
+            self._telemetry.model_usage(
+                mode=slot.mode,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                reasoning_tokens=_reasoning_tokens(response.usage),
+            )
+        text = response.output_text.strip() if response.status == "completed" else ""
+        if not text or len(text.encode("utf-8")) > 4096:
+            raise PermissionError("model_unavailable")
+        return text
 
     async def _attempt(
         self,

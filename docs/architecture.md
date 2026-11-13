@@ -42,6 +42,52 @@ For text the console keeps only the `conversationId` of the open test, mints a n
 server for every turn and never shows it to the browser; the backend stores the history and the
 console never reads it. Backend errors surface with their public code and reason unchanged.
 
+## Speaking Model and Working Agents
+
+A voice session has two kinds of model. The **speaking model** (GPT-Live) talks with the caller;
+the **working agents** (the configured Welcome, Routing, Goodbye and community agents, run by the
+backend on the text model) do the reasoning, tool calls and handovers. Text conversations use the
+working agents only.
+
+```mermaid
+flowchart LR
+    subgraph Settings["Published configuration (schema 2.2.0)"]
+        VI["Voice conversation instructions"]
+        VR["Voice platform rules"]
+        VG["Voice global prompt"]
+        TR["Text platform rules"]
+        TG["Text global prompt"]
+        AP["Agent prompt"]
+        VA["Agent voice addition"]
+        TA["Agent text addition"]
+    end
+    VI --> Live["Speaking model (GPT-Live)"]
+    Note["Context note: active agent, reachable communities"] --> Live
+    VR --> VoiceAgent["Working agent in voice"]
+    VG --> VoiceAgent
+    AP --> VoiceAgent
+    VA --> VoiceAgent
+    TR --> TextAgent["Working agent in text"]
+    TG --> TextAgent
+    AP --> TextAgent
+    TA --> TextAgent
+    Live -- "delegation" --> VoiceAgent
+    VoiceAgent -- "reply parts, progress" --> Live
+```
+
+- The speaking model gets only the voice conversation instructions and a quiet, automatic
+  context note (the active agent and the communities it can route to). It never receives an
+  agent's prompt, layers or additions.
+- A working agent's instructions are composed per modality: platform rules, global prompt,
+  prompt, addition, blank-line separated with empty parts skipped, at most 36 KiB. A projection
+  from an earlier management release carries no layers, so the runtime's shipped platform rules
+  stand in.
+- Management stores only the values editors set and resolves every absent field to the shipped
+  default in the runtime projection before computing `policyHash`. A session keeps the snapshot it
+  started with.
+- Working agents report progress with `report_progress`; text streams it as `progress` events and
+  voice speaks it through the speaking model. See [conversation endpoints](conversation-endpoints.md).
+
 ## Feature 002 Shared Test Runtime
 
 The browser-test runtime, management console, ticket signer and same-origin relay are

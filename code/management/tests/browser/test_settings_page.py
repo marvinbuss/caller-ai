@@ -10,7 +10,7 @@ from management_app.services.configuration_validation import GRAPH_FIELDS as PUB
 
 pytestmark = pytest.mark.browser
 
-USERS = ("settings-one", "settings-two", "settings-three", "settings-four")
+USERS = ("settings-one", "settings-two", "settings-three", "settings-four", "settings-five")
 
 
 @pytest.fixture(scope="module")
@@ -187,5 +187,67 @@ def test_runtime_down_makes_the_settings_read_only(browser: Browser, runtime_up)
         expect(page.get_by_label("Idle timeout (seconds)", exact=True)).to_have_attribute(
             "readonly", ""
         )
+    finally:
+        context.close()
+
+
+def test_modality_texts_count_bytes_restore_defaults_and_confirm_platform_rules(
+    browser: Browser, runtime_up
+):
+    def active() -> dict:
+        with client(runtime_up) as api:
+            return api.get("/v2/configuration").json()
+
+    def publish(page: Page) -> None:
+        page.get_by_role("button", name="Publish settings", exact=True).click()
+
+    context, page = open_page(browser, runtime_up, "settings-five")
+    try:
+        expect(voice(page)).to_be_enabled()
+        for field, limit in (("voiceInstructions", 12288), ("textGlobalPrompt", 8192)):
+            expect(page.get_by_test_id(f"settings-bytes-{field}")).to_contain_text(
+                f"of {limit} bytes"
+            )
+        global_prompt = page.get_by_label("Text global prompt", exact=True)
+        global_prompt.fill("Synthetic text global prompt")
+        expect(page.get_by_test_id("settings-bytes-textGlobalPrompt")).to_have_text(
+            "28 of 8192 bytes"
+        )
+        before = active()["revisionNumber"]
+        publish(page)
+        expect(page.get_by_test_id("settings-status")).to_contain_text("Published revision")
+        revision = active()
+        assert revision["revisionNumber"] == before + 1 and revision["schemaVersion"] == "2.2.0"
+        assert revision["conversationSettings"]["textGlobalPrompt"] == (
+            "Synthetic text global prompt"
+        )
+        # Restore default removes the stored value.
+        page.get_by_role("button", name="Restore default text global prompt").click()
+        publish(page)
+        expect(page.get_by_test_id("settings-status")).to_contain_text(
+            f"Published revision {before + 2}"
+        )
+        assert "textGlobalPrompt" not in (active().get("conversationSettings") or {})
+        # Changed platform rules publish only after the confirmation.
+        page.get_by_label("Voice platform rules", exact=True).fill("Synthetic voice rules")
+        publish(page)
+        dialog = page.get_by_role("alertdialog")
+        expect(dialog).to_contain_text("This can break voice or text behavior. Publish anyway?")
+        dialog.get_by_role("button", name="Cancel", exact=True).click()
+        expect(dialog).to_be_hidden()
+        assert active()["revisionNumber"] == before + 2
+        publish(page)
+        page.get_by_role("alertdialog").get_by_role("button", name="Publish anyway").click()
+        expect(page.get_by_test_id("settings-status")).to_contain_text(
+            f"Published revision {before + 3}"
+        )
+        assert active()["conversationSettings"]["voicePlatformRules"] == "Synthetic voice rules"
+        page.get_by_role("button", name="Restore default voice platform rules").click()
+        publish(page)
+        page.get_by_role("alertdialog").get_by_role("button", name="Publish anyway").click()
+        expect(page.get_by_test_id("settings-status")).to_contain_text(
+            f"Published revision {before + 4}"
+        )
+        assert "voicePlatformRules" not in (active().get("conversationSettings") or {})
     finally:
         context.close()

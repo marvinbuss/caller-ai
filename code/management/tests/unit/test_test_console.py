@@ -754,6 +754,51 @@ def test_relay_control_mute_and_interrupt_fence_old_audio_without_inventing_task
     frames.clear()
 
 
+@pytest.mark.parametrize("valid", [True, False])
+def test_voice_relay_forwards_valid_progress_and_refuses_invalid_progress(active_relay_case, valid):
+    client, browser, runtime, permit, credentials, sent, displayed, clock, ticks, envelope = (
+        active_relay_case
+    )
+    recv = runtime.recv
+    progress = {
+        "type": "progress",
+        "sessionId": envelope["sessionId"],
+        "sequence": 2,
+        "generation": 1,
+        "state": "still_working" if valid else "synthetic-private-state",
+        "text": "Checking that for you.",
+    }
+
+    async def altered():
+        raw = await recv()
+        return json.dumps(progress) if json.loads(raw)["type"] == "audio.credit" else raw
+
+    runtime.recv = altered
+
+    async def scenario():
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(
+                client.run(
+                    browser,
+                    permit=permit,
+                    signed_permit="synthetic-signed-permit",
+                    validate_current=lambda: SimpleNamespace(
+                        expires_at=permit.auth_expires_at.timestamp()
+                    ),
+                    deadline=asyncio.get_running_loop().time() + 8,
+                ),
+                1,
+            )
+        await client.close()
+
+    asyncio.run(scenario())
+    shown = [value for value in displayed if value["type"] == "progress"]
+    if valid:
+        assert shown == [progress]
+    else:
+        assert not shown and browser.close.await_args.kwargs["code"] == 1008
+
+
 @pytest.mark.parametrize("fault", ["error-code", "ack", "agent-community"])
 def test_relay_server_metadata_values_cannot_be_used_to_leak_provider_payload(
     active_relay_case, fault
@@ -1046,6 +1091,161 @@ console.log('browser-history-pass');
     assert result.stdout.strip() == "browser-history-pass" and not result.stderr
 
 
+@pytest.mark.parametrize("mode", ["text", "speech"])
+def test_browser_progress_adds_a_status_row_kept_in_the_log(mode):
+    import shutil
+    import subprocess
+
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    message_id = "messageId: 'reply-1', " if mode == "text" else ""
+    scenario = f"""
+const messages = {{children: [], append(row) {{ this.children.push(row); }},
+    replaceChildren() {{ this.children = []; }}, scrollHeight: 0}};
+const document = {{getElementById: name => name === 'test-messages' ? messages : null,
+    createElement: tag => ({{tag, textContent: '', dataset: {{}}, style: {{}}}})}};
+class WebSocket {{ static OPEN = 1; }}
+const engine = new CallerTestEngine({{begin: () => {{}}, control: () => {{}}}});
+engine.terminal = false; engine.mode = '{mode}'; engine.epoch = 1;
+engine.snapshot = {{status: 'ready', mode: '{mode}', sessionId: 'fixture-session', generation: 1}};
+engine.socket = {{readyState: 1, bufferedAmount: 0, send: () => {{}}, close: () => {{}}}};
+let sequence = 1;
+const receive = fields => engine.message(JSON.stringify({{type: 'progress',
+    sequence: ++sequence, generation: 1, sessionId: 'fixture-session', ...fields}}), 1);
+receive({{{message_id}state: 'still_working', text: 'Checking <b>that</b>.'}});
+receive({{{message_id}state: 'completed', text: 'Done.'}});
+const rows = messages.children;
+if (rows.length !== 2 || rows.some(row => row.dataset.kind !== 'status'))
+    throw Error('status_rows_missing');
+if (rows[0].textContent !== 'Status: Checking <b>that</b>.' ||
+    rows[1].textContent !== 'Status: Done.')
+    throw Error('status_text');
+for (const fields of [{{{message_id}state: 'unknown', text: 'x'}},
+        {{{message_id}state: 'completed', text: ''}},
+        {{{message_id}state: 'completed', text: 'x'.repeat(201)}},
+        {{state: 'completed', text: 'x', messageId: 'reply-1', extra: 1}}]) {{
+    let refused = false;
+    try {{ receive(fields); }} catch {{ refused = true; }}
+    if (!refused) throw Error('invalid_progress_accepted ' + JSON.stringify(fields));
+}}
+console.log('status-pass');
+"""
+    result = subprocess.run(
+        [node],
+        input=BUDGET_CODE + ENGINE_CODE + scenario,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.stdout.strip() == "status-pass", result.stderr
+
+
+def test_browser_formatted_reply_builds_only_safe_nodes_and_keeps_https_urls():
+    import re
+    import shutil
+    import subprocess
+
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    format_code = ENGINE_CODE[ENGINE_CODE.index("    format(row, tree)") :]
+    format_code = format_code[: format_code.index("    submit(text)")]
+    assert re.search(r"innerHTML|outerHTML|insertAdjacentHTML|\beval\b", ENGINE_CODE) is None
+    assert "setAttribute" not in format_code
+    assert 'parsed.protocol === "https:"' in format_code
+    assert set(re.findall(r"document\.(\w+)", format_code)) == {"createElement"}
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    scenario = """
+function element(tag) {
+    return {tag, children: [], dataset: {}, style: {}, textContent: '',
+        append(...nodes) { this.children.push(...nodes); },
+        replaceWith(next) { messages.children[messages.children.indexOf(this)] = next; }};
+}
+const messages = {children: [], append(row) { this.children.push(row); },
+    replaceChildren() { this.children = []; }, scrollHeight: 0};
+const document = {getElementById: name => name === 'test-messages' ? messages : null,
+    createElement: element};
+class WebSocket { static OPEN = 1; }
+const engine = new CallerTestEngine({begin: () => {}, control: () => {}});
+engine.terminal = false; engine.mode = 'text'; engine.epoch = 1;
+engine.snapshot = {status: 'ready', mode: 'text', sessionId: 'fixture-session', generation: 1};
+engine.socket = {readyState: 1, bufferedAmount: 0, send: () => {}, close: () => {}};
+let sequence = 1;
+function receive(type, fields) {
+    engine.message(JSON.stringify({type, sequence: ++sequence, generation: 1,
+        sessionId: 'fixture-session', ...fields}), 1);
+}
+function reply(id) {
+    receive('text.delta', {messageId: id, text: '# Plan'});
+    receive('text.completed', {messageId: id, text: ''});
+}
+const check = (condition, code) => { if (!condition) throw Error(code); };
+reply('formatted');
+const plain = messages.children[0];
+receive('text.formatted', {messageId: 'formatted', tree: {type: 'root', children: [
+    {type: 'h2', children: ['Plan']},
+    {type: 'ul', children: [{type: 'li', children: [{type: 'strong', children: ['one']}]}]},
+    {type: 'p', children: [
+        {type: 'a', href: 'https://example.com/a', children: ['safe']},
+        {type: 'a', href: 'javascript:alert(1)', children: ['script']},
+        {type: 'a', href: 'http://example.com/', children: ['plain']},
+        {type: 'img', src: 'https://example.com/i.png', alt: 'chart'},
+        {type: 'img', src: 'data:image/png;base64,AAAA', alt: 'inline'},
+        {type: 'code', children: ['<b>x</b>']}, {type: 'br'}]}]}});
+const row = messages.children[0];
+check(row !== plain && row.tag === 'div' && row.dataset.formatted === 'true', 'not_replaced');
+check(messages.children.length === 1 && row.children[0].textContent === 'Agent: ', 'prefix');
+const [, heading, list, paragraph] = row.children;
+check(heading.tag === 'h2' && heading.children[0].textContent === 'Plan', 'heading');
+check(list.children[0].children[0].tag === 'strong', 'list');
+const [safe, script, http, image, inline, code, line] = paragraph.children;
+check(safe.tag === 'a' && safe.href === 'https://example.com/a' && safe.target === '_blank' &&
+    safe.rel === 'noopener noreferrer' && safe.referrerPolicy === 'no-referrer', 'safe_link');
+check(script.tag === 'span' && !('href' in script) &&
+    script.children[0].textContent === 'script', 'script_link');
+check(http.tag === 'span' && !('href' in http), 'http_link');
+check(image.tag === 'img' && image.src === 'https://example.com/i.png' && image.alt === 'chart' &&
+    image.referrerPolicy === 'no-referrer' && image.loading === 'lazy' &&
+    image.style.maxWidth === '100%', 'image');
+check(inline.tag === 'span' && inline.textContent === 'inline', 'inline_image');
+check(code.children[0].textContent === '<b>x</b>' && line.tag === 'br', 'code');
+for (const [id, tree] of [
+    ['unknown-tag', {type: 'root', children: [{type: 'script', children: ['x']}]}],
+    ['extra-key', {type: 'root', children: [{type: 'p', children: [], onclick: 'x'}]}],
+    ['bad-root', {type: 'p', children: []}],
+    ['deep', {type: 'root', children: [Array.from({length: 13}).reduce(
+        inner => ({type: 'blockquote', children: [inner]}), 'x')]}]]) {
+    reply(id);
+    const before = messages.children.at(-1);
+    receive('text.formatted', {messageId: id, tree});
+    check(messages.children.at(-1) === before && before.tag === 'p' &&
+        before.textContent === 'Agent: # Plan', 'invalid_tree_kept_plain_' + id);
+}
+receive('text.formatted', {messageId: 'never-shown', tree: {type: 'root', children: []}});
+reply('large');
+receive('text.formatted', {messageId: 'large', tree: {type: 'root', children: [
+    {type: 'pre', children: ['x'.repeat(60000)]}]}});
+check(messages.children.at(-1).dataset.formatted === 'true', 'large_tree_rejected');
+let rejected = false;
+try { receive('text.delta', {messageId: 'later', text: 'x'.repeat(9000)}); }
+catch (error) { rejected = error.message === 'control_limit'; }
+check(rejected, 'large_control_accepted');
+console.log('formatted-pass');
+"""
+    result = subprocess.run(
+        [node],
+        input=BUDGET_CODE + ENGINE_CODE + scenario,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.stdout.strip() == "formatted-pass", result.stderr
+
+
 def test_relay_admission_counts_owned_unfinished_disposal(active_relay_case):
     client, browser, runtime, permit, credentials, sent, displayed, clock, ticks, envelope = (
         active_relay_case
@@ -1116,6 +1316,16 @@ def test_text_mode_shows_the_static_retention_notice():
     assert TEXT_RETENTION_NOTICE in tree and "test-text-notice" in tree
     # The notice is plain text next to the message form: it binds no state and runs no script.
     assert "set_text" not in tree and "local_storage" not in tree
+
+
+def test_status_rows_get_a_distinct_style_on_the_message_log():
+    from management_app.pages.test_console import STATUS_ROW, test_console_page
+
+    source = str(test_console_page())
+    start = source.index(STATUS_ROW)
+    element = source[source.rfind("jsx(", 0, start) : source.index("jsx(", start)]
+    assert 'id:"test-messages"' in element and 'role:"log"' in element
+    assert '["fontStyle"] : "italic"' in element
 
 
 def test_live_audio_is_a_narrow_reflex_owned_metadata_component():

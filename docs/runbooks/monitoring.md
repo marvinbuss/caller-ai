@@ -84,6 +84,41 @@ prompt, setting value, host or token can reach the log. Failures are logged at `
 | `status.check` | Management | `outcome`, `text`, `voice` (`reachable`, `unreachable`, `unknown`) | The Status page shows the runtime or a model unreachable |
 | `status.probe` | Runtime | `outcome`, `measurement` (`text_probe_seconds` or `voice_probe_seconds`), `value` | A model is unreachable: a failure means the token or the TLS connection to the model host did not succeed within 2 seconds |
 
+## Greeting, Spoken Parts and Progress Events
+
+The modality-aware conversation (feature 006) adds three runtime events. They use the same
+structured schema (`event`, `outcome`, `reason_code`, `kind` = `voice` or `text`, and for timings
+`measurement` and `value`) and never carry greeting, answer, note or progress text.
+
+| Event | Outcome | `reason_code` | `measurement` | Emitted when |
+|-------|---------|---------------|---------------|--------------|
+| `test.greeting` | success | `ready` | `greeting_seconds` | The first greeting output arrived within 5 s of ready (voice: first output audio; text: first text delta) |
+| `test.greeting` | success | `fallback` | `greeting_seconds` | Text only: the fixed fallback greeting was sent |
+| `test.greeting` | failure | `deadline` | `greeting_seconds` (time of first audio, or 5.0 if none) | Voice: no greeting audio within 5 s, the request was cancelled. Text: the greeting arrived late |
+| `test.greeting` | success | `skipped` | none | Voice only: the caller spoke or a delegation arrived before the greeting |
+| `test.speech_parts` | success | `ready` | `parts`, `dropped_parts` | A spoken reply needed more than one part, or parts were dropped |
+| `test.progress` | success | `still_working`, `waiting_for_input`, `completed`, `failed`, `cancellation_confirmed` | none | A progress update was delivered |
+| `test.progress` | failure | `rate_limited`, `stale` | none | An update was suppressed |
+| `test.progress` | failure | `fallback_line` | none | The fixed failure line was spoken because no final state was reported |
+
+**SC-001 (voice greeting on time).** At least 90 % of voice sessions where the caller stays silent
+hear the greeting within 5 seconds. The events land in `ContainerAppConsoleLogs_CL` as one JSON
+line in `Log_s`:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where Log_s has "test.greeting"
+| extend entry = parse_json(Log_s)
+| where tostring(entry.event) == "test.greeting" and tostring(entry.kind) == "voice"
+    and tostring(entry.reason_code) != "skipped"
+| summarize total = count(),
+    on_time = countif(tostring(entry.outcome) == "success" and todouble(entry.value) <= 5.0)
+| extend rate = todouble(on_time) / total
+```
+
+It passes with `total >= 20` and `rate >= 0.9`. Many `deadline` failures point at Welcome-agent
+latency (compare `test.latency`); many `fallback` events in text point at the same.
+
 ## Environment alerts
 
 Each environment deploys its monitoring with the `monitoring` module (see [Platform](platform.md)): a Log Analytics

@@ -22,6 +22,11 @@ def test_bootstrap_is_idempotent_with_stable_protected_ids_and_no_business_admis
     )
     from management_app.api.configuration import ETAG
     from management_app.services.bootstrap import bootstrap, protected_graph
+    from management_app.services.default_prompts import (
+        GOODBYE_PROMPT,
+        ROUTING_PROMPT,
+        WELCOME_PROMPT,
+    )
     from tests.integration.test_configuration_persistence import ContainerDouble
 
     assert protected_graph() == protected_graph()
@@ -39,6 +44,11 @@ def test_bootstrap_is_idempotent_with_stable_protected_ids_and_no_business_admis
         snapshot, etag = await store.read_active()
         assert len(snapshot["agents"]) == 3 and not snapshot["communities"]
         assert {agent["role"] for agent in snapshot["agents"]} == {"welcome", "routing", "goodbye"}
+        assert {agent["role"]: agent["prompt"] for agent in snapshot["agents"]} == {
+            "welcome": WELCOME_PROMPT,
+            "routing": ROUTING_PROMPT,
+            "goodbye": GOODBYE_PROMPT,
+        }
         assert all(
             agent["enabled"] and agent["communityId"] is None for agent in snapshot["agents"]
         )

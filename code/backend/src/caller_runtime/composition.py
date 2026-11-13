@@ -13,6 +13,7 @@ import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime
+from functools import partial
 from typing import Final, Literal, Self
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -38,7 +39,7 @@ from caller_runtime.api.status import StatusBindings
 from caller_runtime.api.status import create_router as create_status_router
 from caller_runtime.api.text import create_router as create_text_router
 from caller_runtime.api.voice import create_router as create_voice_router
-from caller_runtime.domain.configuration import RevisionCache
+from caller_runtime.domain.configuration import RevisionCache, RevisionSnapshot
 from caller_runtime.domain.conversation import (
     MAX_WORK_SECONDS,
     SPEECH_WORK_SECONDS,
@@ -51,15 +52,39 @@ from caller_runtime.domain.conversation import (
 )
 from caller_runtime.domain.ports import ContainerPort, CredentialPort
 from caller_runtime.observability import Telemetry
+from caller_runtime.services import modality_defaults
 from caller_runtime.services.admission import AdmissionError, TestAdmissionService
 from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
 from caller_runtime.services.conversation import ConversationExecutor
-from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
+from caller_runtime.services.conversation_policy import (
+    ConversationPolicy,
+    SpeechSegments,
+    context_note,
+)
 from caller_runtime.services.text_conversation import TextConversationService
 
 AUTHORITY_CONTAINER: Final = "call-sessions"
 HISTORY_PROBE_SECONDS: Final = 10
 HISTORY_STALE_SECONDS: Final = 30
+LIVE_DELEGATION_SUFFIX: Final = (
+    "\nDelegate reasoning, business actions and agent changes "
+    "to the application-owned client. "
+    "Do not authorize capabilities or infer complete tasks "
+    "from transcript fragments."
+)
+
+
+def live_instructions(snapshot: RevisionSnapshot) -> str:
+    """GPT-Live instructions: the voice conversation instructions and the delegation suffix.
+
+    The speaking model never gets an agent prompt, layer or addition; the active agent reaches
+    it only through the context note. A slice 1 projection has no `voiceInstructions`, so the
+    shipped text stands in (FR-014, FR-037).
+    """
+    voice = snapshot.conversation_settings().get(
+        "voiceInstructions", modality_defaults.VOICE_INSTRUCTIONS
+    )
+    return str(voice) + LIVE_DELEGATION_SUFFIX
 
 
 class RuntimeOptions(Metadata):
@@ -453,21 +478,16 @@ class ConversationRuntime:
                         telemetry=telemetry,
                         call_observer=lambda ok: self.status.record_call("voice", ok),
                     )
-                    configured = {
-                        agent["agentId"]: agent for agent in snapshot.for_runtime()["agents"]
-                    }
 
                     def instructions(current: TestSlot) -> str:
-                        return str(configured[current.active_agent_id]["prompt"]) + (
-                            "\nDelegate reasoning, business actions and agent changes "
-                            "to the application-owned client. "
-                            "Do not authorize capabilities or infer complete tasks "
-                            "from transcript fragments."
-                        )
+                        return live_instructions(snapshot)
 
                     segment = await live.start(slot, instructions=instructions(slot))
                     segments = SpeechSegments(
-                        current=segment, instructions_for=instructions, emit=emit
+                        current=segment,
+                        instructions_for=instructions,
+                        emit=emit,
+                        context_for=partial(context_note, snapshot),
                     )
                     controller.speech_segments = segments
                     policy._retire_speech, policy._continue_speech = (
@@ -475,6 +495,11 @@ class ConversationRuntime:
                         segments.continue_with,
                     )
                 policy.slot = await admission.mark_ready(slot.session_id, slot.owner_epoch)
+                if controller.speech_segments is not None:
+                    # Output checks need a ready slot, so the first note follows `mark_ready`.
+                    await controller.speech_segments.send_context(
+                        controller.speech_segments.current, policy.slot
+                    )
                 telemetry.event("test.admission", "success", mode=slot.mode, reason="ready")
                 return controller
         except BaseException as error:

@@ -80,6 +80,21 @@ class ValidatorDouble:
         self.calls += 1
         return copy.deepcopy(self.errors)
 
+    def confirmation_issues(self, payload: dict, previous: dict | None) -> list[dict]:
+        from management_app.services.configuration_validation import (
+            unconfirmed_platform_changes,
+        )
+
+        return [
+            {
+                "path": "conversationSettings." + key,
+                "code": "platform_rules_unconfirmed",
+                "rule_id": "platform_rules",
+                "policy_version": 1,
+            }
+            for key in unconfirmed_platform_changes(payload, previous)
+        ]
+
 
 @dataclass
 class AuditDouble:
@@ -449,3 +464,132 @@ def test_publication_metadata_is_returned_to_editors_only(configuration_graph) -
         identity.mode = "forbidden"
         reader = client.get(PATH)
     assert reader.status_code == 200 and "publication" not in reader.json()
+
+
+@pytest.fixture
+def validated_api(configuration_graph, validator):
+    """The API with the real validator, so the 2.2.0 text limits are checked as in production."""
+    from management_app.api.configuration import create_router
+
+    identity = IdentityDouble()
+    repository = RepositoryDouble(revision(configuration_graph, 1, "bootstrap-fixture"))
+    app = FastAPI()
+    app.include_router(
+        create_router(
+            repository=repository, identity=identity, validator=validator, audit=repository.audit
+        )
+    )
+    with TestClient(app) as client:
+        yield client, repository
+
+
+CONFIRMED = {"X-Caller-Confirm-Platform-Rules": "confirmed"}
+
+
+def oversized(payload: dict, case: str) -> str:
+    settings = payload.setdefault("conversationSettings", {})
+    if case == "voiceInstructions":
+        settings["voiceInstructions"] = "v" * (12 * 1024 + 1)
+    elif case in {"voicePlatformRules", "voiceGlobalPrompt", "textPlatformRules"}:
+        settings[case] = "l" * (8 * 1024 + 1)
+    elif case == "textGlobalPrompt":
+        settings[case] = "\u00e9" * (4 * 1024 + 1)
+    elif case == "voiceAddition":
+        payload["agents"][3]["voiceAddition"] = "a" * (4 * 1024 + 1)
+        return "agents[3].voiceAddition"
+    else:
+        settings |= {"textPlatformRules": "r" * 8 * 1024, "textGlobalPrompt": "g" * 8 * 1024}
+        payload["agents"][3]["prompt"] = "p" * 16 * 1024
+        payload["agents"][3]["textAddition"] = "a" * 4 * 1024
+        return "agents[3]"
+    return "conversationSettings." + case
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "voiceInstructions",
+        "voicePlatformRules",
+        "voiceGlobalPrompt",
+        "textPlatformRules",
+        "textGlobalPrompt",
+        "voiceAddition",
+        "composed",
+    ],
+)
+def test_text_over_its_limit_is_refused_with_its_path(
+    validated_api, configuration_graph, case
+) -> None:
+    client, repository = validated_api
+    payload = copy.deepcopy(configuration_graph)
+    path = oversized(payload, case)
+    body = problem(client.put(PATH, json=payload, headers={"If-Match": ETAG} | CONFIRMED), 422)
+    assert body["code"] == "configuration_text_too_large"
+    assert path in [error["path"] for error in body["errors"]]
+    assert repository.publications == 0
+
+
+@pytest.mark.parametrize("field", ["voiceInstructions", "voicePlatformRules", "textPlatformRules"])
+def test_platform_rules_and_voice_instructions_need_the_confirmation(
+    validated_api, configuration_graph, field
+) -> None:
+    client, repository = validated_api
+    payload = copy.deepcopy(configuration_graph)
+    payload["conversationSettings"] = {field: "Synthetic changed text"}
+    body = problem(client.put(PATH, json=payload, headers={"If-Match": ETAG}), 422)
+    assert body["code"] == "platform_rules_unconfirmed"
+    assert body["errors"][0]["path"] == "conversationSettings." + field
+    assert repository.publications == 0
+    confirmed = client.put(PATH, json=payload, headers={"If-Match": ETAG} | CONFIRMED)
+    assert confirmed.status_code == 200 and repository.publications == 1
+    # Removing the field again ("Restore default") is a change that also needs the confirmation.
+    restored = copy.deepcopy(configuration_graph)
+    etag = confirmed.headers["ETag"]
+    problem(client.put(PATH, json=restored, headers={"If-Match": etag}), 422)
+
+
+def test_global_prompts_and_additions_publish_without_the_confirmation(
+    validated_api, configuration_graph
+) -> None:
+    client, repository = validated_api
+    payload = copy.deepcopy(configuration_graph)
+    payload["conversationSettings"] = {"textGlobalPrompt": "Synthetic text global prompt"}
+    payload["agents"][3]["voiceAddition"] = "Synthetic voice addition"
+    response = client.put(PATH, json=payload, headers={"If-Match": ETAG})
+    assert response.status_code == 200 and repository.publications == 1
+
+
+def test_tester_only_users_never_receive_or_change_the_modality_texts(configuration_graph) -> None:
+    from management_app.api.configuration import create_router
+
+    class ReaderIdentity(IdentityDouble):
+        async def require_reader(self, request, *, reader_role):
+            return "tester-application"
+
+    graph = copy.deepcopy(configuration_graph)
+    graph["conversationSettings"] = {
+        "voice": "marin",
+        "voiceInstructions": "Synthetic private voice instructions",
+        "textGlobalPrompt": "Synthetic private text global prompt",
+    }
+    graph["agents"][3]["textAddition"] = "Synthetic private text addition"
+    identity = ReaderIdentity(mode="forbidden")
+    repository = RepositoryDouble(revision(graph, 1, "bootstrap-fixture"))
+    app = FastAPI()
+    app.include_router(
+        create_router(
+            repository=repository,
+            identity=identity,
+            validator=ValidatorDouble(),
+            audit=repository.audit,
+            reader_role="Conversation.Tester",
+        )
+    )
+    with TestClient(app) as client:
+        reader = client.get(PATH)
+        assert reader.status_code == 200 and "Synthetic private" not in reader.text
+        assert reader.json()["conversationSettings"] == {"voice": "marin"}
+        changed = copy.deepcopy(graph)
+        changed["conversationSettings"]["textGlobalPrompt"] = "Synthetic tester change"
+        problem(client.put(PATH, json=changed, headers={"If-Match": ETAG} | CONFIRMED), 403)
+    assert repository.publications == 0

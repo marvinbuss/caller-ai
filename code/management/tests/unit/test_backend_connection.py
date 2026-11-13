@@ -107,7 +107,21 @@ def test_the_builder_refuses_a_voice_request_that_carries_text_or_a_conversation
             "voice", origin=ORIGIN, token="t", signed_permit="p", request_id="r", text="x"
         )
     with pytest.raises(ValueError):
-        compose_request("text", origin=ORIGIN, token="t", signed_permit="p", request_id="r")
+        compose_request(
+            "text",
+            origin=ORIGIN,
+            token="t",
+            signed_permit="p",
+            request_id="r",
+            conversation_id="c1",
+        )
+
+
+def test_a_text_request_without_text_or_conversation_is_the_open_request():
+    from management_app.adapters.backend_connection import compose_request
+
+    request = compose_request("text", origin=ORIGIN, token="t", signed_permit="p", request_id="r")
+    assert request.message == {"permit": "p", "requestId": "r"}
 
 
 def test_each_turn_gets_a_fresh_single_use_permit_derived_from_the_opened_one():
@@ -175,7 +189,15 @@ class Browser:
         self._finished.set()
 
 
-def run_text_session(handler, texts, *, validate=None, idle_seconds=None):
+def greeting_reply(conversation="conversation-1", text="Synthetic greeting"):
+    return sse(
+        ("conversation", {"conversationId": conversation}),
+        ("text.delta", {"messageId": "greeting-1", "text": text}),
+        ("text.completed", {"messageId": "greeting-1", "text": ""}),
+    )
+
+
+def run_text_session(handler, texts, *, validate=None, idle_seconds=None, opening=None):
     from management_app.adapters.backend_connection import TurnPermits
     from management_app.adapters.test_session_client import TestSessionClient
     from management_app.adapters.text_relay import ActiveRevision
@@ -186,8 +208,13 @@ def run_text_session(handler, texts, *, validate=None, idle_seconds=None):
         [],
         AsyncMock(return_value=SimpleNamespace(token="synthetic-workload-token", expires_on=1e12)),
     )
+    opened = []
 
     async def dispatch(request):
+        # The relay opens every session with a request that has no text; it returns the greeting.
+        if "text" not in json.loads(request.content):
+            opened.append(request)
+            return await opening(request) if opening is not None else greeting_reply()
         requests.append(request)
         return await handler(request)
 
@@ -227,6 +254,7 @@ def run_text_session(handler, texts, *, validate=None, idle_seconds=None):
         await client.close()
 
     asyncio.run(scenario())
+    browser.opened = opened
     return browser, requests, tokens
 
 
@@ -332,23 +360,176 @@ def test_text_session_relays_each_turn_as_a_public_post_and_keeps_only_the_conve
         "text.completed",
         "text.delta",
         "text.completed",
+        "text.delta",
+        "text.completed",
         "ended",
     ]
+    assert browser.displayed[1]["messageId"] == "greeting-1"
     ready = browser.displayed[0]
     assert ready["mode"] == "text" and ready["revisionId"] == "published-fixture"
     assert ready["revisionNumber"] == 7 and ready["agentId"] == "welcome"
-    assert {request.url.path for request in requests} == {"/v1/conversations/text"}
+    assert {request.url.path for request in requests + browser.opened} == {"/v1/conversations/text"}
     assert all(request.method == "POST" for request in requests)
+    assert [set(json.loads(request.content)) for request in browser.opened] == [
+        {"permit", "requestId"}
+    ]
     bodies = [json.loads(request.content) for request in requests]
-    assert set(bodies[0]) == {"permit", "requestId", "text"}
+    # The open request started the conversation, so every user turn continues it.
+    assert set(bodies[0]) == {"permit", "requestId", "text", "conversationId"}
     assert set(bodies[1]) == {"permit", "requestId", "text", "conversationId"}
-    assert bodies[1]["conversationId"] == "conversation-1"
+    assert bodies[0]["conversationId"] == bodies[1]["conversationId"] == "conversation-1"
     assert bodies[0]["text"] == "First question" and "settings" not in bodies[0]
     assert all(
         request.headers["authorization"] == "Bearer synthetic-workload-token"
         for request in requests
     )
-    assert browser.closed == (1000, "stopped") and tokens.await_count == 2
+    assert browser.closed == (1000, "stopped") and tokens.await_count == 3
+
+
+def test_the_open_request_comes_first_and_an_early_message_is_answered_right_after_it():
+    order = []
+
+    async def opening(request):
+        # The user's message is already queued while the greeting is still being written.
+        await asyncio.sleep(0.05)
+        order.append("open")
+        return greeting_reply(text="Hello and welcome!")
+
+    async def handler(request):
+        order.append(json.loads(request.content)["text"])
+        return reply(text="Synthetic answer")
+
+    browser, requests, _tokens = run_text_session(handler, ["Early question"], opening=opening)
+
+    assert order == ["open", "Early question"]
+    shown = [(value["type"], value.get("text")) for value in browser.displayed[1:-1]]
+    assert shown == [
+        ("text.delta", "Hello and welcome!"),
+        ("text.completed", ""),
+        ("text.delta", "Synthetic answer"),
+        ("text.completed", ""),
+    ]
+    # The greeting is relayed unchanged, with the backend's message id.
+    assert browser.displayed[1] == browser.displayed[1] | {
+        "type": "text.delta",
+        "messageId": "greeting-1",
+        "text": "Hello and welcome!",
+    }
+    assert json.loads(requests[0].content)["conversationId"] == "conversation-1"
+
+
+def test_a_failed_open_request_is_reported_and_later_turns_still_run():
+    async def opening(request):
+        return httpx.Response(
+            503, json={"error": {"code": "capacity_unavailable", "reason": "manager_busy"}}
+        )
+
+    async def handler(request):
+        return reply()
+
+    browser, requests, _tokens = run_text_session(handler, ["Question"], opening=opening)
+
+    kinds = [value["type"] for value in browser.displayed]
+    assert kinds == ["ready", "error", "text.delta", "text.completed", "ended"]
+    assert browser.displayed[1]["reason"] == "manager_busy"
+    assert set(json.loads(requests[0].content)) == {"permit", "requestId", "text"}
+
+
+def test_a_completed_markdown_reply_is_followed_by_one_formatted_tree():
+    async def handler(request):
+        return sse(
+            ("conversation", {"conversationId": "conversation-1"}),
+            ("text.delta", {"messageId": "message-1", "text": "- one\n"}),
+            ("text.delta", {"messageId": "message-1", "text": "- two\n"}),
+            ("text.completed", {"messageId": "message-1", "text": ""}),
+        )
+
+    browser, _requests, _tokens = run_text_session(handler, ["Question"])
+
+    kinds = [value["type"] for value in browser.displayed]
+    assert kinds[-4:] == ["text.delta", "text.completed", "text.formatted", "ended"]
+    formatted = browser.displayed[-2]
+    assert set(formatted) == {"type", "sessionId", "sequence", "generation", "messageId", "tree"}
+    assert formatted["messageId"] == "message-1"
+    assert formatted["tree"] == {
+        "type": "root",
+        "children": [
+            {
+                "type": "ul",
+                "children": [
+                    {"type": "li", "children": ["one"]},
+                    {"type": "li", "children": ["two"]},
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "text", ["Just a plain sentence.", "- item\n" * 1100], ids=["plain", "over-limit"]
+)
+def test_no_formatted_tree_is_sent_for_plain_or_unformattable_replies(text):
+    async def handler(request):
+        return sse(
+            ("conversation", {"conversationId": "conversation-1"}),
+            *[
+                ("text.delta", {"messageId": "message-1", "text": text[start : start + 4096]})
+                for start in range(0, len(text), 4096)
+            ],
+            ("text.completed", {"messageId": "message-1", "text": ""}),
+        )
+
+    browser, _requests, _tokens = run_text_session(handler, ["Question"])
+
+    assert "text.formatted" not in [value["type"] for value in browser.displayed]
+
+
+def test_progress_is_relayed_with_exactly_message_state_and_text():
+    async def handler(request):
+        return sse(
+            ("conversation", {"conversationId": "conversation-1"}),
+            (
+                "progress",
+                {"messageId": "message-1", "state": "still_working", "text": "Checking."},
+            ),
+            ("text.delta", {"messageId": "message-1", "text": "Done."}),
+            ("text.completed", {"messageId": "message-1", "text": ""}),
+        )
+
+    browser, _requests, _tokens = run_text_session(handler, ["Question"])
+
+    progress = [value for value in browser.displayed if value["type"] == "progress"]
+    assert len(progress) == 1
+    assert set(progress[0]) == {
+        "type",
+        "sessionId",
+        "sequence",
+        "generation",
+        "messageId",
+        "state",
+        "text",
+    }
+    assert (progress[0]["state"], progress[0]["text"]) == ("still_working", "Checking.")
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"messageId": "message-1", "state": "unknown", "text": "Checking."},
+        {"messageId": "message-1", "state": "completed", "text": ""},
+        {"messageId": "message-1", "state": "completed", "text": "x" * 201},
+        {"messageId": "message-1", "state": "completed", "text": "Done.", "extra": 1},
+        {"messageId": "bad id", "state": "completed", "text": "Done."},
+    ],
+    ids=["state", "empty", "long", "extra", "identifier"],
+)
+def test_invalid_progress_is_refused_and_never_shown(data):
+    async def handler(request):
+        return sse(("conversation", {"conversationId": "conversation-1"}), ("progress", data))
+
+    browser, _requests, _tokens = run_text_session(handler, ["Question"])
+
+    assert "progress" not in [value["type"] for value in browser.displayed]
 
 
 def test_each_turn_uses_a_fresh_permit_that_never_reaches_the_browser():
@@ -415,7 +596,10 @@ def test_unauthorized_backend_response_ends_the_console_session():
     browser, _requests, _tokens = run_text_session(handler, ["Question"])
 
     assert browser.closed == (1008, "unauthorized")
-    assert not any(value["type"] in {"text.delta", "text.completed"} for value in browser.displayed)
+    assert not any(
+        value["type"] in {"text.delta", "text.completed"} and value["messageId"] != "greeting-1"
+        for value in browser.displayed
+    )
 
 
 def test_error_event_after_the_stream_started_is_relayed_with_its_public_code():
@@ -429,9 +613,9 @@ def test_error_event_after_the_stream_started_is_relayed_with_its_public_code():
     browser, _requests, _tokens = run_text_session(handler, ["Question"])
 
     kinds = [value["type"] for value in browser.displayed]
-    assert kinds == ["ready", "text.delta", "error", "ended"]
-    assert browser.displayed[2]["code"] == "upstream_unavailable"
-    assert browser.displayed[2]["reason"] == "history_unavailable"
+    assert kinds == ["ready", "text.delta", "text.completed", "text.delta", "error", "ended"]
+    assert browser.displayed[4]["code"] == "upstream_unavailable"
+    assert browser.displayed[4]["reason"] == "history_unavailable"
 
 
 @pytest.mark.parametrize(

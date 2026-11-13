@@ -10,6 +10,60 @@ from fastapi.testclient import TestClient
 PATH = "/v2/runtime/configuration"
 
 
+def resolved(policy: dict) -> dict:
+    """The projection resolves absent 2.2.0 fields to the shipped defaults (empty additions)."""
+    from management_app.services.default_prompts import resolve_settings
+
+    policy = copy.deepcopy(policy)
+    policy["conversationSettings"] = resolve_settings(policy.get("conversationSettings"))
+    for agent in policy["agents"]:
+        agent.setdefault("voiceAddition", "")
+        agent.setdefault("textAddition", "")
+    return policy
+
+
+def test_projection_always_carries_every_setting_and_addition_under_its_hash(
+    runtime_configuration_api, validator, configuration_graph
+):
+    from management_app.adapters.configuration_repository import publication
+    from management_app.models.configuration import MODALITY_SETTINGS
+    from management_app.services import default_prompts
+    from management_app.services.configuration_validation import encoded
+
+    client, identity, repository, telemetry = runtime_configuration_api
+    graph = copy.deepcopy(configuration_graph)
+    graph["conversationSettings"] = {"textGlobalPrompt": "Synthetic global"}
+    graph["agents"][3]["voiceAddition"] = "Synthetic voice addition"
+    repository.snapshot = publication(
+        validator, graph, actor="manager-fixture", previous=None, authority=None
+    )[0]
+    projection = client.get(PATH, headers={"X-Fixture-Identity": "runtime"}).json()
+    settings = projection["conversationSettings"]
+    assert set(MODALITY_SETTINGS) == set(settings)
+    assert settings["textGlobalPrompt"] == "Synthetic global"
+    assert settings["voicePlatformRules"] == default_prompts.VOICE_PLATFORM_RULES
+    assert settings["quietHandover"] is True
+    assert projection["agents"][3]["voiceAddition"] == "Synthetic voice addition"
+    assert all("voiceAddition" in a and "textAddition" in a for a in projection["agents"])
+    policy = {
+        key: projection[key]
+        for key in (
+            "schemaVersion",
+            "agents",
+            "communities",
+            "relationships",
+            "communityConnections",
+            "tools",
+            "mcpConnections",
+            "conversationSettings",
+        )
+    }
+    assert projection["policyHash"] == hashlib.sha256(encoded(policy)).hexdigest()
+    # Only the stored values were written; the defaults appear in the projection alone.
+    assert repository.snapshot["conversationSettings"] == graph["conversationSettings"]
+    assert repository.snapshot["schemaVersion"] == "2.2.0"
+
+
 def test_v2_runtime_projection_has_independent_hash_and_no_layout(runtime_configuration_api):
     from management_app.adapters.configuration_repository import graph_document
     from management_app.services.configuration_validation import encoded
@@ -27,7 +81,7 @@ def test_v2_runtime_projection_has_independent_hash_and_no_layout(runtime_config
     policy = {
         key: value for key, value in graph_document(repository.snapshot).items() if key != "layout"
     }
-    assert projection["policyHash"] == hashlib.sha256(encoded(policy)).hexdigest()
+    assert projection["policyHash"] == hashlib.sha256(encoded(resolved(policy))).hexdigest()
     assert projection["id"] == repository.snapshot["id"]
     assert response.headers["etag"] == repository.etag
     headers["If-None-Match"] = repository.etag
@@ -65,7 +119,7 @@ def test_v2_runtime_projection_omits_secret_resolution_material(
     policy.pop("layout")
     for connection in policy["mcpConnections"]:
         connection.pop("credentialRef")
-    assert projection["policyHash"] == hashlib.sha256(encoded(policy)).hexdigest()
+    assert projection["policyHash"] == hashlib.sha256(encoded(resolved(policy))).hexdigest()
     assert projection["graphHash"] == hashlib.sha256(encoded(graph_document(before))).hexdigest()
     assert projection["mcpConnections"][0]["connectionId"] == "connection-one"
 
@@ -152,6 +206,7 @@ def test_snapshot_is_exact_integrity_checked_revision_with_private_cache_headers
     expected = copy.deepcopy(repository.snapshot)
     expected.pop("layout")
     expected.pop("publication")
+    expected |= resolved(expected)
     expected["policyHash"] = hashlib.sha256(encoded(graph_document(expected))).hexdigest()
     assert response.json() == expected
     assert response.headers["etag"] == repository.etag

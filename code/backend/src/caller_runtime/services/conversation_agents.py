@@ -14,15 +14,24 @@ from agents.models.interface import Model
 from agents.retry import ModelRetrySettings
 from openai.types.shared import Reasoning
 
-from caller_runtime.domain.configuration import RevisionSnapshot
+from caller_runtime.domain.configuration import RevisionSnapshot, compose_instructions
 
 Document = dict[str, Any]
+Mode = Literal["text", "speech"]
+
+
+def agent_instructions(configured: Document, mode: Mode, graph: Document | None = None) -> str:
+    """Compose a working agent's instructions for one modality from the pinned projection:
+    platform rules, global prompt, prompt, addition. Missing layers fall back to the shipped
+    platform rules in `modality_defaults.py`."""
+    return compose_instructions(graph or {}, configured, mode)
 
 
 def build_agents(
     snapshot: RevisionSnapshot,
     *,
     model: Model,
+    mode: Mode,
     capabilities: Callable[[Document], list[FunctionTool]],
     policy_tools: Callable[[Document], list[FunctionTool]],
     reasoning_effort: Literal["low"] | None = None,
@@ -30,7 +39,8 @@ def build_agents(
     if not isinstance(model, Model) or capabilities is None or policy_tools is None:
         raise ValueError("explicit_configured_agent_ports_required")
     result: dict[str, Agent[Any]] = {}
-    for configured in snapshot.for_runtime()["agents"]:
+    graph = snapshot.for_runtime()
+    for configured in graph["agents"]:
         tools = list(policy_tools(configured))
         if configured["role"] == "ordinary":
             tools.extend(capabilities(configured))
@@ -42,7 +52,7 @@ def build_agents(
             raise PermissionError("unapproved_agent_tools")
         result[configured["agentId"]] = Agent(
             name=configured["name"],
-            instructions=configured["prompt"],
+            instructions=agent_instructions(configured, mode, graph),
             model=model,
             tools=list(tools),
             handoffs=[],

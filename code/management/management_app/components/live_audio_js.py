@@ -172,10 +172,12 @@ CONTROL_CODE = r"""
             }
             return;
         }
-        if (typeof raw !== "string" || new TextEncoder().encode(raw).length > 8192)
-            throw Error("control_limit");
+        // Only a `text.formatted` tree may exceed the 8 KiB control limit, up to 192 KiB.
+        const size = typeof raw === "string" ? new TextEncoder().encode(raw).length : Infinity;
+        if (size > 196608) throw Error("control_limit");
         const value = JSON.parse(raw), identifier = text => typeof text === "string" &&
             /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(text);
+        if (size > 8192 && value?.type !== "text.formatted") throw Error("control_limit");
         const integer = number => Number.isInteger(number) && number >= 1 && number <= 4294967295;
         if (!value || Array.isArray(value) || !integer(value.sequence) ||
             !integer(value.generation) || !identifier(value.sessionId))
@@ -219,6 +221,8 @@ CONTROL_CODE = r"""
         }
         const fields = {
             "text.delta": ["messageId", "text"], "text.completed": ["messageId", "text"],
+            "text.formatted": ["messageId", "tree"],
+            "progress": this.mode === "text" ? ["messageId", "state", "text"] : ["state", "text"],
             "transcript.delta": ["speaker", "fragment", "start_ms", "end_ms"],
             "agent.changed": ["agentId", "communityId"], "generation.changed": ["reason"],
             "audio.credit": ["availableSamples", "acceptedAudioSequence"],
@@ -284,10 +288,31 @@ CONTROL_CODE = r"""
                 new TextEncoder().encode(value.text).length > 4096) throw Error("invalid_text");
             this.append("assistant", value.text, value.messageId);
             if (value.type === "text.completed") {
+                const row = this.reply.get(value.messageId);
+                if (row) {
+                    // Keep the last two completed rows so a later `text.formatted` can replace one.
+                    this.completed.set(value.messageId, row);
+                    if (this.completed.size > 2)
+                        this.completed.delete(this.completed.keys().next().value);
+                }
                 this.reply.delete(value.messageId);
                 this.replySizes.delete(value.messageId);
                 this.pending.delete(this.pending.keys().next().value);
             }
+        } else if (value.type === "text.formatted") {
+            if (this.mode !== "text" || !identifier(value.messageId))
+                throw Error("invalid_text");
+            const row = this.completed.get(value.messageId);
+            this.completed.delete(value.messageId);
+            if (row) this.format(row, value.tree);
+        } else if (value.type === "progress") {
+            const states = ["still_working", "waiting_for_input", "completed", "failed",
+                "cancellation_confirmed"];
+            if (!states.includes(value.state) || typeof value.text !== "string" ||
+                [...value.text].length < 1 || [...value.text].length > 200 ||
+                this.mode === "text" && !identifier(value.messageId))
+                throw Error("invalid_progress");
+            this.status(value.text);
         } else if (value.type === "transcript.delta") {
             if (this.mode !== "speech" || !["user", "assistant"].includes(value.speaker) ||
                 typeof value.fragment !== "string" ||
@@ -358,6 +383,85 @@ CONTROL_CODE = r"""
         }
         if (row) row.textContent += text;
         if (container) container.scrollTop = container.scrollHeight;
+    }
+    status(text) {
+        // A progress update: its own row with a visible prefix, kept in the log (FR-041).
+        const count = new TextEncoder().encode(text).length + 8;
+        if (this.contentBytes + count > 262144 || this.rowCount >= 128)
+            throw Error("volatile_content_limit");
+        this.contentBytes += count; this.rowCount++;
+        // The next caption starts a new row below the status.
+        this.fragmentRow = this.fragmentSpeaker = null;
+        const container = this.element("messages");
+        if (!container) return;
+        const row = document.createElement("p"); row.dataset.kind = "status";
+        row.style.whiteSpace = "pre-wrap"; row.style.overflowWrap = "anywhere";
+        row.textContent = "Status: " + text; container.append(row);
+        container.scrollTop = container.scrollHeight;
+    }
+    format(row, tree) {
+        // Builds the allowlisted tree with createElement and textContent only. Links and images
+        // keep their URL only when it is https:. Anything unexpected keeps the plain-text row.
+        const tags = new Set(["p", "h1", "h2", "h3", "ul", "ol", "li", "blockquote", "pre",
+            "code", "table", "thead", "tbody", "tr", "th", "td", "strong", "em", "br", "hr",
+            "a", "img"]);
+        const keys = {a: ["type", "href", "children"], img: ["type", "src", "alt"],
+            br: ["type"], hr: ["type"]};
+        let count = 0;
+        const https = url => {
+            if (typeof url !== "string") throw Error("invalid_format");
+            try {
+                const parsed = new URL(url);
+                return parsed.protocol === "https:" ? parsed.href : null;
+            } catch { return null; }
+        };
+        const text = value => {
+            const span = document.createElement("span"); span.textContent = value; return span;
+        };
+        const build = (node, depth) => {
+            if (++count > 2000 || depth > 12) throw Error("format_limit");
+            if (typeof node === "string") return text(node);
+            if (!node || typeof node !== "object" || Array.isArray(node) ||
+                !tags.has(node.type)) throw Error("invalid_format");
+            const expected = keys[node.type] || ["type", "children"];
+            if (Object.keys(node).length !== expected.length ||
+                expected.some(key => !(key in node))) throw Error("invalid_format");
+            if (node.type === "img") {
+                if (typeof node.alt !== "string") throw Error("invalid_format");
+                const src = https(node.src);
+                if (!src) return text(node.alt);
+                const image = document.createElement("img");
+                image.src = src; image.alt = node.alt; image.referrerPolicy = "no-referrer";
+                image.loading = "lazy"; image.style.maxWidth = "100%";
+                return image;
+            }
+            if (!("children" in node)) return document.createElement(node.type);
+            if (!Array.isArray(node.children)) throw Error("invalid_format");
+            const children = node.children.map(child => build(child, depth + 1));
+            let element;
+            if (node.type === "a") {
+                const href = https(node.href);
+                element = document.createElement(href ? "a" : "span");
+                if (href) {
+                    element.href = href; element.target = "_blank";
+                    element.rel = "noopener noreferrer"; element.referrerPolicy = "no-referrer";
+                }
+            } else element = document.createElement(node.type);
+            element.append(...children);
+            return element;
+        };
+        let children;
+        try {
+            if (!tree || typeof tree !== "object" || Array.isArray(tree) ||
+                tree.type !== "root" || Object.keys(tree).length !== 2 ||
+                !Array.isArray(tree.children)) return;
+            children = tree.children.map(child => build(child, 1));
+        } catch { return; }
+        const formatted = document.createElement("div");
+        formatted.dataset.speaker = row.dataset.speaker; formatted.dataset.formatted = "true";
+        formatted.style.overflowWrap = "anywhere";
+        formatted.append(text("Agent: "), ...children);
+        row.replaceWith(formatted);
     }
     submit(text) {
         if (this.terminal || this.mode !== "text" || this.snapshot.status !== "ready") return;
@@ -471,7 +575,7 @@ class CallerTestEngine {
         this.terminal = true; this.mode = "text"; this.snapshot = {};
         this.context = this.stream = this.node = this.source = this.gain = this.socket = null;
         this.queue = []; this.pending = new Map(); this.reply = new Map(); this.contentBytes = 0;
-        this.flushSequence = 0;
+        this.flushSequence = 0; this.completed = new Map();
         this.replySizes = new Map(); this.transcriptBytes = this.rowCount = 0;
         this.fragmentRow = this.fragmentSpeaker = null;
         this.clientSequence = this.serverSequence = 0; this.authenticated = false;
@@ -790,7 +894,7 @@ class CallerTestEngine {
     }
     purge() {
         this.contentBytes = 0; this.pending.clear(); this.reply.clear(); this.queue = [];
-        this.replySizes.clear(); this.transcriptBytes = this.rowCount = 0;
+        this.completed.clear(); this.replySizes.clear(); this.transcriptBytes = this.rowCount = 0;
         this.fragmentRow = this.fragmentSpeaker = null;
         this.element("messages")?.replaceChildren();
         const input = this.element("text"); if (input) input.value = "";

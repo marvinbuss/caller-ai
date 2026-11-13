@@ -15,6 +15,8 @@ from fastapi import FastAPI
 from reflex.event import EventHandler
 from reflex_base.registry import RegistrationContext
 
+from management_app.api.configuration import CONFIRMATION_HEADER
+from management_app.services import default_prompts
 from management_app.services.configuration_validation import GRAPH_FIELDS
 from management_app.state.editor_draft import EditorServices
 
@@ -70,6 +72,71 @@ def chosen(values: dict[str, str], defaults: Document) -> Document:
     return settings
 
 
+# The editable 2.2.0 texts in page order: (field, section, label).
+TEXT_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("voiceInstructions", "Voice", "Voice conversation instructions"),
+    ("voicePlatformRules", "Voice", "Voice platform rules"),
+    ("voiceGlobalPrompt", "Voice", "Voice global prompt"),
+    ("textPlatformRules", "Text", "Text platform rules"),
+    ("textGlobalPrompt", "Text", "Text global prompt"),
+)
+
+
+def text_overrides(stored: Document) -> dict[str, str | None]:
+    """The stored value of each text, or `None` when the shipped default applies."""
+    return {
+        field: stored[field] if isinstance(stored.get(field), str) else None
+        for field, _section, _label in TEXT_FIELDS
+    }
+
+
+def shown_texts(overrides: dict[str, str | None]) -> dict[str, str]:
+    """What each text box shows: the stored value, or the shipped default."""
+    return {
+        field: value if value is not None else str(default_prompts.SHIPPED[field])
+        for field, value in overrides.items()
+    }
+
+
+def text_errors(overrides: dict[str, str | None]) -> dict[str, str]:
+    """Byte limit errors for the texts that would be stored."""
+    errors: dict[str, str] = {}
+    for field, value in overrides.items():
+        if value is None:
+            continue
+        low, high = default_prompts.TEXT_LIMITS[field]
+        size = len(value.encode("utf-8"))
+        if size > high or size < low or (low and not value.strip()):
+            errors[field] = f"{low} to {high} bytes." if low else f"At most {high} bytes."
+    return errors
+
+
+def publishable(overrides: dict[str, str | None], stored: Document) -> Document:
+    """The stored settings with the texts replaced; a restored text is removed (absent)."""
+    kept = {key: value for key, value in stored.items() if key not in dict(overrides)}
+    return kept | {field: value for field, value in overrides.items() if value is not None}
+
+
+def stored_quiet(stored: Document) -> bool | None:
+    """The stored `quietHandover`, or `None` when absent (the default, on)."""
+    value = stored.get("quietHandover")
+    return value if isinstance(value, bool) else None
+
+
+def with_quiet(settings: Document, quiet: bool | None) -> Document:
+    """Settings with `quietHandover` stored, or removed when it is back to the default."""
+    rest = {key: value for key, value in settings.items() if key != "quietHandover"}
+    return rest if quiet is None else rest | {"quietHandover": quiet}
+
+
+def needs_confirmation(overrides: dict[str, str | None], stored: Document) -> bool:
+    """Platform rules or voice instructions differ from the active revision (FR-030, FR-037)."""
+    return any(
+        overrides.get(field) != (stored.get(field) if isinstance(stored.get(field), str) else None)
+        for field in default_prompts.CONFIRMED_SETTINGS
+    )
+
+
 class SettingsState(rx.State):
     loading: bool = False
     error: str = ""
@@ -87,6 +154,15 @@ class SettingsState(rx.State):
     # Unpublished edits; a page load keeps them and their starting revision.
     dirty: bool = False
     notice_revision: int = 0
+    # The modality texts as shown, and whether each one is the shipped default.
+    texts: dict[str, str] = {}
+    defaulted: dict[str, bool] = {}
+    confirm_open: bool = False
+    # The quiet update on handover: shown on when the stored value is absent (FR-017).
+    quiet_handover: bool = True
+    quiet_default: bool = True
+    _quiet: bool | None = None
+    _overrides: dict[str, str | None] = {}
     _revision: Document = {}
     _etag: str = ""
     _defaults: Document = {}
@@ -110,6 +186,21 @@ class SettingsState(rx.State):
             f"Integer, 1 to {limit}. Applies to text replies and delegated work, "
             "not to spoken output."
         )
+
+    @rx.var
+    def text_bytes(self) -> dict[str, str]:
+        """`<used> of <limit> bytes` for each text box."""
+        return {
+            field: f"{len(value.encode('utf-8'))} of {default_prompts.TEXT_LIMITS[field][1]} bytes"
+            for field, value in self.texts.items()
+            if field in default_prompts.TEXT_LIMITS
+        }
+
+    def _show_texts(self) -> None:
+        self.texts = shown_texts(self._overrides)
+        self.defaulted = {field: value is None for field, value in self._overrides.items()}
+        self.quiet_handover = self._quiet is not False
+        self.quiet_default = self._quiet is None
 
     @rx.event
     async def load(self) -> AsyncIterator[None]:
@@ -150,6 +241,9 @@ class SettingsState(rx.State):
                 self.voice = str(current.get("voice", defaults["voice"]))
                 self.max_tokens = str(current.get("maxOutputTokens", defaults["maxOutputTokens"]))
                 self.idle = str(current.get("idleTimeoutSeconds", defaults["idleTimeoutSeconds"]))
+                self._overrides = text_overrides(current)
+                self._quiet = stored_quiet(current)
+            self._show_texts()
         except Exception:
             self._revision, self._etag, self.dirty = {}, "", False
             self.error = "Settings unavailable"
@@ -169,7 +263,50 @@ class SettingsState(rx.State):
         self.idle, self.message, self.dirty = value, "", True
 
     @rx.event
+    def set_text(self, field: str, value: str) -> None:
+        if field not in self._overrides:
+            return
+        self._overrides = self._overrides | {field: value}
+        self._show_texts()
+        self.message, self.dirty = "", True
+
+    @rx.event
+    def restore_text(self, field: str) -> None:
+        """Back to the shipped default: the field is removed from the published settings."""
+        if field not in self._overrides:
+            return
+        self._overrides = self._overrides | {field: None}
+        self._show_texts()
+        self.message, self.dirty = "", True
+
+    @rx.event
+    def set_quiet_handover(self, value: bool) -> None:
+        self._quiet = bool(value)
+        self._show_texts()
+        self.message, self.dirty = "", True
+
+    @rx.event
+    def restore_quiet_handover(self) -> None:
+        self._quiet = None
+        self._show_texts()
+        self.message, self.dirty = "", True
+
+    @rx.event
+    def cancel_confirmation(self) -> None:
+        self.confirm_open = False
+
+    @rx.event
+    async def publish_confirmed(self) -> AsyncIterator[None]:
+        self.confirm_open = False
+        async for _update in self._publish(confirmed=True):
+            yield
+
+    @rx.event
     async def publish(self) -> AsyncIterator[None]:
+        async for _update in self._publish(confirmed=False):
+            yield
+
+    async def _publish(self, *, confirmed: bool) -> AsyncIterator[None]:
         if self.busy or self.read_only or not self._revision:
             return
         values = {
@@ -178,17 +315,32 @@ class SettingsState(rx.State):
             "idleTimeoutSeconds": self.idle,
         }
         voices = {row["id"] for group in self.groups for row in group["voices"]}
-        self.field_errors = check(values, voices, self.max_tokens_limit)
+        self.field_errors = check(values, voices, self.max_tokens_limit) | text_errors(
+            self._overrides
+        )
         self.message, self.conflict = "", ""
         if self.field_errors:
+            return
+        stored = self._revision.get("conversationSettings") or {}
+        if not confirmed and needs_confirmation(self._overrides, stored):
+            # "This can break voice or text behavior. Publish anyway?"
+            self.confirm_open = True
             return
         graph = {
             key: copy.deepcopy(value)
             for key, value in self._revision.items()
             if key in GRAPH_FIELDS and key != "conversationSettings"
         }
-        graph["schemaVersion"] = "2.1.0"
-        settings = chosen(values, self._defaults)
+        # The server writes 2.2.0 only when a 2.2.0 field remains; otherwise the stored version.
+        graph["schemaVersion"] = self._revision.get("schemaVersion", "2.1.0")
+        others = {
+            key: value
+            for key, value in stored.items()
+            if key not in {"voice", "maxOutputTokens", "idleTimeoutSeconds"}
+        }
+        settings = with_quiet(
+            chosen(values, self._defaults) | publishable(self._overrides, others), self._quiet
+        )
         if settings:
             graph["conversationSettings"] = settings
         self.busy = True
@@ -200,11 +352,15 @@ class SettingsState(rx.State):
                 "PUT",
                 graph=graph,
                 etag=self._etag,
+                headers={CONFIRMATION_HEADER: "confirmed"} if confirmed else None,
             )
             if response.status_code == 200:
                 self._revision = response.json()
                 self._etag = response.headers["ETag"]
                 self.dirty, self.notice_revision = False, 0
+                self._overrides = text_overrides(self._revision.get("conversationSettings") or {})
+                self._quiet = stored_quiet(self._revision.get("conversationSettings") or {})
+                self._show_texts()
                 self.message = (
                     f"Published revision {self._revision.get('revisionNumber', '')}. "
                     "The settings apply to conversations started from now on; "
@@ -221,8 +377,12 @@ class SettingsState(rx.State):
                 refused = dict(self.field_errors)
                 for item in response.json().get("errors", []):
                     field = str(item.get("path", "")).rpartition(".")[2]
-                    if field in values:
-                        refused[field] = "This value is not allowed."
+                    if field in values or field in self._overrides:
+                        refused[field] = (
+                            "This text is too long."
+                            if item.get("code") == "configuration_text_too_large"
+                            else "This value is not allowed."
+                        )
                 self.field_errors = refused
                 self.message = "Publishing refused."
         except Exception:

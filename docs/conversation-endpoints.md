@@ -107,6 +107,32 @@ when a live code is unmapped.
 The caller never sends history. A request with a `history` field or any other unknown field fails
 with `invalid_request`. `text` must be non-blank and at most 4,096 bytes.
 
+**Open request (greeting).** A request without `text` and without `conversationId` starts a new
+conversation whose first reply is the Welcome agent's greeting. The greeting has 4 seconds; if it
+is not ready by then, the fixed fallback "Hello and welcome! How can I help you today?" is sent
+instead. The greeting is stored as the conversation's first assistant turn, so a follow-up with
+the returned `conversationId` continues after it. A `conversationId` without `text` is
+`invalid_request`. A request with `text` and no `conversationId` still starts a conversation
+without a greeting, for backward compatibility. The management relay sends the open request
+first, so a message typed before the greeting appears is answered right after it.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant M as Management relay
+    participant R as Runtime
+    participant W as Welcome agent (text model)
+    B->>M: start (text)
+    M->>R: POST open request (no text)
+    R->>W: greeting request (4 s)
+    W-->>R: greeting text, or timeout
+    R-->>M: conversation, text.delta (greeting or fallback), text.completed
+    M-->>B: text.delta, text.completed
+    B->>M: text.submit
+    M->>R: POST text + conversationId
+    R-->>M: progress*, text.delta*, text.completed
+```
+
 A failure before the first event is a plain JSON error with the HTTP status above. Otherwise the
 response is `200` with `Content-Type: text/event-stream` and `Cache-Control: no-store`:
 
@@ -124,6 +150,27 @@ data: {"messageId": "m1", "text": ""}
 `text.delta` events carry the reply in order; `text.completed` ends the turn and carries an empty
 `text`. A failure after the stream has started is one final `event: error` with
 `data: {"code": "...", "reason": "..."}`, then the stream ends. One request is one turn.
+
+During a turn the stream may also carry progress updates that the agent reports with its
+`report_progress` tool:
+
+```text
+event: progress
+data: {"messageId": "m3", "state": "still_working", "text": "Checking the order status."}
+```
+
+`state` is one of `still_working`, `waiting_for_input`, `completed`, `failed` and
+`cancellation_confirmed`; `text` is 1 to 200 characters of plain text. Updates are rate-limited
+(one per state change, and a repeated `still_working` at most every 10 seconds) and an update for
+work that is no longer current is dropped. The final and waiting states are stored in history as
+`Status (<state>): <message>`. Progress never replaces `text.completed`: a turn still ends with
+`text.completed` or `error`, and clients that do not know `progress` must ignore it.
+
+The management relay also sends the browser a `text.formatted` message after `text.completed`
+when the reply contains Markdown structure: an allowlisted node tree (paragraphs, headings,
+lists, quotes, code, tables, emphasis, line breaks, links and images) that the Test page renders
+with `createElement` and `textContent` only. Links and images keep their URL only when it is
+`https:`; anything else keeps the plain-text row.
 
 ### Stored history
 
@@ -162,7 +209,7 @@ bounds and the audio format `pcm16le`, 24 kHz, mono) and starts sending `audio.c
 |-----------|----------|
 | Client to server (text frames, each with `sequence` and `sessionId`) | `input.mute`, `output.interrupt`, `audio.played`, `ping`, `pong`, `stop` |
 | Client to server (binary frames) | 9-byte header (version, generation, sequence) plus up to 1,920 bytes of PCM |
-| Server to client (text frames) | `ready`, `audio.credit`, `transcript.delta`, `generation.changed`, `agent.changed`, `command.ack`, `ping`, `pong`, `error`, `ended` |
+| Server to client (text frames) | `ready`, `audio.credit`, `transcript.delta`, `generation.changed`, `agent.changed`, `progress`, `command.ack`, `ping`, `pong`, `error`, `ended` |
 | Server to client (binary frames) | the same 9-byte header plus up to 960 bytes of PCM |
 
 Text submission is not part of the voice protocol. Any failure sends one `error` message
@@ -170,6 +217,56 @@ Text submission is not part of the voice protocol. Any failure sends one `error`
 normal `stop` ends with `ended` (`cleanupStatus` is `complete` once the slot is released) and
 close code 1000. Voice sessions store nothing; audio, transcripts and provider bodies stay
 volatile and are disposed when the session closes.
+
+### Speaking model and working agents
+
+The model that speaks with the caller (GPT-Live) gets the **voice conversation instructions**
+(`conversationSettings.voiceInstructions`, or the shipped default) plus a fixed delegation
+suffix. It never receives an agent's prompt, platform rules, global prompt or addition; the
+working agents get those (see [configuration guide](configuration-guide.md#settings-page)).
+
+- **Greeting.** After `ready` the Welcome agent writes the greeting text (low reasoning effort,
+  at most 256 output tokens, no tools). The runtime sends it as `session.commentary.append` with
+  `delegation_id: null`, in parts of at most 500 bytes. If no text arrives within 5 seconds the
+  request is cancelled and nothing is spoken late; `session.input` stays empty. If the caller
+  speaks or a delegation arrives first, the greeting is skipped.
+- **Context note.** After every `session.started` (session start and every agent change) the
+  runtime sends a quiet `session.thinking.append` with `delegation_id: null`: the active agent as
+  `<name> (<role>)` and `Communities you can route to:` with one `<name>: <description>` line per
+  reachable community (descriptions cut to 160 characters). The note is at most 2,000 bytes, in
+  parts of at most 500 bytes, and ends with `…and N more communities` when it runs over.
+- **Quiet handover.** On each `session.delegation.created` the runtime sends
+  `Request received; the application is working on it.` as `session.thinking.append` with that
+  delegation id, before backend work starts. `conversationSettings.quietHandover: false`
+  switches it off; a missing value means on.
+- **Spoken parts.** A spoken reply is sent in parts of at most 500 bytes, each after the
+  previous part's `.appended` acknowledgement or 2 seconds. When the caller speaks or a new
+  delegation arrives, the parts not yet sent are dropped and summarized in one quiet note (at
+  most 1,500 bytes, at most three parts).
+- **Progress.** An agent's `report_progress` update is sent as `session.commentary.append` with
+  the delegation id (parts of at most 500 bytes) and to the client as a `progress` control event
+  (`state`, `text`). The fixed line "I could not finish that, please try again." is spoken only
+  when the work fails without a reported final state.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant R as Runtime
+    participant L as GPT-Live
+    participant W as Welcome agent (text model)
+    B->>R: authenticate
+    R->>L: session.start (voice instructions, session.input [])
+    L-->>R: session.started
+    R->>L: session.thinking.append (context note parts)
+    R-->>B: ready
+    R->>W: greeting request (5 s)
+    W-->>R: greeting text
+    R->>L: session.commentary.append (delegation_id null, greeting parts)
+    L-->>B: greeting audio (via runtime)
+    L-->>R: session.delegation.created
+    R->>L: session.thinking.append (quiet handover)
+    R->>L: session.commentary.append (progress, reply parts)
+```
 
 ## Status endpoint
 

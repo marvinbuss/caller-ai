@@ -223,7 +223,16 @@ test_signer = TestPermitSigner(
     utc_now=lambda: datetime.now(UTC),
     max_clock_skew_seconds=0.1,
 )
-api.state.test_console_services = ConsoleServices(guard=guard, test_role=test_role)
+
+
+async def active_settings():
+    publication = await repository.read_active()
+    return dict((publication[0] if publication else {}).get("conversationSettings") or {})
+
+
+api.state.test_console_services = ConsoleServices(
+    guard=guard, test_role=test_role, active_settings=active_settings
+)
 
 
 class FixtureWorkload:

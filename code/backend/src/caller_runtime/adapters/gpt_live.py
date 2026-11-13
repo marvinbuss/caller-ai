@@ -114,7 +114,12 @@ class GptLiveProtocol:
         }
 
     def context_event(
-        self, delegation_id: str | None, content: str, *, quiet: bool = False
+        self,
+        delegation_id: str | None,
+        content: str,
+        *,
+        quiet: bool = False,
+        event_id: str | None = None,
     ) -> dict[str, Any]:
         if (
             self.provider_session_id is None
@@ -124,13 +129,21 @@ class GptLiveProtocol:
             or not content.strip()
             or len(content.encode("utf-8")) > 500
             or type(quiet) is not bool
+            or (
+                event_id is not None
+                and (not isinstance(event_id, str) or not IDENTIFIER.fullmatch(event_id))
+            )
         ):
             raise ValueError("invalid_live_context")
-        return {
+        event: dict[str, Any] = {
             "type": "session.thinking.append" if quiet else "session.commentary.append",
             "delegation_id": delegation_id,
             "content": content,
         }
+        if event_id is not None:
+            # The provider echoes it as `client_event_id` in the matching `.appended` event.
+            event["event_id"] = event_id
+        return event
 
     def accept(self, raw: str | bytes) -> dict[str, Any]:
         try:
@@ -518,6 +531,8 @@ class GptLiveSession:
         self._transport_disposed = False
         self._retired = False
         self._muted = False
+        # Context appends waiting for their `.appended` event, keyed by client event id.
+        self._acks: dict[str, asyncio.Event] = {}
 
     @property
     def provider_session_id(self) -> str:
@@ -544,6 +559,10 @@ class GptLiveSession:
                     raise PermissionError("live_closure_unverified")
                 return {"type": "session.closed"}
             event = self.protocol.accept(await self._socket.recv())
+            if event["type"] in {"session.thinking.appended", "session.commentary.appended"}:
+                waiter = self._acks.get(str(event.get("client_event_id", "")))
+                if waiter is not None:
+                    waiter.set()
             if self.adapter._telemetry is not None and event["type"] in {
                 "session.usage.updated",
                 "session.closed",
@@ -636,17 +655,43 @@ class GptLiveSession:
         *,
         quiet: bool = False,
         work: WorkBudget | None = None,
+        event_id: str | None = None,
     ) -> None:
         try:
             if work is not None:
                 work.require(utc(self.adapter.utc_now()))
-            event = self.protocol.context_event(delegation_id, content, quiet=quiet)
+            event = self.protocol.context_event(
+                delegation_id, content, quiet=quiet, event_id=event_id
+            )
             await self.adapter.admission.check_output(
                 self.intent.session_id, self.intent.owner_epoch, generation=self.intent.generation
             )
+            if event_id is not None:
+                if len(self._acks) >= 16:
+                    raise PermissionError("live_context_busy")
+                self._acks[event_id] = asyncio.Event()
             await self._send(event)
         except Exception:
+            if event_id is not None:
+                self._acks.pop(event_id, None)
             raise PermissionError("live_context_unavailable") from None
+
+    async def acknowledged(self, event_id: str, *, within: float = 2.0) -> bool:
+        """Wait for the `.appended` event of one append; `False` after `within` seconds without it.
+
+        The acknowledgement only means the provider took the text; it never means it was spoken.
+        """
+        waiter = self._acks.get(event_id)
+        if waiter is None:
+            return False
+        try:
+            async with asyncio.timeout(within):
+                await waiter.wait()
+            return True
+        except TimeoutError:
+            return False
+        finally:
+            self._acks.pop(event_id, None)
 
     async def next_event(self) -> dict[str, Any]:
         if self.protocol.closed or self._disposed or self._retired:

@@ -12,6 +12,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from management_app.adapters.configuration_repository import Document, Publication, graph_document
 from management_app.models.configuration import ConfigurationGraph
+from management_app.services import default_prompts
 
 
 class BootstrapRepository(Protocol):
@@ -32,9 +33,9 @@ def protected_graph() -> Document:
         for role in roles
     }
     prompts = {
-        "welcome": "Introduce the service and continue to Routing.",
-        "routing": "Select an enabled business community entry from approved routing metadata.",
-        "goodbye": "Give a concise farewell and end the call.",
+        "welcome": default_prompts.WELCOME_PROMPT,
+        "routing": default_prompts.ROUTING_PROMPT,
+        "goodbye": default_prompts.GOODBYE_PROMPT,
     }
     return {
         "schemaVersion": "2.1.0",

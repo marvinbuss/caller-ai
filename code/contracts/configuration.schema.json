@@ -51,6 +51,30 @@
           },
           "title": "Capabilityassignments",
           "type": "array"
+        },
+        "voiceAddition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voiceaddition"
+        },
+        "textAddition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Textaddition"
         }
       },
       "required": [
@@ -224,7 +248,7 @@
     },
     "ConversationSettings": {
       "additionalProperties": false,
-      "description": "Per-conversation values; an absent field means the runtime's environment default.",
+      "description": "Per-conversation values; an absent field means the runtime's environment default, or for\nthe 2.2.0 text fields and `quietHandover` the shipped default.",
       "properties": {
         "voice": {
           "anyOf": [
@@ -266,6 +290,78 @@
           ],
           "default": null,
           "title": "Idletimeoutseconds"
+        },
+        "voiceInstructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voiceinstructions"
+        },
+        "voicePlatformRules": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voiceplatformrules"
+        },
+        "voiceGlobalPrompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voiceglobalprompt"
+        },
+        "textPlatformRules": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Textplatformrules"
+        },
+        "textGlobalPrompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Textglobalprompt"
+        },
+        "quietHandover": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quiethandover"
         }
       },
       "title": "ConversationSettings",
@@ -597,7 +693,8 @@
     "schemaVersion": {
       "enum": [
         "2.0.0",
-        "2.1.0"
+        "2.1.0",
+        "2.2.0"
       ],
       "title": "Schemaversion",
       "type": "string"

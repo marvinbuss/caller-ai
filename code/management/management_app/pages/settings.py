@@ -1,18 +1,24 @@
 """Settings page at `/settings` (editor role), inside the authenticated frame.
 
-Voice, text and service settings grouped by topic. Only the voice, the reply length limit and the
-idle timeout are editable; they have their own draft and publish on top of the active revision.
+Voice, text and service settings grouped by topic. The voice, the reply length limit, the idle
+timeout and the voice and text instructions, platform rules and global prompts are editable; they
+have their own draft and publish on top of the active revision. Changed platform rules or voice
+instructions publish only after the confirmation dialog.
 """
 
 from typing import Any, cast
 
 import reflex as rx
+from reflex.event import EventHandler
 
 from management_app.components.configuration_graph import Interval
 from management_app.components.frame import frame, page_content
 from management_app.pages.community_agent import NOTICE_SECONDS
 from management_app.state.settings import IDLE_RANGE, SettingsState
 from management_app.theme import COLORS
+
+SET_TEXT = cast(EventHandler, SettingsState.set_text)
+RESTORE_TEXT = cast(EventHandler, SettingsState.restore_text)
 
 
 def _field_error(field: str) -> rx.Component:
@@ -73,6 +79,100 @@ def _number(label: str, field: str, value: Any, on_change: Any, note: Any) -> rx
             _field_error(field),
             spacing="1",
             width="100%",
+        ),
+    )
+
+
+def _text(field: str, label: str, help_text: str) -> rx.Component:
+    """One editable modality text: byte counter, default marker and Restore default."""
+    texts = cast(Any, SettingsState.texts)
+    return cast(
+        rx.Component,
+        rx.vstack(
+            rx.hstack(
+                rx.el.label(label, html_for=f"settings-{field}", font_weight="500"),
+                rx.cond(
+                    cast(Any, SettingsState.defaulted)[field],
+                    rx.badge("Default", color_scheme="gray"),
+                ),
+                align="center",
+                spacing="2",
+            ),
+            rx.debounce_input(
+                rx.el.textarea(
+                    id=f"settings-{field}",
+                    value=texts[field].to(str),
+                    on_change=SET_TEXT(field),
+                    read_only=SettingsState.read_only,
+                    rows=6,
+                    aria_describedby=f"settings-{field}-help settings-{field}-bytes",
+                    class_name="caller-input",
+                    width="100%",
+                    resize="vertical",
+                ),
+                debounce_timeout=200,
+                force_notify_on_blur=True,
+            ),
+            rx.hstack(
+                rx.text(
+                    help_text, id=f"settings-{field}-help", size="2", color=COLORS["text-muted"]
+                ),
+                rx.spacer(),
+                rx.text(
+                    cast(Any, SettingsState.text_bytes)[field].to(str),
+                    id=f"settings-{field}-bytes",
+                    size="2",
+                    color=COLORS["text-muted"],
+                    data_testid=f"settings-bytes-{field}",
+                ),
+                rx.button(
+                    "Restore default",
+                    type="button",
+                    variant="soft",
+                    size="1",
+                    aria_label=f"Restore default {label.lower()}",
+                    on_click=RESTORE_TEXT(field),
+                    disabled=SettingsState.read_only,
+                ),
+                align="center",
+                width="100%",
+                wrap="wrap",
+            ),
+            _field_error(field),
+            spacing="1",
+            width="100%",
+        ),
+    )
+
+
+def _confirmation() -> rx.Component:
+    return cast(
+        rx.Component,
+        rx.alert_dialog.root(
+            rx.alert_dialog.content(
+                rx.alert_dialog.title("Publish changed platform rules?"),
+                rx.alert_dialog.description(
+                    "This can break voice or text behavior. Publish anyway?"
+                ),
+                rx.flex(
+                    rx.alert_dialog.cancel(
+                        rx.button(
+                            "Cancel", variant="soft", on_click=SettingsState.cancel_confirmation
+                        )
+                    ),
+                    rx.alert_dialog.action(
+                        rx.button(
+                            "Publish anyway",
+                            color_scheme="red",
+                            on_click=SettingsState.publish_confirmed,
+                        )
+                    ),
+                    justify="end",
+                    gap="10px",
+                    margin_top="20px",
+                ),
+            ),
+            open=SettingsState.confirm_open,
         ),
     )
 
@@ -168,6 +268,64 @@ def settings_content() -> rx.Component:
                                 f"Integer, {IDLE_RANGE[0]} to {IDLE_RANGE[1]}. A conversation "
                                 "ends after this long without the caller speaking or writing.",
                             ),
+                            _text(
+                                "voiceInstructions",
+                                "Voice conversation instructions",
+                                "Guide the model that speaks with the caller. It never sees the "
+                                "agents' instructions.",
+                            ),
+                            _text(
+                                "voicePlatformRules",
+                                "Voice platform rules",
+                                "Added first to every agent's instructions in voice conversations.",
+                            ),
+                            _text(
+                                "voiceGlobalPrompt",
+                                "Voice global prompt",
+                                "Added after the platform rules for every agent in voice "
+                                "conversations.",
+                            ),
+                            rx.hstack(
+                                rx.el.label(
+                                    rx.el.input(
+                                        type="checkbox",
+                                        role="switch",
+                                        id="settings-quietHandover",
+                                        checked=SettingsState.quiet_handover,
+                                        on_change=SettingsState.set_quiet_handover,
+                                        disabled=SettingsState.read_only,
+                                        aria_describedby="settings-quietHandover-help",
+                                    ),
+                                    "Quiet update on handover",
+                                    display="flex",
+                                    align_items="center",
+                                    gap="8px",
+                                    font_weight="500",
+                                ),
+                                rx.cond(
+                                    SettingsState.quiet_default,
+                                    rx.badge("Default", color_scheme="gray"),
+                                ),
+                                rx.spacer(),
+                                rx.button(
+                                    "Restore default",
+                                    type="button",
+                                    variant="soft",
+                                    size="1",
+                                    aria_label="Restore default quiet update on handover",
+                                    on_click=SettingsState.restore_quiet_handover,
+                                    disabled=SettingsState.read_only,
+                                ),
+                                align="center",
+                                width="100%",
+                            ),
+                            rx.text(
+                                "When on, the speaking model gets a short silent note that "
+                                "the work started each time it hands a request to the agents.",
+                                id="settings-quietHandover-help",
+                                size="2",
+                                color=COLORS["text-muted"],
+                            ),
                         ),
                         _section(
                             "Text",
@@ -177,6 +335,17 @@ def settings_content() -> rx.Component:
                                 SettingsState.max_tokens,
                                 SettingsState.set_max_tokens,
                                 SettingsState.tokens_note,
+                            ),
+                            _text(
+                                "textPlatformRules",
+                                "Text platform rules",
+                                "Added first to every agent's instructions in text conversations.",
+                            ),
+                            _text(
+                                "textGlobalPrompt",
+                                "Text global prompt",
+                                "Added after the platform rules for every agent in text "
+                                "conversations.",
                             ),
                         ),
                         _section(
@@ -206,6 +375,7 @@ def settings_content() -> rx.Component:
                             align="center",
                             spacing="3",
                         ),
+                        _confirmation(),
                         spacing="4",
                         width="100%",
                     ),

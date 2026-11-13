@@ -35,15 +35,28 @@ from management_app.adapters.relay_frames import RelayLimit, parse_control
 from management_app.models.test_session import StartPermit, utc
 from management_app.observability import Telemetry
 from management_app.security import ServerSession
+from management_app.services.formatted_text import to_tree
 
 MAX_REPLY_BYTES = 64 * 1024
 MAX_TEXT_BYTES = 4096
 MAX_LINE_BYTES = 8192
+# A `text.formatted` message carries the whole reply's tree; the browser accepts it up to this size.
+MAX_FORMATTED_BYTES = 192 * 1024
 MAX_QUEUED_TURNS = 2
 TURN_SECONDS = 30
 SESSION_SECONDS = 600
 IDLE_SECONDS = 120
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+PROGRESS_STATES = frozenset(
+    {"still_working", "waiting_for_input", "completed", "failed", "cancellation_confirmed"}
+)
+
+
+def valid_progress(state: Any, text: Any) -> bool:
+    """A progress update has a known state and 1-200 characters of text."""
+    return state in PROGRESS_STATES and isinstance(text, str) and 1 <= len(text) <= 200
+
+
 BOUNDS = {
     "controlBytes": 8192,
     "textBytes": 4096,
@@ -199,7 +212,23 @@ class TextRelay:
                 fields["reason"] = error.reason
             await send("error", **fields)
 
-        async def turn(text: str) -> None:
+        async def formatted(message_id: str, text: str) -> None:
+            """Send the reply's allowlisted tree once; without one the plain-text row stays."""
+            tree = to_tree(text) if text.strip() else None
+            if tree is None or (
+                # A single plain paragraph looks the same as the plain-text row already shown.
+                len(tree["children"]) == 1
+                and isinstance(tree["children"][0], dict)
+                and tree["children"][0]["type"] == "p"
+                and all(isinstance(child, str) for child in tree["children"][0]["children"])
+            ):
+                return
+            size = len(json.dumps(tree, separators=(",", ":")).encode("utf-8"))
+            if size > MAX_FORMATTED_BYTES - 256:
+                return
+            await send("text.formatted", messageId=message_id, tree=tree)
+
+        async def turn(text: str | None) -> None:
             nonlocal conversation_id
             current()
             token = await self._credential.get_token(f"api://{self._audience}/.default")
@@ -236,6 +265,7 @@ class TextRelay:
                         except ValueError:
                             raise TurnFailure("internal_error", None) from None
                     reply = 0
+                    texts: dict[str, list[str]] = {}
                     async for kind, data in events(response):
                         current()
                         if kind == "conversation":
@@ -261,6 +291,11 @@ class TextRelay:
                             if reply > MAX_REPLY_BYTES:
                                 raise PermissionError("test_reply_limit")
                             await send(kind, **data)
+                            texts.setdefault(data["messageId"], []).append(data["text"])
+                            if kind == "text.completed":
+                                await formatted(
+                                    data["messageId"], "".join(texts.pop(data["messageId"]))
+                                )
                         elif kind == "agent.changed":
                             if not isinstance(data, dict) or set(data) != {
                                 "agentId",
@@ -268,25 +303,39 @@ class TextRelay:
                             }:
                                 raise PermissionError("invalid_test_control")
                             await send(kind, **data)
+                        elif kind == "progress":
+                            if (
+                                not isinstance(data, dict)
+                                or set(data) != {"messageId", "state", "text"}
+                                or not isinstance(data["messageId"], str)
+                                or IDENTIFIER.fullmatch(data["messageId"]) is None
+                                or not valid_progress(data["state"], data["text"])
+                            ):
+                                raise PermissionError("invalid_test_control")
+                            await send(kind, **data)
                         elif kind == "error":
                             raise public_failure(data)
                         else:
                             raise PermissionError("invalid_test_control")
 
+        async def attempt(text: str | None) -> None:
+            try:
+                async with asyncio.timeout(TURN_SECONDS + 5):
+                    await turn(text)
+            except TurnFailure as error:
+                await failure(error)
+            except (TimeoutError, httpx.HTTPError):
+                await failure(TurnFailure("upstream_unavailable", "runtime_unavailable"))
+
         async def worker() -> None:
-            while True:
+            # The open request comes first, so the greeting precedes any early user message,
+            # which waits in the queue and is answered right after it.
+            await attempt(None)
+            while not ended.is_set():
                 text = await queue.get()
                 if text is None:
                     return
-                try:
-                    async with asyncio.timeout(TURN_SECONDS + 5):
-                        await turn(text)
-                except TurnFailure as error:
-                    await failure(error)
-                except (TimeoutError, httpx.HTTPError):
-                    await failure(TurnFailure("upstream_unavailable", "runtime_unavailable"))
-                if ended.is_set():
-                    return
+                await attempt(text)
 
         async def reader() -> None:
             nonlocal client_sequence

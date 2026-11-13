@@ -76,8 +76,12 @@ def compose_request(
             | extra,
         )
     if text is None:
-        raise ValueError("invalid_backend_request")
-    body: dict[str, Any] = {"permit": signed_permit, "requestId": request_id, "text": text}
+        # The open request: no text and no conversation; the backend answers with the greeting.
+        if conversation_id is not None:
+            raise ValueError("invalid_backend_request")
+        body: dict[str, Any] = {"permit": signed_permit, "requestId": request_id}
+    else:
+        body = {"permit": signed_permit, "requestId": request_id, "text": text}
     if conversation_id is not None:
         body["conversationId"] = conversation_id
     return BackendRequest(
