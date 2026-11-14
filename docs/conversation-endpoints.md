@@ -212,6 +212,13 @@ bounds and the audio format `pcm16le`, 24 kHz, mono) and starts sending `audio.c
 | Server to client (text frames) | `ready`, `audio.credit`, `transcript.delta`, `generation.changed`, `agent.changed`, `progress`, `command.ack`, `ping`, `pong`, `error`, `ended` |
 | Server to client (binary frames) | the same 9-byte header plus up to 960 bytes of PCM |
 
+Each output segment has a generation. Retiring a segment sends `generation.changed`; an agent
+change sends `agent.changed` with the new segment's generation before any credit, audio or
+transcript of that generation. No `audio.credit` is sent while a new segment starts. Capture
+frames, `audio.played` and `output.interrupt` of an older generation that were still on the wire
+are dropped or ignored (an interrupt is still acknowledged); a newer generation than the
+server's is refused as `stale_generation`. The management relay applies the same rule.
+
 Text submission is not part of the voice protocol. Any failure sends one `error` message
 (`{"type": "error", "code": "...", "reason": "..."}`) and closes with the matching 4xxx code. A
 normal `stop` ends with `ended` (`cleanupStatus` is `complete` once the slot is released) and

@@ -7,6 +7,7 @@ speech session and continuing on a new generation; a failed continuation fails t
 """
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -20,6 +21,7 @@ from caller_runtime.services.speech_parts import split_reply
 
 CONTEXT_NOTE_BYTES = 2000
 DESCRIPTION_CHARS = 160
+DIRECTORY_DESCRIPTION_CHARS = 1000
 
 
 def context_note(snapshot: RevisionSnapshot, slot: TestSlot) -> list[str]:
@@ -105,6 +107,33 @@ class ConversationPolicy:
         """Return the slot once any transition this policy is applying has finished."""
         async with self._lock:
             return self.slot
+
+    def routing_directory(self) -> str | None:
+        """Directory metadata for the active Routing agent: the communities `route` accepts now,
+        as JSON with ids, names and routing descriptions cut to 1,000 characters. `None` for any
+        other role. It grants nothing; `route` rechecks every choice."""
+        if self._agents[self.active_agent_id]["role"] != "routing":
+            return None
+        communities = self.visibility.view_for(self.active_agent_id)["communities"]
+        if self.active_community_id is not None:
+            communities = [
+                community
+                for community in self.snapshot.for_runtime()["communities"]
+                if community["communityId"] == self._pending_destination
+            ]
+        entries = [
+            {
+                "communityId": community["communityId"],
+                "name": community["name"],
+                "routingDescription": community["routingDescription"][:DIRECTORY_DESCRIPTION_CHARS],
+            }
+            for community in communities
+        ]
+        return (
+            "Communities you can route to (JSON). Call `route_community` with one communityId; "
+            "never tell the user an id:\n"
+            + json.dumps(entries, ensure_ascii=False, separators=(",", ":"))
+        )
 
     def _source(
         self, agent_id: str | None = None, agent_epoch: int | None = None
@@ -319,6 +348,12 @@ class SpeechSegments:
             raise PermissionError("live_unavailable")
         return self._current
 
+    @property
+    def starting(self) -> bool:
+        """True between retiring a segment and the next one starting, when no capture can be
+        forwarded."""
+        return self._current is None and not self._failed
+
     async def send_context(
         self, segment: GptLiveSession, slot: TestSlot, work: WorkBudget | None = None
     ) -> None:
@@ -390,6 +425,16 @@ class SpeechSegments:
             self._confirmed = None
             try:
                 work.require(self._adapter.utc_now())
+                if slot.agent_epoch != fenced.agent_epoch:
+                    # Credits and audio of the new generation must not reach the client first.
+                    await self._emit(
+                        {
+                            "type": "agent.changed",
+                            "agentId": slot.active_agent_id,
+                            "communityId": slot.active_community_id,
+                            "generation": slot.generation,
+                        }
+                    )
                 self._current = await self._adapter.start(
                     slot, instructions=self._instructions_for(slot), work=work
                 )

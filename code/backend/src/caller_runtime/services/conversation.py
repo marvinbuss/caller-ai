@@ -873,6 +873,9 @@ class ConversationExecutor:
                 )
                 agent = registry[slot.active_agent_id]
                 agent.tool_use_behavior = "stop_on_first_tool"
+                directory = self.policy.routing_directory()
+                if directory is not None:
+                    agent.instructions = f"{agent.instructions}\n\n{directory}"
                 if self._context_bytes(inputs) > 256 * 1024:
                     raise PermissionError("conversation_context_limit")
                 run = Runner.run_streamed(
@@ -942,14 +945,16 @@ class ConversationExecutor:
                             if slot.active_community_id is None:
                                 inputs = [{"role": "user", "content": item.text}]
                             self._history = []
-                            await emit(
-                                {
-                                    "type": "agent.changed",
-                                    "agentId": self.policy.active_agent_id,
-                                    "communityId": self.policy.active_community_id,
-                                    "generation": self.policy.slot.generation,
-                                }
-                            )
+                            if slot.mode == "text":
+                                # Speech announces the change when its new segment starts.
+                                await emit(
+                                    {
+                                        "type": "agent.changed",
+                                        "agentId": self.policy.active_agent_id,
+                                        "communityId": self.policy.active_community_id,
+                                        "generation": self.policy.slot.generation,
+                                    }
+                                )
                         else:
                             inputs = run.to_input_list()
                         continue

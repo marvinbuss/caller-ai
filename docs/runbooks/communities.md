@@ -55,7 +55,10 @@ Routing receives only enabled community IDs, names, routing descriptions and eli
 references. Welcome and Goodbye have no discovery directories. Shared lifecycle identities
 are resolved by trusted code, not by unrestricted model discovery.
 
-Directory information is included as JSON metadata in the receiving SDK instructions. It is
+Directory information is included as JSON metadata in the receiving SDK instructions. Routing's
+instructions end with the communities `route_community` accepts at that moment (ID, name and
+routing description cut to 1,000 characters): every enabled, routable community with an enabled
+entry, or only the pending destination during a cross-community transfer. It is
 not authority: trusted code rechecks role, enabled state, community membership, entry identity
 and the pinned source-to-target relationship before preparing a receiver. Guessed foreign IDs
 fail before any model connection. Ordinary agents cannot directly target foreign ordinary
