@@ -313,7 +313,9 @@ logs `test.latency` with `backend_first_text_seconds` and `work_seconds`.
 
 Speech delegations and the clarity check of speech fragments ask the text deployment for low
 reasoning effort, because the caller waits in silence; text turns keep the deployment default. A
-speech delegation has 30 seconds of work budget (text turns and admission keep 10 seconds).
+speech delegation has 30 seconds of work budget, a text turn 20 seconds for all its model rounds
+(agent changes and progress updates included), and admission 10 seconds. The management relay
+waits at most 35 seconds for a whole text turn.
 
 ## Provider constraints
 

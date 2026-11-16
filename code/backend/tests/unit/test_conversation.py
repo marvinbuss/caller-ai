@@ -378,7 +378,7 @@ def test_work_queue_keeps_acceptance_deadline_duplicates_and_one_pending(admissi
         first = queue.accept(slot, task_id="text-1", text="Synthetic first", now=clock.utc_now())
         assert (
             not first.duplicate
-            and first.receipt.work.work_deadline_utc == clock.utc_now() + timedelta(seconds=10)
+            and first.receipt.work.work_deadline_utc == clock.utc_now() + timedelta(seconds=20)
         )
         executing = queue.take(now=clock.utc_now())
         clock.advance(3)
@@ -394,7 +394,7 @@ def test_work_queue_keeps_acceptance_deadline_duplicates_and_one_pending(admissi
         with pytest.raises(PermissionError, match="work_step_limit"):
             executing.step(clock.utc_now())
         queue.finish(first.receipt)
-        clock.advance(10)
+        clock.advance(20)
         with pytest.raises(PermissionError, match="work_deadline_exceeded"):
             queue.take(now=clock.utc_now())
         assert second.receipt.work.work_deadline_utc <= clock.utc_now()
@@ -627,7 +627,7 @@ def test_text_executor_streams_real_sdk_reply_without_live_and_bounds_complete_r
         controls["oversized"] = oversized
         clock.advance(60)
         accepted = await controller.submit_text("text-1", "Synthetic user question")
-        assert accepted.receipt.work.work_deadline_utc == clock.utc_now() + timedelta(seconds=10)
+        assert accepted.receipt.work.work_deadline_utc == clock.utc_now() + timedelta(seconds=20)
         await controller.process_next(emit=emit)
         assert len(requests) == 1
         expected = modality_defaults.TEXT_PLATFORM_RULES + "\n\nSynthetic prompt for b-entry"
@@ -1546,7 +1546,7 @@ def test_failed_work_keeps_session_and_never_dispatches_expired_queue(
         await asyncio.wait_for(entered.wait(), 1)
         clock.advance(1)
         await controller.submit_text("text-pending", "Synthetic pending volatile input")
-        clock.advance(11)
+        clock.advance(21)
         release.set()
         await processing
         assert len(requests) == 1 and not any(

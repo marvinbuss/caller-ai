@@ -17,9 +17,12 @@ Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Mode = Literal["text", "speech"]
 ResourceKind = Literal["model", "capability", "live"]
-# Admission, readiness and text turns get 10 s; a speech delegation gets a longer, configurable
-# budget (default 30 s, never above 60 s) because the caller hears a holding line meanwhile.
+# Admission and readiness get 10 s. A text turn gets 20 s for its model rounds (agent changes and
+# progress updates add rounds) and still fits the management relay's 35 s per turn with admission.
+# A speech delegation gets a longer, configurable budget (default 30 s, never above 60 s) because
+# the caller hears a holding line meanwhile.
 WORK_SECONDS = 10
+TEXT_WORK_SECONDS = 20
 SPEECH_WORK_SECONDS = 30
 MAX_WORK_SECONDS = 60
 

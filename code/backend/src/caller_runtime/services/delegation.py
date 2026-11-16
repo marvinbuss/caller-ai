@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from caller_runtime.domain.conversation import (
     MAX_WORK_SECONDS,
     SPEECH_WORK_SECONDS,
+    TEXT_WORK_SECONDS,
     WORK_SECONDS,
     TestSlot,
     WorkBudget,
@@ -199,7 +200,7 @@ class DelegationQueue:
         if self._pending is not None:
             raise PermissionError("work_queue_full")
         now = utc(now)
-        seconds = WORK_SECONDS if delegation_id is None else self._speech_work_seconds
+        seconds = TEXT_WORK_SECONDS if delegation_id is None else self._speech_work_seconds
         if (
             slot.terminal_fence
             or slot.ready_at is None
