@@ -541,6 +541,25 @@ def test_relay_binary_credit_and_played_accounting_is_generation_bound_and_conte
     assert frames.from_runtime(changed)
     assert not frames.from_runtime(struct.pack(">BII", 1, 1, 26) + b"\0" * 960)
     assert frames.generation == 2 and frames.capture_bytes == frames.playback_bytes == 0
+    # Capture and acks of generation 1 still on the wire are dropped or ignored, not fatal.
+    assert not frames.from_browser(struct.pack(">BII", 1, 1, 7) + b"\0" * 960)
+    late = json.loads(played) | {"sequence": 2, "audioSequence": 30}
+    assert frames.from_browser(json.dumps(late)) and frames.played_sequence == 0
+    interrupt = {"type": "output.interrupt", "sessionId": "runtime-fixture", "sequence": 3}
+    assert frames.from_browser(json.dumps(interrupt | {"generation": 1}))
+    assert not frames._output_blocked
+    with pytest.raises(PermissionError, match="stale_generation"):
+        frames.from_browser(json.dumps(interrupt | {"sequence": 4, "generation": 3}))
+    # A speech handover announces its own, newer generation with the agent change.
+    agent = {
+        "type": "agent.changed",
+        "sessionId": "runtime-fixture",
+        "sequence": 5,
+        "generation": 3,
+        "agentId": "agent-routing",
+        "communityId": None,
+    }
+    assert frames.from_runtime(json.dumps(agent)) and frames.generation == 3
     frames.clear()
 
 

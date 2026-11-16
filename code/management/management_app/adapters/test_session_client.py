@@ -302,9 +302,9 @@ class TestSessionClient:
                 if message.get("bytes") is not None:
                     current()
                     frame = message["bytes"]
-                    frames.from_browser(frame)
-                    async with asyncio.timeout(1):
-                        await runtime.send(frame)
+                    if frames.from_browser(frame):
+                        async with asyncio.timeout(1):
+                            await runtime.send(frame)
                     continue
                 raw = message.get("text")
                 if not isinstance(raw, str):

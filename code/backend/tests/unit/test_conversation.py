@@ -67,10 +67,24 @@ def test_shared_policy_keeps_source_through_routing_and_denies_stale_epochs(admi
         )
         limits.mark_ready(clock.utc_now())
         work = WorkBudget.accept(limits, clock.utc_now())
+        assert policy.routing_directory() is None
         await policy.enter_routing(work)
+        directory = policy.routing_directory()
+        assert directory is not None
+        assert [entry["communityId"] for entry in json.loads(directory.split("\n", 1)[1])] == [
+            "alpha",
+            "beta",
+        ]
         await policy.route("alpha", work)
+        assert policy.routing_directory() is None
         await policy.transfer_community("beta", work)
         assert policy.active_agent_id == "routing" and policy.active_community_id == "alpha"
+        # A transfer may only complete to its pending destination, so only that one is listed.
+        directory = policy.routing_directory()
+        assert directory is not None
+        assert json.loads(directory.split("\n", 1)[1]) == [
+            {"communityId": "beta", "name": "Beta", "routingDescription": "Synthetic beta routing"}
+        ]
         reconstructed = ConversationPolicy(
             slot=policy.slot, snapshot=cache.pin(), admission=service
         )
@@ -963,11 +977,26 @@ def test_text_executor_runs_initial_welcome_routing_and_exact_entry_on_one_budge
         accepted = await controller.submit_text("text-initial", "Synthetic beta request")
         await controller.process_next(emit=emit)
         assert controller.policy.active_agent_id == "b-entry" and len(requests) == 3
+        directory = (
+            "Communities you can route to (JSON). Call `route_community` with one communityId; "
+            "never tell the user an id:\n"
+            + json.dumps(
+                [
+                    {
+                        "communityId": community,
+                        "name": community.title(),
+                        "routingDescription": "Synthetic " + community + " routing",
+                    }
+                    for community in ("alpha", "beta")
+                ],
+                separators=(",", ":"),
+            )
+        )
         assert [request["instructions"] for request in requests] == [
             modality_defaults.TEXT_PLATFORM_RULES + "\n\n" + prompt
             for prompt in (
                 "Synthetic welcome prompt",
-                "Synthetic routing prompt",
+                "Synthetic routing prompt\n\n" + directory,
                 "Synthetic prompt for b-entry",
             )
         ]
@@ -1031,6 +1060,10 @@ def test_speech_handover_retires_actual_socket_before_any_continuation(
                 await repository.read(deadline=asyncio.get_running_loop().time() + 1)
             ).authority.slots[0]
             assert observed.resources["live"].attempted > observed.resources["live"].settled
+            # Clients learn the new generation before its credits or audio can reach them.
+            assert messages[-1]["type"] == "agent.changed"
+            # No capture credit is granted until the new segment has started.
+            assert segments.starting
             fresh = type(socket)()
             created.append(fresh)
             return fresh
@@ -1075,6 +1108,16 @@ def test_speech_handover_retires_actual_socket_before_any_continuation(
             with pytest.raises(PermissionError):
                 await segment.next_event()
             assert messages[0]["type"] == "generation.changed"
+            assert messages[1:] == [
+                {
+                    "type": "agent.changed",
+                    "agentId": "routing",
+                    "communityId": None,
+                    "generation": policy.slot.generation,
+                }
+            ]
+            assert policy.slot.generation > messages[0]["generation"]
+            assert not segments.starting
             await segments.current.close()
         else:
             with pytest.raises(PermissionError):
@@ -1770,8 +1813,11 @@ def test_audio_flow_bounds_capture_rate_sequences_and_generation_without_idle_fl
     assert flow.input(struct.pack(">BII", 1, 7, 7) + b"\0" * 960)[0] == 7
     with pytest.raises(PermissionError, match="invalid_audio_sequence"):
         flow.input(struct.pack(">BII", 1, 7, 7) + b"\0" * 960)
+    # Capture of a retired generation that was still on the wire is dropped; a newer one fails.
+    assert flow.input(struct.pack(">BII", 1, 6, 8) + b"\0" * 960) is None
     with pytest.raises(PermissionError, match="stale_generation"):
-        flow.input(struct.pack(">BII", 1, 6, 8) + b"\0" * 960)
+        flow.input(struct.pack(">BII", 1, 8, 8) + b"\0" * 960)
+    assert flow.input_sequence == 7
     ticks[0] -= 1
     with pytest.raises(PermissionError, match="audio_clock_invalid"):
         flow.input(struct.pack(">BII", 1, 7, 8) + b"\0" * 960)
@@ -2147,10 +2193,11 @@ def test_wire_rejects_old_played_generation_even_when_audio_sequence_is_reused(
                         "sequence": 1,
                         "sessionId": slot.session_id,
                         "audioSequence": 1,
-                        "generation": 1,
+                        "generation": 3,
                     }
                 )
             )
+        # An ack of generation 1 was on the wire when it was retired; it is taken and ignored.
         assert (
             wire.command(
                 json.dumps(
@@ -2159,6 +2206,20 @@ def test_wire_rejects_old_played_generation_even_when_audio_sequence_is_reused(
                         "sequence": 1,
                         "sessionId": slot.session_id,
                         "audioSequence": 1,
+                        "generation": 1,
+                    }
+                )
+            )[1]
+            is False
+        )
+        assert (
+            wire.command(
+                json.dumps(
+                    {
+                        "type": "audio.played",
+                        "sequence": 2,
+                        "sessionId": slot.session_id,
+                        "audioSequence": 0,
                         "generation": 2,
                     }
                 )

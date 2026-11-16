@@ -79,10 +79,14 @@ class RelayFrames:
         return generation, sequence
 
     def from_browser(self, raw: str | bytes) -> bool:
+        """Account one browser frame; `False` drops capture of a retired generation that was
+        already on the wire when the generation changed."""
         if isinstance(raw, bytes):
             generation, sequence = self._audio(raw)
             if self._muted:
                 raise PermissionError("test_input_muted")
+            if 1 <= generation < self.generation:
+                return False
             if generation != self.generation:
                 raise PermissionError("stale_generation")
             if sequence != self.input_sequence + 1:
@@ -124,20 +128,26 @@ class RelayFrames:
         if sequence != self.client_sequence + 1:
             raise PermissionError("invalid_test_sequence")
         if kind in {"output.interrupt", "audio.played"} and (
-            type(value["generation"]) is not int or value["generation"] != self.generation
+            type(value["generation"]) is not int or not 1 <= value["generation"] <= self.generation
         ):
             raise PermissionError("stale_generation")
         if kind == "audio.played":
             played = value["audioSequence"]
-            if type(played) is not int or not self.played_sequence <= played <= self.sent_sequence:
+            if type(played) is not int or played < 0:
                 raise PermissionError("invalid_played_ack")
-            self.played_sequence = played
-            self._output = {key: count for key, count in self._output.items() if key > played}
+            # An ack of a retired generation was in flight when it changed; it frees nothing.
+            if value["generation"] == self.generation:
+                if not self.played_sequence <= played <= self.sent_sequence:
+                    raise PermissionError("invalid_played_ack")
+                self.played_sequence = played
+                self._output = {key: count for key, count in self._output.items() if key > played}
         elif kind == "input.mute":
             if type(value["muted"]) is not bool:
                 raise PermissionError("invalid_test_control")
             self._muted = value["muted"]
-        elif kind in {"output.interrupt", "stop"}:
+        elif kind == "stop" or (
+            kind == "output.interrupt" and value["generation"] == self.generation
+        ):
             self._output_blocked = True
         elif kind in {"ping", "pong"}:
             if (

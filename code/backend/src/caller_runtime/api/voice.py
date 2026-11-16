@@ -318,7 +318,9 @@ class AudioFlow:
     def pending_bytes(self) -> int:
         return self._pending_bytes
 
-    def input(self, raw: bytes) -> tuple[int, bytes]:
+    def input(self, raw: bytes) -> tuple[int, bytes] | None:
+        """Account one client capture frame; `None` drops a frame of a retired generation that
+        was already on the wire when the generation changed."""
         if not isinstance(raw, bytes) or len(raw) < 11 or (len(raw) - 9) % 2:
             raise PermissionError("invalid_audio_frame")
         if len(raw) - 9 > 1920:
@@ -326,6 +328,8 @@ class AudioFlow:
         protocol, generation, sequence = struct.unpack(">BII", raw[:9])
         if protocol != 1:
             raise PermissionError("invalid_audio_frame")
+        if 1 <= generation < self.generation:
+            return None
         if generation != self.generation:
             raise PermissionError("stale_generation")
         if sequence != self._input_sequence + 1:
@@ -594,11 +598,11 @@ class VoiceWire:
         if kind == "input.mute" and type(value["muted"]) is not bool:
             raise PermissionError("invalid_control")
         if kind == "output.interrupt" and (
-            type(value["generation"]) is not int or value["generation"] != self._generation
+            type(value["generation"]) is not int or not 1 <= value["generation"] <= self._generation
         ):
             raise PermissionError("stale_generation")
         if kind == "audio.played" and (
-            type(value["generation"]) is not int or value["generation"] != self._generation
+            type(value["generation"]) is not int or not 1 <= value["generation"] <= self._generation
         ):
             raise PermissionError("stale_generation")
         if kind == "audio.played" and (
@@ -863,13 +867,16 @@ def create_router(
 
             async def credit() -> None:
                 while True:
-                    await wire.emit(
-                        {
-                            "type": "audio.credit",
-                            "availableSamples": wire.audio.available_samples,
-                            "acceptedAudioSequence": wire.audio.input_sequence,
-                        }
-                    )
+                    segments = session.speech_segments
+                    # No capture credit while a new segment starts: it has nowhere to go yet.
+                    if segments is None or not segments.starting:
+                        await wire.emit(
+                            {
+                                "type": "audio.credit",
+                                "availableSamples": wire.audio.available_samples,
+                                "acceptedAudioSequence": wire.audio.input_sequence,
+                            }
+                        )
                     try:
                         async with asyncio.timeout(0.05):
                             await stopped.wait()
@@ -989,7 +996,10 @@ def create_router(
                     if frame.get("bytes") is not None:
                         if session.speech_segments is None:
                             raise PermissionError("mode_mismatch")
-                        sequence, pcm = wire.audio.input(frame["bytes"])
+                        accepted = wire.audio.input(frame["bytes"])
+                        if accepted is None or session.speech_segments.starting:
+                            continue
+                        sequence, pcm = accepted
                         current_segment = session.speech_segments.current
                         if current_segment.intent.generation != wire.audio.generation:
                             raise PermissionError("stale_generation")
@@ -1031,8 +1041,16 @@ def create_router(
                             {"type": "command.ack", "acceptedSequence": message["sequence"]}
                         )
                     elif message["type"] == "audio.played":
-                        wire.played(message["audioSequence"], generation=message["generation"])
+                        # An ack of retired output was in flight when the generation changed.
+                        if message["generation"] == wire.audio.generation:
+                            wire.played(message["audioSequence"], generation=message["generation"])
                     elif message["type"] == "output.interrupt":
+                        if message["generation"] != wire.audio.generation:
+                            # That output is already retired; nothing is left to interrupt.
+                            await wire.emit(
+                                {"type": "command.ack", "acceptedSequence": message["sequence"]}
+                            )
+                            continue
                         current = await session.policy.admission.check_output(
                             session.policy.slot.session_id,
                             session.policy.slot.owner_epoch,
