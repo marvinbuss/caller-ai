@@ -602,12 +602,19 @@ class TestSessionClient:
                     reason="unavailable",
                     correlation_id=correlation_for(permit.request_id),
                 )
+            # A refused frame (1008) ends the test just as abruptly, so it is named too.
+            if (
+                self._telemetry is not None
+                and code in {1008, 1011, 1013}
+                and reason != "manager_busy"
+            ):
                 closed = error if isinstance(error, ConnectionClosed) else None
                 self._telemetry.diagnostic(
                     "test.relay.failure",
                     mode=permit.mode,
                     correlation_id=correlation_for(permit.request_id),
                     error=type(error).__name__,
+                    code=error.args[0] if error.args else None,
                     numbers={
                         "received_close": closed.rcvd.code if closed and closed.rcvd else None,
                         "sent_close": closed.sent.code if closed and closed.sent else None,

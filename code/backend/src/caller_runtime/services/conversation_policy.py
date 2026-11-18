@@ -350,9 +350,9 @@ class SpeechSegments:
 
     @property
     def starting(self) -> bool:
-        """True between retiring a segment and the next one starting, when no capture can be
-        forwarded."""
-        return self._current is None and not self._failed
+        """True from retiring a segment until the next one has started; no capture can be
+        forwarded meanwhile."""
+        return self._transition_work is not None and not self._failed
 
     async def send_context(
         self, segment: GptLiveSession, slot: TestSlot, work: WorkBudget | None = None

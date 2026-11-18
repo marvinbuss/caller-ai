@@ -463,8 +463,14 @@ def test_diagnostic_events_follow_the_event_schema_and_drop_free_text(caplog):
                     "since_last_frame_ms": None,
                 },
             )
-        work, admission, speech = telemetry.events[-3:]
-        for event in (work, admission, speech):
+            telemetry.diagnostic(
+                "test.session.failure",
+                mode="speech",
+                error="PermissionError",
+                code="live_unavailable",
+            )
+        work, admission, speech, session = telemetry.events[-4:]
+        for event in (work, admission, speech, session):
             assert {
                 "timestamp",
                 "severity",
@@ -483,10 +489,12 @@ def test_diagnostic_events_follow_the_event_schema_and_drop_free_text(caplog):
         # Anything outside the closed shape of a fixed code is dropped, never logged.
         assert "error_code" not in admission and "Alice" not in caplog.text
         assert speech["end_ms"] == "25400" and "since_last_frame_ms" not in speech
+        assert session["kind"] == "voice" and session["error_code"] == "live_unavailable"
         assert [json.loads(record.message)["event"] for record in caplog.records] == [
             "test.work.failure",
             "test.admission.failure",
             "test.speech.unobserved",
+            "test.session.failure",
         ]
         for name, keywords in (
             ("test.unknown", {}),

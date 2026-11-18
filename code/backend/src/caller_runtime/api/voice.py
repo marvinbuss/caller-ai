@@ -1003,7 +1003,13 @@ def create_router(
                         current_segment = session.speech_segments.current
                         if current_segment.intent.generation != wire.audio.generation:
                             raise PermissionError("stale_generation")
-                        await current_segment.send_audio(pcm)
+                        try:
+                            await current_segment.send_audio(pcm)
+                        except PermissionError:
+                            # The segment was retired while this frame was being forwarded.
+                            if session.speech_segments.starting:
+                                continue
+                            raise
                         arrived = asyncio.get_running_loop().time()
                         if wire.audio.generation not in forwarded:
                             forwarded.clear()
@@ -1104,6 +1110,14 @@ def create_router(
             terminate_local()
         except Exception as error:
             terminate_local()
+            if session is not None:
+                activity = telemetry() if callable(telemetry) else telemetry
+                activity.diagnostic(
+                    "test.session.failure",
+                    mode="speech",
+                    error=type(error).__name__,
+                    code=error.args[0] if error.args else None,
+                )
             await refuse(error)
         finally:
             terminate_local()
