@@ -217,7 +217,10 @@ change sends `agent.changed` with the new segment's generation before any credit
 transcript of that generation. No `audio.credit` is sent while a new segment starts. Capture
 frames, `audio.played` and `output.interrupt` of an older generation that were still on the wire
 are dropped or ignored (an interrupt is still acknowledged); a newer generation than the
-server's is refused as `stale_generation`. The management relay applies the same rule.
+server's is refused as `stale_generation`. The management relay applies the same rule. Control
+messages keep working during an agent change: `pong` and `command.ack` carry the client's current
+generation, and a mute or interrupt sent while the new segment starts is acknowledged without
+touching the retiring segment.
 
 Text submission is not part of the voice protocol. Any failure sends one `error` message
 (`{"type": "error", "code": "...", "reason": "..."}`) and closes with the matching 4xxx code. A

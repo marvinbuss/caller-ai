@@ -1583,6 +1583,78 @@ def test_owned_speech_interrupt_retires_socket_once_and_acknowledges_duplicate(
         assert created[0].closed == 1 and not requests
 
 
+def test_owned_socket_keeps_controls_working_while_an_agent_change_is_under_way(
+    owned_voice_socket, monkeypatch
+):
+    import asyncio
+    from datetime import timedelta
+
+    from caller_runtime.domain.conversation import WorkBudget
+
+    client, service, requests, clock, assertion, telemetry = owned_voice_socket
+    with client.websocket_connect(
+        SOCKET_URL,
+        subprotocols=["caller.voice.v1"],
+        headers={"Authorization": "Bearer synthetic-management-workload"},
+    ) as socket:
+        ready = authenticate(socket, assertion)
+        assert socket.receive_json()["type"] == "audio.credit"
+        starting, release = asyncio.Event(), asyncio.Event()
+
+        async def connect(url, **options):
+            return type(service.provider_socket)()
+
+        monkeypatch.setattr(service.segment.adapter, "_factory", connect)
+        policy = service.controller.policy
+        transition = policy.admission.transition
+
+        async def slow_transition(*arguments, **keywords):
+            # The old segment is retired and its generation fenced; the store answers slowly.
+            starting.set()
+            await release.wait()
+            return await transition(*arguments, **keywords)
+
+        monkeypatch.setattr(policy.admission, "transition", slow_transition)
+        assert client.portal is not None
+        change = client.portal.start_task_soon(
+            policy.enter_routing,
+            WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10)),
+        )
+
+        async def until_starting():
+            await asyncio.wait_for(starting.wait(), 2)
+
+        client.portal.call(until_starting)
+        try:
+            # The authority is a generation ahead of the policy until the transition is stored.
+            for sequence, command in enumerate(
+                (
+                    {"type": "ping", "nonce": "during-change"},
+                    {
+                        "type": "audio.played",
+                        "generation": ready["generation"],
+                        "audioSequence": 0,
+                    },
+                    {"type": "output.interrupt", "generation": ready["generation"]},
+                ),
+                start=1,
+            ):
+                socket.send_json(command | {"sessionId": ready["sessionId"], "sequence": sequence})
+            seen = []
+            while not {"pong", "command.ack"} <= set(seen):
+                event = socket.receive_json()
+                assert event["type"] not in {"error", "ended"}, event
+                seen.append(event["type"])
+        finally:
+            client.portal.call(release.set)
+        change.result(timeout=2)
+        assert policy.active_agent_id == "routing"
+        socket.send_json({"type": "stop", "sessionId": ready["sessionId"], "sequence": 4})
+        while (event := socket.receive_json())["type"] != "ended":
+            assert event["type"] != "error", event
+        assert not any(event["event"] == "test.session.failure" for event in telemetry.events)
+
+
 def test_owned_socket_limits_verified_pre_auth_to_two_per_stable_actor(owned_voice_socket):
     import asyncio
     from contextlib import ExitStack
