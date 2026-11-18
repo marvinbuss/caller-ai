@@ -68,6 +68,7 @@ TEST_MODES = frozenset({"text", "speech"})
 DIAGNOSTICS = {
     "test.admission.failure": frozenset(),
     "test.work.failure": frozenset(),
+    "test.session.failure": frozenset(),
     "test.speech.unobserved": frozenset({"end_ms", "since_first_frame_ms", "since_last_frame_ms"}),
 }
 DIAGNOSTIC_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")

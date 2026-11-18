@@ -1053,6 +1053,17 @@ def test_speech_handover_retires_actual_socket_before_any_continuation(
     async def scenario():
         original, segment = await opened()
         slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
+        retire = service.retire_generation
+        retiring = []
+
+        async def observed_retire(*arguments, **keywords):
+            # Capture still arriving for the old segment is dropped from here on, not fatal.
+            retiring.append(segments.starting)
+            with pytest.raises(PermissionError, match="stale_generation"):
+                await segment.send_audio(b"\0" * 960)
+            return await retire(*arguments, **keywords)
+
+        monkeypatch.setattr(service, "retire_generation", observed_retire)
 
         async def connect(url, **options):
             assert socket.closed == 1 and segment.protocol.closed
@@ -1092,6 +1103,7 @@ def test_speech_handover_retires_actual_socket_before_any_continuation(
         work = WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10))
         if confirmed:
             await policy.enter_routing(work)
+            assert retiring == [True]
             assert policy.active_agent_id == "routing" and len(created) == 1
             # The new segment gets the context note for the new agent as quiet thinking.
             assert [
