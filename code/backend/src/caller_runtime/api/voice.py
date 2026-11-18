@@ -989,6 +989,10 @@ def create_router(
             greeters.add(asyncio.create_task(greet()))
 
             async def read() -> None:
+                async def reply(event: dict[str, Any]) -> None:
+                    # On the client's generation: the policy's lags behind during a segment change.
+                    await wire.emit(event | {"generation": wire.audio.generation})
+
                 while True:
                     frame = await socket.receive()
                     if frame["type"] == "websocket.disconnect":
@@ -1023,14 +1027,26 @@ def create_router(
                     if len(raw.encode("utf-8")) > MAX_CONTROL_BYTES:
                         raise OversizedFrame("control_limit")
                     message, duplicate = wire.command(raw)
+                    segments = session.speech_segments
                     if message["type"] != "stop":
-                        await session.policy.admission.check_output(
-                            session.policy.slot.session_id,
-                            session.policy.slot.owner_epoch,
-                            generation=session.policy.slot.generation,
-                        )
+                        checked = session.policy.slot.generation
+                        try:
+                            await session.policy.admission.check_output(
+                                session.policy.slot.session_id,
+                                session.policy.slot.owner_epoch,
+                                generation=checked,
+                            )
+                        except AdmissionError as error:
+                            # During a segment change the authority is a generation ahead.
+                            if error.code != "stale_generation" or not (
+                                segments is not None
+                                and segments.starting
+                                or session.policy.slot.generation != checked
+                            ):
+                                raise
+                    changing = segments is not None and segments.starting
                     if duplicate:
-                        await wire.emit(
+                        await reply(
                             {"type": "command.ack", "acceptedSequence": message["sequence"]}
                         )
                         continue
@@ -1038,12 +1054,14 @@ def create_router(
                         terminate_local()
                         return
                     if message["type"] == "ping":
-                        await wire.emit({"type": "pong", "nonce": message["nonce"]})
+                        await reply({"type": "pong", "nonce": message["nonce"]})
                     elif message["type"] == "input.mute":
                         if session.speech_segments is None:
                             raise PermissionError("mode_mismatch")
-                        await session.speech_segments.current.set_muted(message["muted"])
-                        await wire.emit(
+                        # The browser stops its own capture; a starting segment has no input yet.
+                        if not changing:
+                            await session.speech_segments.current.set_muted(message["muted"])
+                        await reply(
                             {"type": "command.ack", "acceptedSequence": message["sequence"]}
                         )
                     elif message["type"] == "audio.played":
@@ -1051,9 +1069,9 @@ def create_router(
                         if message["generation"] == wire.audio.generation:
                             wire.played(message["audioSequence"], generation=message["generation"])
                     elif message["type"] == "output.interrupt":
-                        if message["generation"] != wire.audio.generation:
+                        if changing or message["generation"] != wire.audio.generation:
                             # That output is already retired; nothing is left to interrupt.
-                            await wire.emit(
+                            await reply(
                                 {"type": "command.ack", "acceptedSequence": message["sequence"]}
                             )
                             continue
@@ -1073,7 +1091,7 @@ def create_router(
                             ),
                         )
                         await session.policy.interrupt(work_budget)
-                        await wire.emit(
+                        await reply(
                             {"type": "command.ack", "acceptedSequence": message["sequence"]}
                         )
                     elif message["type"] != "pong":
