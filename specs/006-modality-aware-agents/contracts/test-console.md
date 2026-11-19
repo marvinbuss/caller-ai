@@ -20,6 +20,7 @@ All events keep the envelope `type`, `sessionId`, `sequence`, `generation`, with
 ## Rendering rules (FR-010, FR-011)
 
 - The row is built only with `document.createElement` and `textContent`.
+- Lists, headings and table cells get inline styles (markers, size and weight, borders), because the app's CSS reset removes them.
 - Links: `target="_blank"`, `rel="noopener noreferrer"`, `referrerPolicy="no-referrer"`; they open on click only.
 - Images: `https:` only, with `referrerPolicy="no-referrer"`, `loading="lazy"`, `alt` text, and a maximum width of 100% of the row.
 - `http:`, `data:`, `javascript:` and relative URLs render as plain text.

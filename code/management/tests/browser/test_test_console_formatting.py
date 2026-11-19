@@ -50,7 +50,7 @@ TREE = {
 }
 
 
-def render(page: Page, tree: dict) -> list[str]:
+def render(page: Page, tree: dict, css: str = "") -> list[str]:
     from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
 
     requests: list[str] = []
@@ -62,6 +62,8 @@ def render(page: Page, tree: dict) -> list[str]:
         '<div id="test-messages" role="log" aria-label="Conversation" aria-live="polite"></div>'
     )
     page.add_script_tag(content=BUDGET_CODE + ENGINE_CODE)
+    if css:
+        page.add_style_tag(content=css)
     page.evaluate(
         """tree => {
         const engine = new CallerTestEngine({begin: () => {}, control: () => {}});
@@ -90,6 +92,21 @@ def test_reply_with_a_list_and_a_table_renders_formatted(page: Page):
     assert row.locator("ul > li > strong").inner_text() == "second"
     assert row.locator("table thead th").inner_text() == "Plan"
     assert row.locator("table tbody td").inner_text() == "Basic"
+
+
+def test_lists_headings_and_tables_stay_visible_under_the_app_css_reset(page: Page):
+    from pathlib import Path
+
+    import reflex_base
+
+    reset = Path(reflex_base.__file__).parent / ".templates/web/styles/__reflex_style_reset.css"
+    render(page, TREE, reset.read_text(encoding="utf-8"))
+    row = page.locator("#test-messages > div[data-formatted='true']")
+    style = "(element, name) => getComputedStyle(element)[name]"
+    assert row.locator("ul").evaluate(style, "listStyleType") == "disc"
+    assert row.locator("ul").evaluate(style, "paddingInlineStart") != "0px"
+    assert row.locator("h2").evaluate(style, "fontWeight") == "700"
+    assert row.locator("td").evaluate(style, "borderTopStyle") == "solid"
 
 
 def test_unsafe_links_and_images_are_neither_clickable_nor_loaded(page: Page):
