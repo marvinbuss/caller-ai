@@ -2,7 +2,7 @@
 
 **Purpose**: Record the manual reviews on int that close the feature (T092, T093)
 **Feature**: [spec.md](../spec.md)
-**Environment**: `int`, images `sha-d3aa69d270f9472bffadf9af178d8076732f2c86`
+**Environment**: `int`, images `sha-d3aa69d270f9472bffadf9af178d8076732f2c86` (T092) and `sha-d72635b1946ec4c5450bd7d632efddf9ad6c4388` (T093)
 
 ## Test-page review (T092, SC-005, SC-009)
 
@@ -23,4 +23,14 @@ Reviewed by the owner on 2026-11-19, following [quickstart.md](../quickstart.md#
 
 ## Editor check (T093, SC-007)
 
-First run on 2026-11-19: the text global prompt "Answer in bullet points." took effect in the next text session, but the bullets disappeared once the answer finished, because the app's CSS reset hid the list markers. Fixed in T100. To finish, repeat the check after T100 is deployed.
+First run on 2026-11-19: the text global prompt "Answer in bullet points." took effect in the next text session, but the bullets disappeared once the answer finished, because the app's CSS reset hid the list markers. Fixed in T100.
+
+Repeated by the owner on 2026-11-19 after T100 was deployed, following [quickstart.md](../quickstart.md#5-slice-2-editor-checks-sc-007).
+
+| Check | Result |
+|-------|--------|
+| Text global prompt applies only to text answers, and the bullets stay visible after the answer completes | Pass |
+| The custom agent's voice addition applies only to that agent's voice answers | Pass |
+| Restoring the defaults and publishing returns the earlier behavior | Pass |
+
+**Result**: Pass.
