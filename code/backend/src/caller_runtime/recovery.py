@@ -1,10 +1,18 @@
-"""One-off release of test slots held only by a model request that was never settled.
+"""One-off release of test slots that cleanup could not prove free.
 
-Before the background-drain fix, a model request that outlived its work budget was never settled,
-so cleanup could not prove the slot free and the same manager got `manager_busy` for good. This
-releases only slots that are fenced, expired at least five minutes ago and whose only unsettled
-attempt is a model request; Live and capability attempts must already be settled. It never creates
-or deletes the authority item and never touches a slot that is still live. Preview mode, the
+Two failures left a slot held for good, so the same manager got `manager_busy`:
+
+- a model request that outlived its work budget was never settled (before the background drain);
+- a voice session that failed during an agent change left a Live attempt whose closure the
+  provider never confirmed to this runtime (before the fixes for speech agent changes).
+
+This releases only slots that are fenced, expired at least five minutes ago, whose capability
+attempts are settled and that hold an unsettled model or provider-bound Live attempt. A Live
+socket cannot outlive its session: the runtime closes it when the session ends and the provider
+closes it when the runtime is gone. Such an attempt is settled with a closure receipt marked by a
+`live-recovered-` settlement reference, so the release keeps the store's evidence rules. An
+unbound Live attempt never reached the provider and is left for review. It never creates or
+deletes the authority item and never touches a slot that is still live. Preview mode, the
 default, lists the candidates and writes nothing.
 
 Run inside the runtime container, where the managed identity can reach the private store:
@@ -26,6 +34,7 @@ from caller_runtime.adapters.admission_repository import (
 from caller_runtime.domain.configuration import encoded
 from caller_runtime.domain.conversation import (
     CleanupEvidence,
+    ClosureReceipt,
     ResourceKind,
     TestAuthority,
     TestSlot,
@@ -34,7 +43,7 @@ from caller_runtime.domain.conversation import (
 
 GRACE: Final = timedelta(minutes=5)
 RECOVERY_PREFIX: Final = "recovery-"
-SETTLED_KINDS: Final[tuple[ResourceKind, ...]] = ("capability", "live")
+SETTLED_KINDS: Final[tuple[ResourceKind, ...]] = ("capability",)
 
 
 def _recovered(slot: TestSlot) -> bool:
@@ -42,19 +51,27 @@ def _recovered(slot: TestSlot) -> bool:
     return evidence is not None and evidence.disposal_ref.startswith(RECOVERY_PREFIX)
 
 
+def _unsettled(slot: TestSlot, kind: ResourceKind) -> bool:
+    return slot.resources[kind].attempted > slot.resources[kind].settled
+
+
+def _live_releasable(slot: TestSlot) -> bool:
+    # Only a provider-bound attempt can carry a closure receipt; an unbound one never started.
+    attempt = slot.resources["live"].attempt
+    return attempt is not None and attempt.provider_session_id is not None
+
+
 def candidates(authority: TestAuthority, now: datetime) -> list[TestSlot]:
     now = utc(now)
     found = []
     for slot in authority.slots:
-        model = slot.resources["model"]
+        live = _unsettled(slot, "live")
         if (
             slot.terminal_fence
             and now >= min(slot.expires_at, slot.auth_expires_at, slot.idle_expires_at) + GRACE
-            and all(
-                slot.resources[kind].attempted == slot.resources[kind].settled
-                for kind in SETTLED_KINDS
-            )
-            and (model.attempted > model.settled or _recovered(slot))
+            and not any(_unsettled(slot, kind) for kind in SETTLED_KINDS)
+            and (not live or _live_releasable(slot))
+            and (_unsettled(slot, "model") or live or _recovered(slot))
         ):
             found.append(slot)
     return found
@@ -63,11 +80,35 @@ def candidates(authority: TestAuthority, now: datetime) -> list[TestSlot]:
 def _settled(slot: TestSlot, now: datetime) -> dict[str, Any]:
     if _recovered(slot):
         return slot.model_dump(mode="json", by_alias=True)
-    reference = "model-recovered-" + uuid4().hex
     document = slot.model_dump(mode="json", by_alias=True)
-    document["resources"]["model"].update(
-        settled=slot.resources["model"].attempted, settlementRef=reference
-    )
+    reference = ""
+    closure = slot.closure_receipt
+    if _unsettled(slot, "model"):
+        reference = "model-recovered-" + uuid4().hex
+        document["resources"]["model"].update(
+            settled=slot.resources["model"].attempted, settlementRef=reference
+        )
+    attempt = slot.resources["live"].attempt
+    if _unsettled(slot, "live") and attempt is not None and attempt.provider_session_id is not None:
+        reference = "live-recovered-" + uuid4().hex
+        # Recorded by recovery, not the provider: the `live-recovered-` reference says so.
+        closure = ClosureReceipt(
+            sessionId=slot.session_id,
+            providerSessionId=attempt.provider_session_id,
+            ownerId=slot.owner_id,
+            ownerEpoch=slot.owner_epoch,
+            generation=attempt.generation,
+            observedAt=now,
+            provenanceRef=attempt.provenance_ref,
+            reason="expired",
+            voiceSeconds=0,
+            authenticated=True,
+        )
+        document["resources"]["live"].update(
+            settled=slot.resources["live"].attempted, settlementRef=reference
+        )
+        document["closureReceipt"] = closure.model_dump(mode="json", by_alias=True)
+        document["closedThroughGeneration"] = attempt.generation
     document.update(
         phase="cleanup_pending",
         settledThrough=slot.attempted_through,
@@ -81,13 +122,13 @@ def _settled(slot: TestSlot, now: datetime) -> dict[str, Any]:
             observedAt=now,
             disposalRef=RECOVERY_PREFIX + uuid4().hex,
             settlementRef=reference,
-            closure=slot.closure_receipt if slot.live_ever_attempted else None,
+            closure=closure if slot.live_ever_attempted else None,
         ).model_dump(mode="json", by_alias=True),
     )
     return document
 
 
-async def release_stuck_model_slots(
+async def release_stuck_slots(
     repository: TestAdmissionRepository, *, now: datetime, apply: bool
 ) -> list[str]:
     """Return the session ids that match; with `apply`, release them (idempotent)."""
@@ -136,7 +177,7 @@ async def _main(apply: bool) -> int:
     clients = AzureClients(Settings().live())
     try:
         repository = TestAdmissionRepository(container=await clients.container("call-sessions"))
-        released = await release_stuck_model_slots(repository, now=datetime.now(UTC), apply=apply)
+        released = await release_stuck_slots(repository, now=datetime.now(UTC), apply=apply)
     finally:
         await clients.close()
     action = "released" if apply else "would release"
