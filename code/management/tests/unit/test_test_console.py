@@ -1219,7 +1219,8 @@ check(row !== plain && row.tag === 'div' && row.dataset.formatted === 'true', 'n
 check(messages.children.length === 1 && row.children[0].textContent === 'Agent: ', 'prefix');
 const [, heading, list, paragraph] = row.children;
 check(heading.tag === 'h2' && heading.children[0].textContent === 'Plan', 'heading');
-check(list.children[0].children[0].tag === 'strong', 'list');
+check(list.children[0].children[0].tag === 'strong' && list.style.listStyleType === 'disc',
+    'list');
 const [safe, script, http, image, inline, code, line] = paragraph.children;
 check(safe.tag === 'a' && safe.href === 'https://example.com/a' && safe.target === '_blank' &&
     safe.rel === 'noopener noreferrer' && safe.referrerPolicy === 'no-referrer', 'safe_link');

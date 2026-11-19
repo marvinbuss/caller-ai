@@ -407,6 +407,14 @@ CONTROL_CODE = r"""
             "a", "img"]);
         const keys = {a: ["type", "href", "children"], img: ["type", "src", "alt"],
             br: ["type"], hr: ["type"]};
+        // The page's CSS reset removes list markers, heading sizes and table borders.
+        const cell = {border: "1px solid", padding: "0.25em 0.5em"};
+        const styles = {ul: {listStyleType: "disc", paddingInlineStart: "1.5em"},
+            ol: {listStyleType: "decimal", paddingInlineStart: "1.5em"},
+            h1: {fontSize: "1.5em", fontWeight: "bold"},
+            h2: {fontSize: "1.25em", fontWeight: "bold"},
+            h3: {fontSize: "1.1em", fontWeight: "bold"},
+            th: {...cell, fontWeight: "bold"}, td: cell};
         let count = 0;
         const https = url => {
             if (typeof url !== "string") throw Error("invalid_format");
@@ -447,6 +455,7 @@ CONTROL_CODE = r"""
                     element.rel = "noopener noreferrer"; element.referrerPolicy = "no-referrer";
                 }
             } else element = document.createElement(node.type);
+            if (styles[node.type]) Object.assign(element.style, styles[node.type]);
             element.append(...children);
             return element;
         };
