@@ -422,7 +422,7 @@ description: "Task list for feature 007: Shared Conversation History Across Agen
 - [X] T081 [P] Update `docs/runbooks/scaling.md` (one Live attempt per call; the microphone and loudspeaker switches act only in the browser; recovery), `docs/runbooks/configuration.md` (2.3.0 rollback order: runtime first, then management), `code/contracts/README.md` (schema 2.3.0), `docs/runbooks/communities.md` (SDK handoffs instead of `route_community`, direct handovers to the entry agents of connected communities, and the whole history instead of the "Transfer Content" fields), and `docs/setup.md` and `docs/testing.md` ("Mute input" and "Mute output" instead of Interrupt).
 - [X] T082 [P] Document `CALLER_TRANSCRIPTION_WAIT_SECONDS`, `CALLER_REASONING_EFFORT` and `CALLER_VOICE_DELEGATION_UPDATES`, with defaults and ranges, in `docs/environments.md`.
 - [X] T083 Add a section to `docs/capacity.md` for the handover delay per path and modality (SC-005), input size per turn, cost per conversation, the T078 results and the option A criteria (R1), marked pending until T087.
-- [ ] T084 Run the full checks (`ci.py check` and `verify_docs.py`, per [quickstart.md](quickstart.md)) and fix any failure.
+- [X] T084 Run the full checks (`ci.py check` and `verify_docs.py`, per [quickstart.md](quickstart.md)) and fix any failure.
 - [ ] T085 With owner approval, deploy to int:
   1. publish the images;
   2. deploy management first, then the runtime (relay compatibility, T030);
