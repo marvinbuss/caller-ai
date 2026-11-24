@@ -171,8 +171,8 @@ def server_control(event: dict[str, Any]) -> dict[str, Any]:
             {"audioFormat"},
         ),
         "transcript.delta": ({"speaker", "fragment", "start_ms", "end_ms"}, set()),
-        "generation.changed": ({"reason"}, set()),
         "agent.changed": ({"agentId", "communityId"}, set()),
+        "history.condensed": (set(), set()),
         "progress": ({"state", "text"}, set()),
         "audio.credit": ({"availableSamples"}, {"acceptedAudioSequence"}),
         "command.ack": ({"acceptedSequence"}, set()),
@@ -208,13 +208,6 @@ def server_control(event: dict[str, Any]) -> dict[str, Any]:
         or not isinstance(checked["text"], str)
         or not 1 <= len(checked["text"]) <= 200
     ):
-        raise PermissionError("invalid_server_control")
-    if kind == "generation.changed" and checked["reason"] not in {
-        "segment_retired",
-        "agent_changed",
-        "interrupted",
-        "stopped",
-    }:
         raise PermissionError("invalid_server_control")
     for field in ("messageId", "agentId", "revisionId", "communityId"):
         value = checked.get(field)
@@ -562,8 +555,6 @@ class VoiceWire:
             "stop": set(),
             "ping": {"nonce"},
             "pong": {"nonce"},
-            "input.mute": {"muted"},
-            "output.interrupt": {"generation"},
             "audio.played": {"audioSequence", "generation"},
         }
         if (
@@ -595,12 +586,6 @@ class VoiceWire:
             )
         ):
             raise PermissionError("invalid_control")
-        if kind == "input.mute" and type(value["muted"]) is not bool:
-            raise PermissionError("invalid_control")
-        if kind == "output.interrupt" and (
-            type(value["generation"]) is not int or not 1 <= value["generation"] <= self._generation
-        ):
-            raise PermissionError("stale_generation")
         if kind == "audio.played" and (
             type(value["generation"]) is not int or not 1 <= value["generation"] <= self._generation
         ):
@@ -825,6 +810,14 @@ def create_router(
                         task.cancel()
                     greeting_event("success", "skipped")
 
+            async def leave_welcome() -> None:
+                """After the greeting, delivered, skipped or missed, Welcome hands over (FR-030)."""
+                try:
+                    await session.leave_welcome(wire.emit)
+                except Exception:
+                    # The next request makes the move instead.
+                    pass
+
             async def greet() -> None:
                 """Have the Welcome agent write the greeting; never send it after the deadline."""
                 loop = asyncio.get_running_loop()
@@ -843,40 +836,37 @@ def create_router(
                         )
                         text = await session.greeting_text("speech", budget)
                         segments = session.speech_segments
-                        if (
-                            segments is None
-                            or not greeting.pending
-                            or session.policy.slot.generation != slot.generation
-                        ):
+                        if segments is None or not greeting.pending:
                             return
                         current = segments.current
                         for part in split_reply(text):
                             if part.strip():
                                 await current.append_context(None, part)
+                        session.record_greeting(text)
                         greeting.sent()
+                    await leave_welcome()
                     await asyncio.sleep(max(0.0, deadline - loop.time()))
                 except TimeoutError:
                     pass
                 except Exception:
                     if greeting.fail():
                         greeting_event("failure", "deadline", VOICE_GREETING_SECONDS)
+                    await leave_welcome()
                     return
                 # The loop may wake within its clock resolution before the deadline.
                 if greeting.expire(max(loop.time(), deadline)):
                     greeting_event("failure", "deadline", VOICE_GREETING_SECONDS)
+                await leave_welcome()
 
             async def credit() -> None:
                 while True:
-                    segments = session.speech_segments
-                    # No capture credit while a new segment starts: it has nowhere to go yet.
-                    if segments is None or not segments.starting:
-                        await wire.emit(
-                            {
-                                "type": "audio.credit",
-                                "availableSamples": wire.audio.available_samples,
-                                "acceptedAudioSequence": wire.audio.input_sequence,
-                            }
-                        )
+                    await wire.emit(
+                        {
+                            "type": "audio.credit",
+                            "availableSamples": wire.audio.available_samples,
+                            "acceptedAudioSequence": wire.audio.input_sequence,
+                        }
+                    )
                     try:
                         async with asyncio.timeout(0.05):
                             await stopped.wait()
@@ -990,7 +980,6 @@ def create_router(
 
             async def read() -> None:
                 async def reply(event: dict[str, Any]) -> None:
-                    # On the client's generation: the policy's lags behind during a segment change.
                     await wire.emit(event | {"generation": wire.audio.generation})
 
                 while True:
@@ -1001,19 +990,13 @@ def create_router(
                         if session.speech_segments is None:
                             raise PermissionError("mode_mismatch")
                         accepted = wire.audio.input(frame["bytes"])
-                        if accepted is None or session.speech_segments.starting:
+                        if accepted is None:
                             continue
                         sequence, pcm = accepted
                         current_segment = session.speech_segments.current
                         if current_segment.intent.generation != wire.audio.generation:
                             raise PermissionError("stale_generation")
-                        try:
-                            await current_segment.send_audio(pcm)
-                        except PermissionError:
-                            # The segment was retired while this frame was being forwarded.
-                            if session.speech_segments.starting:
-                                continue
-                            raise
+                        await current_segment.send_audio(pcm)
                         arrived = asyncio.get_running_loop().time()
                         if wire.audio.generation not in forwarded:
                             forwarded.clear()
@@ -1027,24 +1010,12 @@ def create_router(
                     if len(raw.encode("utf-8")) > MAX_CONTROL_BYTES:
                         raise OversizedFrame("control_limit")
                     message, duplicate = wire.command(raw)
-                    segments = session.speech_segments
                     if message["type"] != "stop":
-                        checked = session.policy.slot.generation
-                        try:
-                            await session.policy.admission.check_output(
-                                session.policy.slot.session_id,
-                                session.policy.slot.owner_epoch,
-                                generation=checked,
-                            )
-                        except AdmissionError as error:
-                            # During a segment change the authority is a generation ahead.
-                            if error.code != "stale_generation" or not (
-                                segments is not None
-                                and segments.starting
-                                or session.policy.slot.generation != checked
-                            ):
-                                raise
-                    changing = segments is not None and segments.starting
+                        await session.policy.admission.check_output(
+                            session.policy.slot.session_id,
+                            session.policy.slot.owner_epoch,
+                            generation=session.policy.slot.generation,
+                        )
                     if duplicate:
                         await reply(
                             {"type": "command.ack", "acceptedSequence": message["sequence"]}
@@ -1055,45 +1026,9 @@ def create_router(
                         return
                     if message["type"] == "ping":
                         await reply({"type": "pong", "nonce": message["nonce"]})
-                    elif message["type"] == "input.mute":
-                        if session.speech_segments is None:
-                            raise PermissionError("mode_mismatch")
-                        # The browser stops its own capture; a starting segment has no input yet.
-                        if not changing:
-                            await session.speech_segments.current.set_muted(message["muted"])
-                        await reply(
-                            {"type": "command.ack", "acceptedSequence": message["sequence"]}
-                        )
                     elif message["type"] == "audio.played":
-                        # An ack of retired output was in flight when the generation changed.
                         if message["generation"] == wire.audio.generation:
                             wire.played(message["audioSequence"], generation=message["generation"])
-                    elif message["type"] == "output.interrupt":
-                        if changing or message["generation"] != wire.audio.generation:
-                            # That output is already retired; nothing is left to interrupt.
-                            await reply(
-                                {"type": "command.ack", "acceptedSequence": message["sequence"]}
-                            )
-                            continue
-                        current = await session.policy.admission.check_output(
-                            session.policy.slot.session_id,
-                            session.policy.slot.owner_epoch,
-                            generation=session.policy.slot.generation,
-                        )
-                        now = utc_now()
-                        work_budget = WorkBudget(
-                            now,
-                            min(
-                                now + timedelta(seconds=10),
-                                current.auth_expires_at,
-                                current.expires_at,
-                                current.idle_expires_at,
-                            ),
-                        )
-                        await session.policy.interrupt(work_budget)
-                        await reply(
-                            {"type": "command.ack", "acceptedSequence": message["sequence"]}
-                        )
                     elif message["type"] != "pong":
                         raise PermissionError("unsupported_control")
 

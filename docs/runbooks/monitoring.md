@@ -120,6 +120,116 @@ ContainerAppConsoleLogs_CL
 It passes with `total >= 20` and `rate >= 0.9`. Many `deadline` failures point at Welcome-agent
 latency (compare `test.latency`); many `fallback` events in text point at the same.
 
+## Handover, Delegation and History Events
+
+The shared conversation history (feature 007) adds `test.handover` and `test.history` and new
+fields on `test.delegation` and `test.latency`. Every event carries the session's correlation id
+(`correlation_id`) and, inside a traced request, its `trace_id`. None carries messages,
+transcripts, tool arguments or results, instructions, descriptions or configuration; the fields
+are closed sets.
+
+| Event | Outcome | `reason_code` | Fields | Emitted when |
+|-------|---------|---------------|--------|--------------|
+| `test.handover` | success | `applied` | `source_role`, `destination_role`, `path` | A handover was applied, the Welcome → Routing move (`path` = `lifecycle`) included |
+| `test.handover` | failure | `refused_graph`, `refused_stale`, `refused_budget`, `refused_step_limit` | `source_role`, `destination_role`, `path` | A handover was refused when it was applied; the active agent stayed |
+| `test.delegation` | success / failure | `ready` / `invalid_input` | `first_role`, `handled_role`, `handed_on` (`true`/`false`), `untranscribed` (`true`/`false`) | A voice delegation's work item ended. `first_role` handled it first, `handled_role` last; `untranscribed` means the caller's speech was still not transcribed when the transcription wait ended |
+| `test.history` | success | `ready` | `history_kib` | At every applied handover: the size of the history the destination continues with |
+| `test.history` | success / failure | `condensed` / `limit` | `history_kib` | Condensing ran / the conversation ended at the limit |
+| `test.latency` | success | `ready` | `path`; measurement `handover_seconds` | From the handoff to the destination's first output |
+| `test.latency` | success | `ready` | measurement `transcription_wait_seconds` | The transcription wait of a voice delegation |
+
+Roles are `welcome`, `routing`, `goodbye` and `ordinary`; `path` is `peer` (within a community),
+`direct` (a community connection to the entry agent), `routing` (to or from Routing) or
+`lifecycle`; `history_kib` is `<16`, `16-64`, `64-128`, `128-192` or `>=192`.
+
+**Handover outcomes** by mode, outcome, reason and path, in 5-minute bins:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where Log_s has "test.handover"
+| extend entry = parse_json(Log_s)
+| where tostring(entry["event"]) == "test.handover"
+| summarize handovers = count() by bin(TimeGenerated, 5m), kind = tostring(entry["kind"]),
+    outcome = tostring(entry["outcome"]), reason = tostring(entry["reason_code"]),
+    path = tostring(entry["path"])
+```
+
+**SC-005 (answer after a handover).** The latency by path; record p50 and p90 in
+[capacity](../capacity.md). There is no pass threshold for them:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where Log_s has "handover_seconds"
+| extend entry = parse_json(Log_s)
+| where tostring(entry["measurement"]) == "handover_seconds"
+| summarize p50 = percentile(todouble(entry["value"]), 50),
+    p90 = percentile(todouble(entry["value"]), 90), n = count()
+    by path = tostring(entry["path"]), kind = tostring(entry["kind"])
+```
+
+The target is met when no acceptance run ends with `work_deadline_exceeded` (shown on the Test page)
+and no handover was refused for the budget:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where Log_s has "test.handover"
+| extend entry = parse_json(Log_s)
+| where tostring(entry["event"]) == "test.handover" and tostring(entry["reason_code"]) == "refused_budget"
+| summarize refused_budget = count()
+```
+
+**SC-009 (every handover and delegation observed).** After the acceptance runs, the counts match
+the handovers and voice delegations recorded in the review checklist, and `max_delay_s` is at
+most 300:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where Log_s has "test.handover" or Log_s has "test.delegation"
+| extend entry = parse_json(Log_s)
+| where tostring(entry["event"]) in ("test.handover", "test.delegation")
+| extend delay_s = datetime_diff("second", ingestion_time(), todatetime(entry["timestamp"]))
+| summarize events = count(), max_delay_s = max(delay_s)
+    by event = tostring(entry["event"]), kind = tostring(entry["kind"])
+```
+
+**P4 (transcription wait).** After the first deployment and at least 20 voice delegations:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where Log_s has "test.delegation" or Log_s has "transcription_wait_seconds"
+| extend entry = parse_json(Log_s)
+| summarize delegations = countif(tostring(entry["event"]) == "test.delegation"),
+    untranscribed = countif(tostring(entry["event"]) == "test.delegation"
+        and tostring(entry["untranscribed"]) == "true"),
+    wait_p50 = percentileif(todouble(entry["value"]), 50,
+        tostring(entry["measurement"]) == "transcription_wait_seconds"),
+    wait_p90 = percentileif(todouble(entry["value"]), 90,
+        tostring(entry["measurement"]) == "transcription_wait_seconds")
+| extend untranscribed_share = todouble(untranscribed) / delegations
+```
+
+If `untranscribed_share` is above 0.1, raise `CALLER_TRANSCRIPTION_WAIT_SECONDS` within 0–2 s.
+
+### Handover failures
+
+The `handover-failures` alert fires when more than 20 % of at least 10 handovers in the 15-minute
+window were refused. Its owner is the runtime on-call.
+
+1. Run the handover outcomes query above for the window and note the dominant `reason_code` and
+   `path`.
+2. `refused_graph`: agents ask for destinations the published graph does not allow. Compare the
+   last publication with the one before, check that custom platform rules still contain the
+   "Handover rules:" block (the Test page shows a notice when they do not), and that agent and
+   routing descriptions are clear. Publish a correction or roll back to the earlier revision.
+3. `refused_budget` or `refused_step_limit`: chains are too long for the work budget. Look for a
+   loop between two agents (the same `path` repeating) and for slow model answers in
+   `test.latency` (`handover_seconds`, `work_seconds`). Remove the loop in the graph or the
+   prompts; do not raise the budget without a plan review.
+4. `refused_stale`: two changes raced in one session. A few are expected; many point at a runtime
+   defect. Preserve the logs and open an incident.
+5. Record the cause and the action in the incident; close the alert only after the failure share
+   is back below 20 %.
+
 ## Environment alerts
 
 Each environment deploys its monitoring with the `monitoring` module (see [Platform](platform.md)): a Log Analytics
@@ -148,6 +258,7 @@ flowchart LR
 | `cpu` and `memory` per app | Platform metrics `CpuPercentage`, `MemoryPercentage` | The average exceeds `alerts.cpu_percent` or `alerts.memory_percent` | Check for a stuck session; the apps have one replica, so a sustained value means the container size needs review |
 | `dependency failures` | Log query over the apps' structured events | More than `alerts.dependency_count` events with a failure outcome and the dependency category | Check the named dependency (data store, vault, Foundry account) and the private endpoint state |
 | `latency` | Log query over `latency_ms` in the structured events | More than five events slower than `alerts.latency_ms` | Compare with model latency; the deployment has no measured capacity target ([capacity](../capacity.md)) |
+| `handover-failures` | Log query over `test.handover` | More than 20 % of at least 10 handovers refused | Follow [Handover failures](#handover-failures) |
 
 The log-query alerts match the structured event fields the applications write. A change to those fields needs
 a change to the queries.

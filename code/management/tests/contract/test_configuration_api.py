@@ -497,6 +497,10 @@ def oversized(payload: dict, case: str) -> str:
     elif case == "voiceAddition":
         payload["agents"][3]["voiceAddition"] = "a" * (4 * 1024 + 1)
         return "agents[3].voiceAddition"
+    elif case == "description":
+        # 1 KiB of UTF-8, not 1,024 characters (feature 007).
+        payload["agents"][3]["description"] = "\u00e9" * 513
+        return "agents[3].description"
     else:
         settings |= {"textPlatformRules": "r" * 8 * 1024, "textGlobalPrompt": "g" * 8 * 1024}
         payload["agents"][3]["prompt"] = "p" * 16 * 1024
@@ -514,6 +518,7 @@ def oversized(payload: dict, case: str) -> str:
         "textPlatformRules",
         "textGlobalPrompt",
         "voiceAddition",
+        "description",
         "composed",
     ],
 )
@@ -557,6 +562,78 @@ def test_global_prompts_and_additions_publish_without_the_confirmation(
     payload["agents"][3]["voiceAddition"] = "Synthetic voice addition"
     response = client.put(PATH, json=payload, headers={"If-Match": ETAG})
     assert response.status_code == 200 and repository.publications == 1
+
+
+def test_a_description_of_exactly_1_kib_and_the_announce_setting_publish(
+    validated_api, configuration_graph
+) -> None:
+    client, repository = validated_api
+    payload = copy.deepcopy(configuration_graph)
+    payload["agents"][3]["description"] = "\u00e9" * 512
+    payload["conversationSettings"] = {"announceAgentChanges": True}
+    response = client.put(PATH, json=payload, headers={"If-Match": ETAG})
+    assert response.status_code == 200 and repository.publications == 1
+    assert response.json()["agents"][3]["description"] == "\u00e9" * 512
+    assert response.json()["conversationSettings"] == {"announceAgentChanges": True}
+
+
+@pytest.mark.parametrize(
+    ("settings", "description", "version"),
+    [
+        (None, None, "2.1.0"),
+        ({"textGlobalPrompt": "Synthetic global"}, None, "2.2.0"),
+        (None, "Synthetic billing questions", "2.3.0"),
+        ({"announceAgentChanges": False}, None, "2.3.0"),
+        ({"textGlobalPrompt": "Synthetic global", "announceAgentChanges": True}, None, "2.3.0"),
+    ],
+)
+def test_2_3_0_is_written_only_when_a_description_or_the_announce_setting_is_present(
+    validator, configuration_graph, settings, description, version
+) -> None:
+    from management_app.adapters.configuration_repository import publication
+
+    graph = copy.deepcopy(configuration_graph)
+    if settings is not None:
+        graph["conversationSettings"] = settings
+    if description is not None:
+        graph["agents"][3]["description"] = description
+    snapshot = publication(
+        validator, graph, actor="manager-fixture", previous=None, authority=None
+    )[0]
+    assert snapshot["schemaVersion"] == version
+    # Absent fields are never written.
+    assert ("description" in snapshot["agents"][3]) == (description is not None)
+    assert all("description" not in agent for agent in snapshot["agents"][:3])
+
+
+def test_tester_only_users_never_receive_the_description_or_the_announce_setting(
+    configuration_graph,
+) -> None:
+    from management_app.api.configuration import create_router
+
+    class ReaderIdentity(IdentityDouble):
+        async def require_reader(self, request, *, reader_role):
+            return "tester-application"
+
+    graph = copy.deepcopy(configuration_graph)
+    graph["conversationSettings"] = {"voice": "marin", "announceAgentChanges": True}
+    graph["agents"][3]["description"] = "Synthetic private description"
+    repository = RepositoryDouble(revision(graph, 1, "bootstrap-fixture"))
+    app = FastAPI()
+    app.include_router(
+        create_router(
+            repository=repository,
+            identity=ReaderIdentity(mode="forbidden"),
+            validator=ValidatorDouble(),
+            audit=repository.audit,
+            reader_role="Conversation.Tester",
+        )
+    )
+    with TestClient(app) as client:
+        reader = client.get(PATH)
+    assert reader.status_code == 200 and "Synthetic private" not in reader.text
+    assert reader.json()["conversationSettings"] == {"voice": "marin"}
+    assert all("description" not in agent for agent in reader.json()["agents"])
 
 
 def test_tester_only_users_never_receive_or_change_the_modality_texts(configuration_graph) -> None:

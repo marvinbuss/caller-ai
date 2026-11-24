@@ -635,3 +635,94 @@ def test_greeting_speech_parts_and_progress_events_use_closed_sets(caplog):
         )
     finally:
         telemetry.close()
+
+
+def test_handover_history_and_delegation_events_use_closed_fields(caplog):
+    telemetry = Telemetry("caller-runtime", "local")
+    try:
+        telemetry.event(
+            "test.handover",
+            "success",
+            mode="text",
+            reason="applied",
+            fields={"source_role": "routing", "destination_role": "ordinary", "path": "routing"},
+        )
+        for reason in ("refused_graph", "refused_stale", "refused_budget", "refused_step_limit"):
+            telemetry.event(
+                "test.handover",
+                "failure",
+                mode="speech",
+                reason=reason,
+                fields={"source_role": "ordinary", "destination_role": "ordinary", "path": "peer"},
+            )
+        for kib in ("<16", "16-64", "64-128", "128-192", ">=192"):
+            telemetry.event(
+                "test.history", "success", mode="text", reason="ready", fields={"history_kib": kib}
+            )
+        telemetry.event(
+            "test.history",
+            "success",
+            mode="speech",
+            reason="condensed",
+            fields={"history_kib": ">=192"},
+        )
+        telemetry.event(
+            "test.history", "failure", mode="text", reason="limit", fields={"history_kib": ">=192"}
+        )
+        telemetry.event(
+            "test.delegation",
+            "success",
+            mode="speech",
+            reason="ready",
+            fields={
+                "first_role": "routing",
+                "handled_role": "ordinary",
+                "handed_on": True,
+                "untranscribed": False,
+            },
+        )
+        telemetry.event(
+            "test.latency",
+            "success",
+            mode="text",
+            reason="ready",
+            measurement="handover_seconds",
+            value=1.25,
+            fields={"path": "direct"},
+        )
+        telemetry.event(
+            "test.latency",
+            "success",
+            mode="speech",
+            reason="ready",
+            measurement="transcription_wait_seconds",
+            value=0.5,
+        )
+        events = telemetry.events
+        assert len(events) == 15
+        assert events[0]["path"] == "routing" and events[0]["source_role"] == "routing"
+        assert events[0]["reason_code"] == "applied" and events[1]["reason_code"] == "refused_graph"
+        assert events[5]["history_kib"] == "<16" and events[10]["reason_code"] == "condensed"
+        delegation = events[12]
+        assert delegation["handed_on"] == "true" and delegation["untranscribed"] == "false"
+        assert events[13]["measurement"] == "handover_seconds" and events[13]["path"] == "direct"
+        unsafe = [
+            ("test.handover", {"path": "synthetic-private"}),
+            ("test.handover", {"source_role": "Billing agent"}),
+            ("test.handover", {"history_kib": "<16"}),
+            ("test.history", {"history_kib": "17"}),
+            ("test.delegation", {"handed_on": "yes"}),
+            ("test.delegation", {"untranscribed": 1}),
+            ("test.work", {"path": "peer"}),
+            ("test.handover", {"transcript": "synthetic-private"}),
+        ]
+        for name, fields in unsafe:
+            with pytest.raises(ValueError, match="unsafe_test_field"):
+                telemetry.event(name, "success", mode="text", reason="ready", fields=fields)
+        with pytest.raises(ValueError, match="unsafe_test_metadata"):
+            telemetry.event("test.handover", "failure", mode="text", reason="refused_by_user_text")
+        with pytest.raises(ValueError, match="unsafe_test_field"):
+            telemetry.event("startup", "success", fields={"path": "peer"})
+        assert len(telemetry.events) == 15 and "synthetic-private" not in caplog.text
+    finally:
+        telemetry.close()

@@ -43,7 +43,6 @@ def run_owned_browser_runtime(fixture_path):
         live_started,
         model_capped,
         model_stream,
-        tool_names,
     )
 
     path = Path(fixture_path)
@@ -95,15 +94,18 @@ def run_owned_browser_runtime(fixture_path):
                 return httpx2.Response(503, json={"error": {"message": "Synthetic unknown result"}})
             body = json.loads(request.content)
             assert body["store"] is False and not body.get("parallel_tool_calls")
-            names = tool_names(body)
+            # Welcome hands over without a model step (FR-030); Routing hands off to the first
+            # community it offers, and that community's agent answers.
+            routes = [
+                tool["name"]
+                for tool in body.get("tools", [])
+                if tool["name"].startswith("handover_")
+                and tool.get("description") != "Published-policy goodbye"
+            ]
             action = (
-                ("enter_routing", {})
-                if "enter_routing" in names
-                else (
-                    ("route_community", {"community_id": "community-alpha"})
-                    if "route_community" in names
-                    else None
-                )
+                (routes[0], {})
+                if routes and "Routing agent" in str(body.get("instructions", ""))
+                else None
             )
             if not body.get("stream"):
                 return httpx2.Response(200, json=model_capped())
@@ -1032,18 +1034,8 @@ def owned_voice_socket(text_execution_case, admission_case, live_case):
                 slot = await admission.check_output(
                     original.session_id, original.owner_epoch, generation=1
                 )
-                segments = SpeechSegments(
-                    current=segment,
-                    instructions_for=lambda current: "Synthetic continuation voice",
-                    emit=emit,
-                )
-                policy = ConversationPolicy(
-                    slot=slot,
-                    snapshot=cache.pin(),
-                    admission=admission,
-                    retire_speech=segments.retire,
-                    continue_speech=segments.continue_with,
-                )
+                segments = SpeechSegments(current=segment)
+                policy = ConversationPolicy(slot=slot, snapshot=cache.pin(), admission=admission)
                 self.segment, self.provider_socket = segment, provider_socket
                 self.controller = ConversationExecutor(
                     policy=policy,
@@ -1188,7 +1180,8 @@ def refusal(socket):
             if event["type"] == "error":
                 error = event
             else:
-                assert event["type"] == "audio.credit"
+                # Welcome hands over to Routing after the greeting, metadata only (FR-030).
+                assert event["type"] in {"audio.credit", "agent.changed"}
     return error, failure.value.code
 
 
@@ -1326,26 +1319,24 @@ def test_owned_speech_socket_exchanges_credited_pcm_mute_and_stop_without_text_m
             "channels": 1,
         }
         credit = socket.receive_json()
+        while credit["type"] == "agent.changed":
+            credit = socket.receive_json()
         assert credit["type"] == "audio.credit" and 0 < credit["availableSamples"] <= 6000
         pcm = b"\x05\0" * 480
         socket.send_bytes(struct.pack(">BII", 1, ready["generation"], 1) + pcm)
+        # Mute input acts in the browser only; the runtime refuses the old message (T047).
         socket.send_json(
-            {"type": "input.mute", "sessionId": ready["sessionId"], "sequence": 1, "muted": True}
+            {"type": "ping", "sessionId": ready["sessionId"], "sequence": 1, "nonce": "after"}
         )
-        while True:
-            event = socket.receive_json()
-            if event["type"] == "command.ack":
-                assert event["acceptedSequence"] == 1
-                break
+        while socket.receive_json()["type"] != "pong":
+            pass
         appended = [
             event
             for event in service.provider_socket.sent
             if event["type"] == "session.input_audio.append"
         ]
         assert len(appended) == 1 and base64.b64decode(appended[0]["audio"]) == pcm
-        assert any(
-            event["type"] == "session.input_audio.mute" for event in service.provider_socket.sent
-        )
+        assert not any("mute" in event["type"] for event in service.provider_socket.sent)
         socket.send_json({"type": "stop", "sessionId": ready["sessionId"], "sequence": 2})
         while socket.receive_json()["type"] != "ended":
             pass
@@ -1368,7 +1359,7 @@ def test_owned_speech_socket_writes_actual_pcm_and_accepts_only_sent_played_sequ
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
-        assert socket.receive_json()["type"] == "audio.credit"
+        assert socket.receive_json()["type"] in {"audio.credit", "agent.changed"}
         pcm = b"\x05\0" * 480
         assert client.portal is not None
         client.portal.call(
@@ -1384,7 +1375,7 @@ def test_owned_speech_socket_writes_actual_pcm_and_accepts_only_sent_played_sequ
             message = socket.receive()
             if message.get("bytes") is not None:
                 break
-            assert json.loads(message["text"])["type"] == "audio.credit"
+            assert json.loads(message["text"])["type"] in {"audio.credit", "agent.changed"}
         frame = message["bytes"]
         assert struct.unpack(">BII", frame[:9]) == (1, ready["generation"], 1) and frame[9:] == pcm
         socket.send_json(
@@ -1433,7 +1424,7 @@ def test_owned_speech_socket_rejects_malformed_pcm_and_forged_played_ack(
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
-        assert socket.receive_json()["type"] == "audio.credit"
+        assert socket.receive_json()["type"] in {"audio.credit", "agent.changed"}
         if fault == "unsent-ack":
             socket.send_json(
                 {
@@ -1469,7 +1460,7 @@ def test_owned_speech_correlates_verified_fragments_then_uses_shared_clarity_and
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
-        assert socket.receive_json()["type"] == "audio.credit"
+        assert socket.receive_json()["type"] in {"audio.credit", "agent.changed"}
         socket.send_bytes(struct.pack(">BII", 1, ready["generation"], 1) + b"\0" * 960)
         socket.send_json(
             {
@@ -1535,54 +1526,6 @@ def test_owned_speech_correlates_verified_fragments_then_uses_shared_clarity_and
                 break
 
 
-def test_owned_speech_interrupt_retires_socket_once_and_acknowledges_duplicate(
-    owned_voice_socket, monkeypatch
-):
-    client, service, requests, clock, assertion, telemetry = owned_voice_socket
-    with client.websocket_connect(
-        SOCKET_URL,
-        subprotocols=["caller.voice.v1"],
-        headers={"Authorization": "Bearer synthetic-management-workload"},
-    ) as socket:
-        ready = authenticate(socket, assertion)
-        assert socket.receive_json()["type"] == "audio.credit"
-        created = []
-
-        async def connect(url, **options):
-            assert service.provider_socket.closed == 1 and service.segment.protocol.closed
-            fresh = type(service.provider_socket)()
-            created.append(fresh)
-            return fresh
-
-        monkeypatch.setattr(service.segment.adapter, "_factory", connect)
-        command = {
-            "type": "output.interrupt",
-            "sessionId": ready["sessionId"],
-            "sequence": 1,
-            "generation": ready["generation"],
-        }
-        socket.send_json(command)
-        generation = ready["generation"]
-        while True:
-            event = socket.receive_json()
-            if event["type"] == "generation.changed":
-                generation = event["generation"]
-            if event["type"] == "command.ack":
-                break
-        assert generation > ready["generation"] and len(created) == 1
-        socket.send_json(command)
-        while True:
-            event = socket.receive_json()
-            if event["type"] == "command.ack":
-                assert event["acceptedSequence"] == 1
-                break
-        assert len(created) == 1 and service.controller.policy.slot.generation == generation
-        socket.send_json({"type": "stop", "sessionId": ready["sessionId"], "sequence": 2})
-        while socket.receive_json()["type"] != "ended":
-            pass
-        assert created[0].closed == 1 and not requests
-
-
 def test_owned_socket_keeps_controls_working_while_an_agent_change_is_under_way(
     owned_voice_socket, monkeypatch
 ):
@@ -1598,26 +1541,37 @@ def test_owned_socket_keeps_controls_working_while_an_agent_change_is_under_way(
         headers={"Authorization": "Bearer synthetic-management-workload"},
     ) as socket:
         ready = authenticate(socket, assertion)
-        assert socket.receive_json()["type"] == "audio.credit"
+        assert socket.receive_json()["type"] in {"audio.credit", "agent.changed"}
         starting, release = asyncio.Event(), asyncio.Event()
 
         async def connect(url, **options):
-            return type(service.provider_socket)()
+            raise AssertionError("an agent change opens no second Live session")
 
         monkeypatch.setattr(service.segment.adapter, "_factory", connect)
         policy = service.controller.policy
+        assert client.portal is not None
+
+        async def until_routing():
+            # The missed greeting already moved Welcome to Routing (FR-030).
+            for _ in range(200):
+                if policy.active_agent_id == "routing":
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError("welcome_not_left")
+
+        client.portal.call(until_routing)
         transition = policy.admission.transition
 
         async def slow_transition(*arguments, **keywords):
-            # The old segment is retired and its generation fenced; the store answers slowly.
             starting.set()
             await release.wait()
             return await transition(*arguments, **keywords)
 
         monkeypatch.setattr(policy.admission, "transition", slow_transition)
-        assert client.portal is not None
         change = client.portal.start_task_soon(
-            policy.enter_routing,
+            policy.handover,
+            "b-entry",
+            "routing",
             WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10)),
         )
 
@@ -1626,30 +1580,27 @@ def test_owned_socket_keeps_controls_working_while_an_agent_change_is_under_way(
 
         client.portal.call(until_starting)
         try:
-            # The authority is a generation ahead of the policy until the transition is stored.
+            # The generation does not change, so every control keeps working meanwhile.
             for sequence, command in enumerate(
                 (
-                    {"type": "ping", "nonce": "during-change"},
                     {
                         "type": "audio.played",
                         "generation": ready["generation"],
                         "audioSequence": 0,
                     },
-                    {"type": "output.interrupt", "generation": ready["generation"]},
+                    {"type": "ping", "nonce": "during-change"},
                 ),
                 start=1,
             ):
                 socket.send_json(command | {"sessionId": ready["sessionId"], "sequence": sequence})
-            seen = []
-            while not {"pong", "command.ack"} <= set(seen):
-                event = socket.receive_json()
+            while (event := socket.receive_json())["type"] != "pong":
                 assert event["type"] not in {"error", "ended"}, event
-                seen.append(event["type"])
         finally:
             client.portal.call(release.set)
         change.result(timeout=2)
-        assert policy.active_agent_id == "routing"
-        socket.send_json({"type": "stop", "sessionId": ready["sessionId"], "sequence": 4})
+        assert policy.active_agent_id == "b-entry"
+        assert policy.slot.generation == ready["generation"]
+        socket.send_json({"type": "stop", "sessionId": ready["sessionId"], "sequence": 3})
         while (event := socket.receive_json())["type"] != "ended":
             assert event["type"] != "error", event
         assert not any(event["event"] == "test.session.failure" for event in telemetry.events)
@@ -1911,10 +1862,8 @@ def test_twenty_publications_new_starts_preserve_pin_and_current_revocation(
                 assert pinned.revision_id == runtime_revision_v2(1)["id"]
                 assert await current.close()
             assert time.monotonic() - started < 60
-            controls["wire_actions"] = [
-                ("enter_routing", {}),
-                ("route_community", {"community_id": "beta"}),
-            ]
+            # Welcome hands over by itself; Routing offers a-entry, b-entry and Goodbye.
+            controls["wire_actions"] = [("handover_1", {})]
             first_generation = original.policy.slot.generation
             await original.submit_text("text-1", "Synthetic original pinned request")
             while await original.process_next(emit=emit):
@@ -2010,17 +1959,20 @@ def test_independent_runtime_processes_share_actor_capacity_and_cas_history(
                 assert not process.is_alive()
 
 
-@pytest.mark.parametrize("case", ["pressure", "stale-generation"])
-def test_owned_tls_speech_pressure_and_retired_audio_never_relabel(
+@pytest.mark.parametrize("case", ["pressure", "agent-change"])
+def test_owned_tls_speech_pressure_and_audio_across_an_agent_change(
     owned_tls_runtime, monkeypatch, case
 ):
     import asyncio
     import base64
     import json
     import struct
+    from datetime import timedelta
 
     from websockets.asyncio.client import connect
     from websockets.exceptions import ConnectionClosed
+
+    from caller_runtime.domain.conversation import WorkBudget
 
     url, context, service, requests, assertion = owned_tls_runtime
 
@@ -2059,7 +2011,8 @@ def test_owned_tls_speech_pressure_and_retired_audio_never_relabel(
             )
             ready = json.loads(await asyncio.wait_for(socket.recv(), 3))
             assert ready["mode"] == "speech"
-            assert json.loads(await asyncio.wait_for(socket.recv(), 3))["type"] == "audio.credit"
+            first = json.loads(await asyncio.wait_for(socket.recv(), 3))
+            assert first["type"] in {"audio.credit", "agent.changed"}
             if case == "pressure":
                 await inject(service.provider_socket, b"\x05\0" * 12000)
                 frames = []
@@ -2068,7 +2021,7 @@ def test_owned_tls_speech_pressure_and_retired_audio_never_relabel(
                     if isinstance(message, bytes):
                         frames.append(message)
                     else:
-                        assert json.loads(message)["type"] == "audio.credit"
+                        assert json.loads(message)["type"] in {"audio.credit", "agent.changed"}
                 assert sum(len(frame) - 9 for frame in frames) == 24000
                 await inject(service.provider_socket, b"\x06\0" * 480)
                 with pytest.raises(ConnectionClosed) as failure:
@@ -2078,45 +2031,38 @@ def test_owned_tls_speech_pressure_and_retired_audio_never_relabel(
                 assert failure.value.rcvd.code == 4413
             else:
                 old = service.provider_socket
-                created = []
 
                 async def connect_next(url, **options):
-                    assert old.closed == 1 and service.segment.protocol.closed
-                    fresh = type(old)()
-                    created.append(fresh)
-                    return fresh
+                    raise AssertionError("an agent change opens no second Live session")
 
                 monkeypatch.setattr(service.segment.adapter, "_factory", connect_next)
-                await socket.send(
-                    json.dumps(
-                        {
-                            "type": "output.interrupt",
-                            "sequence": 1,
-                            "sessionId": ready["sessionId"],
-                            "generation": ready["generation"],
-                        }
+                policy = service.controller.policy
+
+                async def change():
+                    # The missed greeting moves Welcome to Routing first (FR-030).
+                    for _ in range(200):
+                        if policy.active_agent_id == "routing":
+                            break
+                        await asyncio.sleep(0.01)
+                    now = service.controller.utc_now()
+                    await policy.handover(
+                        "b-entry", "routing", WorkBudget(now, now + timedelta(seconds=10))
                     )
-                )
-                changed = ready["generation"]
-                while True:
-                    event = json.loads(await asyncio.wait_for(socket.recv(), 3))
-                    if event["type"] == "generation.changed":
-                        changed = event["generation"]
-                    if event["type"] == "command.ack":
-                        break
-                assert changed > ready["generation"] and len(created) == 1
-                await inject(old, b"\x07\0" * 480)
+
+                await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(change(), service.loop))
+                assert policy.active_agent_id == "b-entry"
                 pcm = b"\x08\0" * 480
-                await inject(created[0], pcm)
+                await inject(old, pcm)
                 while True:
                     message = await asyncio.wait_for(socket.recv(), 3)
                     if isinstance(message, bytes):
-                        assert struct.unpack(">BII", message[:9]) == (1, changed, 1)
+                        # The same generation before and after the agent change (FR-013).
+                        assert struct.unpack(">BII", message[:9]) == (1, ready["generation"], 1)
                         assert message[9:] == pcm
                         break
-                    assert json.loads(message)["type"] == "audio.credit"
+                    assert json.loads(message)["type"] in {"audio.credit", "agent.changed"}
                 await socket.send(
-                    json.dumps({"type": "stop", "sequence": 2, "sessionId": ready["sessionId"]})
+                    json.dumps({"type": "stop", "sequence": 1, "sessionId": ready["sessionId"]})
                 )
                 while json.loads(await asyncio.wait_for(socket.recv(), 3))["type"] != "ended":
                     pass

@@ -1,10 +1,10 @@
 """Immutable, validated snapshots of the published configuration and the cache that pins them.
 
 Input: the revision document management serves; output: `RevisionSnapshot`s whose runtime
-projection is hash-checked and bounded (16 KiB prompts, 4 KiB community descriptions, at most two
-transfer context fields). A snapshot is a policy projection, never the current permission
-authority: management checks revocations on every capability call. A session keeps the snapshot it
-started with.
+projection is hash-checked and bounded (16 KiB prompts, 4 KiB community descriptions, 1 KiB agent
+descriptions, at most two transfer context fields). A snapshot is a policy projection, never the
+current permission authority: management checks revocations on every capability call. A session
+keeps the snapshot it started with.
 """
 
 import hashlib
@@ -67,6 +67,8 @@ def _bounded(limit: int) -> Callable[[str | None], str | None]:
 Instructions = Annotated[str | None, AfterValidator(_bounded(12 * 1024))]
 Layer = Annotated[str | None, AfterValidator(_bounded(8 * 1024))]
 Addition = Annotated[str | None, AfterValidator(_bounded(4 * 1024))]
+# Schema 2.3.0 (feature 007, FR-029): how an agent is described as a handover destination.
+Description = Annotated[str | None, AfterValidator(_bounded(1024))]
 COMPOSED_LIMIT = 36 * 1024
 MODES: tuple[Literal["speech", "text"], ...] = ("speech", "text")
 
@@ -81,6 +83,7 @@ class _Agent(_Strict):
     capabilityAssignments: list[_Assignment]
     voiceAddition: Addition = None
     textAddition: Addition = None
+    description: Description = None
 
     @field_validator("prompt")
     @classmethod
@@ -160,6 +163,7 @@ class _ConversationSettings(_Strict):
     textPlatformRules: Layer = None
     textGlobalPrompt: Layer = None
     quietHandover: bool | None = None
+    announceAgentChanges: bool | None = None
 
     @field_validator("voice")
     @classmethod
@@ -172,7 +176,7 @@ class _ConversationSettings(_Strict):
 class _Revision(_Strict):
     id: Identifier
     organizationId: Literal["default"]
-    schemaVersion: Literal["2.0.0", "2.1.0", "2.2.0"]
+    schemaVersion: Literal["2.0.0", "2.1.0", "2.2.0", "2.3.0"]
     revisionNumber: int = Field(ge=1)
     createdAt: datetime
     createdBy: Identifier
@@ -198,7 +202,8 @@ def compose_instructions(
 ) -> str:
     """A working agent's instructions for one modality, blank-line separated and without empty
     parts: platform rules, global prompt, prompt, addition (FR-026). A projection from slice 1
-    management carries no layers, so the runtime's shipped platform rules stand in."""
+    management carries no layers, so the runtime's shipped platform rules stand in. With
+    `announceAgentChanges` the announce rule follows the platform rules (feature 007)."""
     settings = graph.get("conversationSettings") or {}
     prefix = "voice" if mode == "speech" else "text"
     rules = settings.get(prefix + "PlatformRules")
@@ -208,6 +213,8 @@ def compose_instructions(
             if mode == "speech"
             else modality_defaults.TEXT_PLATFORM_RULES
         )
+    if settings.get("announceAgentChanges") is True:
+        rules = rules + "\n" + modality_defaults.ANNOUNCE_RULE
     parts = (
         rules,
         settings.get(prefix + "GlobalPrompt") or "",

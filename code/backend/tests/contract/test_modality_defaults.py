@@ -19,13 +19,17 @@ def test_runtime_copies_are_byte_equal_to_the_management_defaults():
         "VOICE_PLATFORM_RULES",
         "TEXT_PLATFORM_RULES",
         "PROGRESS_RULES",
+        "HANDOVER_RULES",
+        "ANNOUNCE_RULE",
     ):
         assert getattr(modality_defaults, name).encode("utf-8") == management[name].encode(
             "utf-8"
         ), name
 
 
-def test_both_platform_rules_end_with_the_progress_rules():
+def test_both_platform_rules_end_with_the_progress_and_handover_rules():
     for rules in (modality_defaults.VOICE_PLATFORM_RULES, modality_defaults.TEXT_PLATFORM_RULES):
-        assert rules.endswith("\n\n" + modality_defaults.PROGRESS_RULES)
-        assert "report_progress" in rules
+        assert rules.endswith(
+            "\n\n" + modality_defaults.PROGRESS_RULES + "\n\n" + modality_defaults.HANDOVER_RULES
+        )
+        assert "report_progress" in rules and "Handover rules:" in rules

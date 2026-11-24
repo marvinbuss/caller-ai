@@ -64,6 +64,25 @@ def test_projection_always_carries_every_setting_and_addition_under_its_hash(
     assert repository.snapshot["schemaVersion"] == "2.2.0"
 
 
+def test_projection_carries_the_description_and_the_announce_setting_as_2_3_0(
+    runtime_configuration_api, validator, configuration_graph
+):
+    from management_app.adapters.configuration_repository import publication
+
+    client, identity, repository, telemetry = runtime_configuration_api
+    graph = copy.deepcopy(configuration_graph)
+    graph["conversationSettings"] = {"announceAgentChanges": True}
+    graph["agents"][3]["description"] = "Synthetic billing questions"
+    repository.snapshot = publication(
+        validator, graph, actor="manager-fixture", previous=None, authority=None
+    )[0]
+    projection = client.get(PATH, headers={"X-Fixture-Identity": "runtime"}).json()
+    assert projection["schemaVersion"] == "2.3.0"
+    assert projection["conversationSettings"]["announceAgentChanges"] is True
+    assert projection["agents"][3]["description"] == "Synthetic billing questions"
+    assert all("description" not in agent for agent in projection["agents"][:3])
+
+
 def test_v2_runtime_projection_has_independent_hash_and_no_layout(runtime_configuration_api):
     from management_app.adapters.configuration_repository import graph_document
     from management_app.services.configuration_validation import encoded

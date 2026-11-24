@@ -57,7 +57,6 @@ class RelayFrames:
         self._input: dict[int, int] = {}
         self._output: dict[int, int] = {}
         self._seen: dict[int, str] = {}
-        self._muted = False
         self._output_blocked = False
 
     @property
@@ -83,8 +82,6 @@ class RelayFrames:
         already on the wire when the generation changed."""
         if isinstance(raw, bytes):
             generation, sequence = self._audio(raw)
-            if self._muted:
-                raise PermissionError("test_input_muted")
             if 1 <= generation < self.generation:
                 return False
             if generation != self.generation:
@@ -100,12 +97,11 @@ class RelayFrames:
             return True
         value = parse_control(raw)
         kind = value.get("type")
+        # Mute input and Mute output act only in the browser and send nothing (feature 007).
         fields = {
             "stop": set(),
             "ping": {"nonce"},
             "pong": {"nonce"},
-            "input.mute": {"muted"},
-            "output.interrupt": {"generation"},
             "audio.played": {"generation", "audioSequence"},
         }
         if (
@@ -127,7 +123,7 @@ class RelayFrames:
             return True
         if sequence != self.client_sequence + 1:
             raise PermissionError("invalid_test_sequence")
-        if kind in {"output.interrupt", "audio.played"} and (
+        if kind == "audio.played" and (
             type(value["generation"]) is not int or not 1 <= value["generation"] <= self.generation
         ):
             raise PermissionError("stale_generation")
@@ -141,13 +137,7 @@ class RelayFrames:
                     raise PermissionError("invalid_played_ack")
                 self.played_sequence = played
                 self._output = {key: count for key, count in self._output.items() if key > played}
-        elif kind == "input.mute":
-            if type(value["muted"]) is not bool:
-                raise PermissionError("invalid_test_control")
-            self._muted = value["muted"]
-        elif kind == "stop" or (
-            kind == "output.interrupt" and value["generation"] == self.generation
-        ):
+        elif kind == "stop":
             self._output_blocked = True
         elif kind in {"ping", "pong"}:
             if (
@@ -188,9 +178,11 @@ class RelayFrames:
         kind = value.get("type")
         if kind in {"generation.changed", "agent.changed"}:
             fields = {"reason"} if kind == "generation.changed" else {"agentId", "communityId"}
-            if (
-                set(value) != {"type", "sessionId", "sequence", "generation"} | fields
-                or value["generation"] <= self.generation
+            # One Live session per test (feature 007): an agent change keeps the generation and
+            # resets nothing. A higher generation still resets, as before the change.
+            same = kind == "agent.changed" and value["generation"] == self.generation
+            if set(value) != {"type", "sessionId", "sequence", "generation"} | fields or (
+                value["generation"] <= self.generation and not same
             ):
                 raise PermissionError("invalid_test_generation")
             if kind == "generation.changed" and value["reason"] not in {
@@ -212,14 +204,15 @@ class RelayFrames:
                     is None
                 ):
                     raise PermissionError("invalid_test_control")
-            self.generation = value["generation"]
-            self.input_sequence = self.output_sequence = self.sent_sequence = (
-                self.played_sequence
-            ) = 0
-            self._input.clear()
-            self._output.clear()
-            self._credit = 0
-            self._output_blocked = False
+            if not same:
+                self.generation = value["generation"]
+                self.input_sequence = self.output_sequence = self.sent_sequence = (
+                    self.played_sequence
+                ) = 0
+                self._input.clear()
+                self._output.clear()
+                self._credit = 0
+                self._output_blocked = False
         elif kind == "audio.credit":
             if (
                 set(value)

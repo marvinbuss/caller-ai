@@ -144,6 +144,19 @@ when any check fails. The first deployment is expected to fail once at `signin-r
 the management callback address exists only after the apps exist; the identity script's redirect phase
 registers it and a rerun passes.
 
+## Conversation tuning
+
+Three runtime settings tune the shared conversation history (feature 007). Each comes from
+`app_environment.application.tuning` in the environment file; an absent (`null`) value leaves the
+variable empty, and the runtime then uses its default. A value outside the range stops the
+runtime at start with `settings_invalid`.
+
+| Variable | Tuning key | Default | Allowed values | Effect |
+|----------|------------|---------|----------------|--------|
+| `CALLER_TRANSCRIPTION_WAIT_SECONDS` | `transcription_wait_seconds` | `0.5` | `0` to `2` seconds | How long a voice delegation waits for the caller's transcript to catch up before the agents start. Raise it when the P4 query in [monitoring](runbooks/monitoring.md#handover-delegation-and-history-events) shows more than 10 % untranscribed delegations |
+| `CALLER_REASONING_EFFORT` | `reasoning_effort` | `low` | `minimal`, `low`, `medium` | The reasoning effort of every working agent, the clarity check, the greeting and condensing. `minimal` is refused by some deployments when function tools are present |
+| `CALLER_VOICE_DELEGATION_UPDATES` | `voice_delegation_updates` | `false` | `true`, `false` | `true` sends the voice assistant a delegation update after the start and whenever the communities it may delegate for change; `false` puts the same list once into its start instructions |
+
 ## Limitations
 
 | Limitation | Meaning |

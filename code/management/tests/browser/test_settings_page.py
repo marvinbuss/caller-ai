@@ -10,7 +10,14 @@ from management_app.services.configuration_validation import GRAPH_FIELDS as PUB
 
 pytestmark = pytest.mark.browser
 
-USERS = ("settings-one", "settings-two", "settings-three", "settings-four", "settings-five")
+USERS = (
+    "settings-one",
+    "settings-two",
+    "settings-three",
+    "settings-four",
+    "settings-five",
+    "settings-six",
+)
 
 
 @pytest.fixture(scope="module")
@@ -249,5 +256,50 @@ def test_modality_texts_count_bytes_restore_defaults_and_confirm_platform_rules(
             f"Published revision {before + 4}"
         )
         assert "voicePlatformRules" not in (active().get("conversationSettings") or {})
+    finally:
+        context.close()
+
+
+def test_announce_agent_changes_is_off_by_default_publishes_and_restores(
+    browser: Browser, runtime_up
+):
+    def settings() -> dict:
+        with client(runtime_up) as api:
+            return api.get("/v2/configuration").json().get("conversationSettings") or {}
+
+    def number() -> int:
+        with client(runtime_up) as api:
+            return int(api.get("/v2/configuration").json()["revisionNumber"])
+
+    context, page = open_page(browser, runtime_up, "settings-six")
+    try:
+        before = number()
+        expect(voice(page)).to_be_enabled()
+        announce = page.get_by_label("Announce agent changes", exact=True)
+        expect(announce).not_to_be_checked()
+        expect(
+            page.get_by_text("When off, agents hand over to each other without saying so.")
+        ).to_be_visible()
+        # The existing switch keeps its stored key `quietHandover` under its new label.
+        expect(page.get_by_label("Quiet update on delegation", exact=True)).to_be_checked()
+        expect(page.get_by_text("Quiet update on handover")).to_have_count(0)
+        # The checkbox follows the server state, so click it and wait for the round trip.
+        announce.click()
+        expect(announce).to_be_checked()
+        page.get_by_role("button", name="Publish settings", exact=True).click()
+        expect(page.get_by_test_id("settings-status")).to_contain_text(
+            f"Published revision {before + 1}"
+        )
+        assert settings()["announceAgentChanges"] is True
+        page.reload(wait_until="networkidle")
+        expect(page.get_by_label("Announce agent changes", exact=True)).to_be_checked()
+        # Off again is the default, so the field is removed.
+        page.get_by_label("Announce agent changes", exact=True).click()
+        expect(page.get_by_label("Announce agent changes", exact=True)).not_to_be_checked()
+        page.get_by_role("button", name="Publish settings", exact=True).click()
+        expect(page.get_by_test_id("settings-status")).to_contain_text(
+            f"Published revision {before + 2}"
+        )
+        assert "announceAgentChanges" not in settings()
     finally:
         context.close()

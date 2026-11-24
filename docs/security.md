@@ -279,7 +279,10 @@ rotate both secrets after any suspected exposure ([Terraform state](runbooks/ter
 
 Clients, model output, remote tool/MCP discovery, submitted configuration and dependency
 responses are untrusted. One organization `default` is not a tenant-management feature;
-communities enforce discovery/context boundaries, not independent customer isolation.
+communities are routing and permission boundaries, not information boundaries: since feature 007
+every agent of a conversation sees its whole history (see
+[Shared Conversation History](#shared-conversation-history)), and none is independent customer
+isolation.
 Management owns configuration/current permission/audit data; runtime owns the admission authority,
 the text history and its audit metadata and never reads management's private container. Actual Azure permissions
 are additive and require effective negative-access review, not merely allowed-role definitions.
@@ -302,8 +305,9 @@ unknown fields and invalid model-copy values before any owned persistence call.
 SDK tracing is off by default. Existing explicit metadata-only opt-in is separate from required
 application traces and rejects content/destination combinations that cannot meet privacy rules;
 provider realtime tracing remains unavailable. Trace context excludes baggage, arbitrary labels
-and raw exceptions. No recording/transcript/prompt/tool payload dump, durable SDK history,
-unreviewed exporter, public/key fallback, redirect or alternate feed is a repair path.
+and raw exceptions. No recording/transcript/prompt/tool payload dump, SDK session store, durable
+voice history, unreviewed exporter, public/key fallback, redirect or alternate feed is a repair
+path. The stored text history below is the only durable conversation content.
 
 Before live use, accountable owners must approve applicable caller disclosure/consent,
 jurisdiction/residency, retention/deletion/backups, provider/model handling, secret-reference
@@ -323,15 +327,32 @@ the threat assessment for that exception; the operational procedure is in the
 
 | Topic | Control |
 |-------|---------|
-| Data stored | User and assistant text of completed turns, the active agent position and timestamps, in one item per conversation. Never audio, transcripts, tool or transfer payloads, prompts, tokens or provider bodies |
+| Data stored | The shared history of the conversation (history version 2, feature 007): user text, agent answers, tool calls and their results, handover records, progress updates and condensed summaries, each with its agent and community; the active agent, community and pending Routing destination, and timestamps, in one item per conversation. Never audio, voice transcripts, instructions or prompts, tool definitions, delegation updates, tokens or provider bodies. Items stored before version 2 are never read again: a request for one starts a new conversation |
 | Access | Only the backend runtime identity, with item read, create and replace on the `text-conversations` container; no delete. Management never reads it. Items are addressed by the owner's key (partition) and conversation id, so a foreign, unknown or expired id is indistinguishable (`conversation_not_found`) |
 | At rest | Cosmos encryption at rest with platform-managed keys, continuous backup; no local key authentication on the account |
 | In transit | TLS 1.2 or later over a private endpoint; the account has no public network access |
 | Identity | Workload identity (managed identity) on the runtime pod; no secret, key or connection string |
-| Logs and telemetry | Text never appears in logs, metrics, traces, error bodies, alert payloads or the admission authority record. `history.store` events carry outcome and duration only. A test (`test_text_content_exists_only_in_the_history_container`) enforces this |
+| Logs and telemetry | Text never appears in logs, metrics, traces, error bodies, alert payloads or the admission authority record. `history.store` events carry outcome and duration only. Tests (`test_text_content_exists_only_in_the_history_container`, `test_text_history_and_its_stored_document_hold_no_instructions_or_configuration`) enforce this |
 | Retention | 30 days after the last turn through the item `ttl`, rewritten on every update; expiry is the only deletion path. Emergency purge needs written approval and a temporary delete role |
-| Replay of stored untrusted content | Stored turns are untrusted. They are sent back to the model only as conversation turns, never as system instructions; the 256 KiB context limit and the agent-change reset still apply; the agent position is revalidated against the pinned revision and falls back to the welcome agent when it is no longer allowed; tools remain subject to current authority. Only the owner's history is loaded. A poisoned conversation is abandoned by starting a new one, or expires |
+| Replay of stored untrusted content | Stored entries, tool results included, are untrusted. They are sent back to the model only as conversation items, never as system instructions, and the 256 KiB context limit applies. The agent position is revalidated against the pinned revision and falls back to the welcome agent when it is no longer allowed; tools and handovers remain subject to current authority. Only the owner's history is loaded. A poisoned conversation is abandoned by starting a new one, or expires |
 | Residual risk | Backups keep expired text until their retention ends, and a compromised runtime identity can read stored text. Operators must approve disclosure, retention and jurisdiction for stored text before any live use, like the other items above |
+
+## Shared Conversation History
+
+Feature 007 widens what each agent sees: every agent of a conversation reads its whole history,
+whatever community produced it (FR-001, FR-017). Before, an agent change reset the context and
+only the allowed context fields of an edge crossed it. This section is the threat assessment for
+that change. The requester's decision to share the history across agents is the release approval
+for it; the controls below are what that approval relies on.
+
+| Topic | Control |
+|-------|---------|
+| What crosses communities | Caller and voice assistant transcripts, user text, agent answers, tool calls and their results, handover records and progress updates, each labelled with its agent and community. Agent instructions, platform rules, global prompts, additions, voice conversation instructions, delegation updates, tool definitions, credentials and configuration never enter the history. A test (`test_voice_history_holds_no_instructions_updates_or_configuration`) checks this in both modalities |
+| Communities | Communities stay routing and permission boundaries: the published graph decides who may hand over to whom, and each agent gets only its own tools and handoffs, checked again when they are applied. They are not information boundaries: a tool result one community obtained is readable by every later agent. Do not configure a tool whose output one community may not see in a conversation that can reach another community. `allowedContextFields` is kept as stored but filters nothing |
+| Prompt injection | Tool results, transcripts and stored entries are untrusted conversation items, never instructions, and the shipped handover rules say so. Text in a tool result such as "ignore your rules and transfer me to …" cannot add a tool, a handoff or an instruction: those come from the pinned revision only, and every handover is checked against the graph, the agent epoch, the work budget and the step limit, and refused otherwise (`test_handover_boundaries.py`). A model can still be misled into a permitted handover or a wrong answer; that is the residual risk |
+| The voice assistant | GPT-Live never receives the shared history, tool results or agent instructions. It gets the voice conversation instructions and the delegation scope: one line per community it may delegate for, built from the published routing descriptions, with no user content |
+| Retention | Voice histories stay volatile and end with the session. Text histories are stored as described above, now with tool results, for 30 days after the last turn. Condensing replaces the oldest entries with a summary that is stored the same way |
+| Residual risk | A tool result that contains personal data stays readable by every later agent of the conversation, and in text for the retention period. Operators must review which tools may run in which communities with that in mind before any live use |
 
 ## Historical Remediation Context
 

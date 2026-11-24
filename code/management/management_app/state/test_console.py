@@ -103,6 +103,25 @@ def empty_rule_notices(settings: dict[str, Any]) -> list[str]:
     ]
 
 
+HANDOVER_RULES_NOTICE = (
+    "Custom platform rules have no handover rules. Handovers may be less accurate."
+)
+
+
+def handover_rule_notices(settings: dict[str, Any]) -> list[str]:
+    """One notice when a modality's custom platform rules lack the handover rules (feature 007).
+
+    An absent field means the shipped rules, which carry them; empty rules have their own notice.
+    """
+    custom = [settings.get(key) for key in ("voicePlatformRules", "textPlatformRules")]
+    if any(
+        isinstance(rules, str) and rules.strip() and "Handover rules:" not in rules
+        for rules in custom
+    ):
+        return [HANDOVER_RULES_NOTICE]
+    return []
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleServices:
     guard: ReflexEventGuard = field(repr=False)
@@ -136,7 +155,8 @@ class TestConsoleState(rx.State):
     status: str = "idle"
     mode: str = "text"
     metadata: dict[str, Any] = {}
-    # "Platform rules for <modality> are empty" for each modality whose stored rules are empty.
+    # "Platform rules for <modality> are empty" for each modality whose stored rules are empty,
+    # and the custom-rules notice when custom rules lack the handover rules.
     rule_notices: list[str] = []
     _control: ConsoleControl = ConsoleControl()
 
@@ -175,7 +195,8 @@ class TestConsoleState(rx.State):
         self.rule_notices = []
         if services.active_settings is not None:
             try:
-                self.rule_notices = empty_rule_notices(await services.active_settings())
+                settings = await services.active_settings()
+                self.rule_notices = empty_rule_notices(settings) + handover_rule_notices(settings)
             except Exception:
                 self.rule_notices = []
 

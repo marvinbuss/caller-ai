@@ -238,6 +238,8 @@ def community_connection_row(connection: ObjectVar[dict[str, Any]]) -> rx.Compon
                 wrap="wrap",
                 width="100%",
             ),
+            # A connection is a direct path to the target's entry agent (feature 007, FR-008).
+            rx.text("Direct handover to the entry agent", size="1", color="#4f5852"),
             border_bottom="1px solid #dce1df",
             padding="8px 0",
         ),

@@ -50,6 +50,10 @@ class WorkItem:
     generation: int = field(init=False)
     agent_epoch: int = field(init=False)
     requires_clarity_check: bool = False
+    # Voice: the delegation's session-time position (`offset_ms`); its history entries go there.
+    offset_ms: float | None = None
+    # Voice: the caller's transcript had not caught up when the transcription wait ended.
+    untranscribed: bool = False
 
     def __post_init__(self) -> None:
         self.generation, self.agent_epoch = self.receipt.generation, self.receipt.agent_epoch
@@ -167,6 +171,7 @@ class DelegationQueue:
         provider_session_id: str | None = None,
         delegation_id: str | None = None,
         requires_clarity_check: bool = False,
+        offset_ms: float | None = None,
     ) -> Acceptance:
         if self._closed:
             raise PermissionError("work_queue_closed")
@@ -231,7 +236,12 @@ class DelegationQueue:
             raise PermissionError("work_history_limit")
         self._seen[key] = receipt
         self._history_bytes += size
-        self._pending = WorkItem(receipt, text, requires_clarity_check=requires_clarity_check)
+        self._pending = WorkItem(
+            receipt,
+            text,
+            requires_clarity_check=requires_clarity_check,
+            offset_ms=offset_ms if slot.mode == "speech" else None,
+        )
         return Acceptance(receipt, False)
 
     def take(self, *, now: datetime) -> WorkItem | None:

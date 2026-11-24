@@ -225,6 +225,7 @@ CONTROL_CODE = r"""
             "progress": this.mode === "text" ? ["messageId", "state", "text"] : ["state", "text"],
             "transcript.delta": ["speaker", "fragment", "start_ms", "end_ms"],
             "agent.changed": ["agentId", "communityId"], "generation.changed": ["reason"],
+            "history.condensed": [],
             "audio.credit": ["availableSamples", "acceptedAudioSequence"],
             "command.ack": ["acceptedSequence"], "ping": ["nonce"], "pong": ["nonce"],
             "error": ["code", "cleanupStatus", "correlationId"],
@@ -321,6 +322,9 @@ CONTROL_CODE = r"""
                 value.start_ms < 0 || value.end_ms < value.start_ms || value.end_ms > 3600000)
                 throw Error("invalid_transcript");
             this.append(value.speaker, value.fragment);
+        } else if (value.type === "history.condensed") {
+            // A status row only; it is never spoken (feature 007, FR-016).
+            this.status("Older parts of this conversation were condensed.", "");
         } else if (value.type === "agent.changed") {
             if (!identifier(value.agentId) ||
                 (value.communityId !== null && !identifier(value.communityId)))
@@ -384,8 +388,8 @@ CONTROL_CODE = r"""
         if (row) row.textContent += text;
         if (container) container.scrollTop = container.scrollHeight;
     }
-    status(text) {
-        // A progress update: its own row with a visible prefix, kept in the log (FR-041).
+    status(text, prefix = "Status: ") {
+        // A progress update or a notice: its own row, kept in the log (FR-041).
         const count = new TextEncoder().encode(text).length + 8;
         if (this.contentBytes + count > 262144 || this.rowCount >= 128)
             throw Error("volatile_content_limit");
@@ -396,7 +400,7 @@ CONTROL_CODE = r"""
         if (!container) return;
         const row = document.createElement("p"); row.dataset.kind = "status";
         row.style.whiteSpace = "pre-wrap"; row.style.overflowWrap = "anywhere";
-        row.textContent = "Status: " + text; container.append(row);
+        row.textContent = prefix + text; container.append(row);
         container.scrollTop = container.scrollHeight;
     }
     format(row, tree) {
@@ -486,6 +490,7 @@ CONTROL_CODE = r"""
         } catch { this.stop("protocol_error"); }
     }
     mute() {
+        // Mute input stops capture in the browser only; it sends no message (feature 007).
         if (this.terminal || this.mode !== "speech" || !this.node) return;
         if (this.socket?.bufferedAmount) { this.stop("unavailable"); return; }
         const muted = !this.budget.muted;
@@ -494,19 +499,19 @@ CONTROL_CODE = r"""
         for (const track of this.stream.getTracks()) track.enabled = !muted;
         this.node.port.postMessage({type: "mute", generation: this.budget.generation,
             captureEpoch: this.budget.captureEpoch, muted});
-        this.command("input.mute", {muted}); this.write("capture", muted ? "Muted" : "Active");
+        this.write("capture", muted ? "Muted" : "Active");
         const button = this.element("mute");
         if (button) button.setAttribute("aria-pressed", String(muted));
         this.grant();
     }
-    interrupt() {
-        if (this.terminal || this.mode !== "speech" || !this.node) return;
-        clearTimeout(this.idleTimer);
-        this.gain.gain.value = 0; this.budget.interrupt(); this.budget.reserved = 0;
-        this.queue = this.queue.filter(entry => typeof entry.value === "string");
-        this.clearWorklet();
-        this.command("output.interrupt", {generation: this.budget.generation});
-        this.write("playback", "Interrupted");
+    muteOutput() {
+        // Mute output silences playback on this device only: the audio keeps playing at zero
+        // volume, so `audio.played` and pacing are unchanged, and unmuting resumes in place.
+        if (this.terminal || this.mode !== "speech" || !this.gain) return;
+        this.outputMuted = !this.outputMuted;
+        this.gain.gain.value = this.outputMuted ? 0 : 1;
+        const button = this.element("mute-output");
+        if (button) button.setAttribute("aria-pressed", String(this.outputMuted));
     }
 """
 
@@ -616,7 +621,7 @@ class CallerTestEngine {
         const stop = this.element("stop"); if (stop) stop.disabled = this.terminal;
         const send = this.element("send");
         if (send) send.disabled = status !== "ready" || this.mode !== "text";
-        for (const name of ["mute", "interrupt"]) {
+        for (const name of ["mute", "mute-output"]) {
             const element = this.element(name);
             if (element) element.disabled = status !== "ready" || this.mode !== "speech";
         }
@@ -711,7 +716,7 @@ class CallerTestEngine {
                     this.playing(this.budget.playbackBytes > 0);
                 } else if (value.type === "cleared" &&
                     value.clearSequence === this.flushSequence) {
-                    if (!this.budget.blocked) this.gain.gain.value = 1;
+                    if (!this.budget.blocked && !this.outputMuted) this.gain.gain.value = 1;
                     if (this.budget.flushed(value.captureEpoch)) this.grant();
                 }
             } catch { this.stop("protocol_error"); }
@@ -722,7 +727,7 @@ class CallerTestEngine {
             !["text", "speech"].includes(mode)) return;
         this.terminal = false; const epoch = ++this.epoch;
         this.mode = mode; this.snapshot = {}; this.authenticated = false;
-        this.playbackUnavailable = false;
+        this.playbackUnavailable = false; this.outputMuted = false;
         this.clientSequence = this.serverSequence = 0;
         this.events.begin(mode); this.report(mode === "speech" ? "permission" : "starting");
         this.abort = new AbortController();
@@ -972,7 +977,7 @@ function CallerLiveAudio({authorized, onBegin, onControl}) {
         });
         bind(engine.element("stop"), "click", () => engine.stop());
         bind(engine.element("mute"), "click", () => engine.mute());
-        bind(engine.element("interrupt"), "click", () => engine.interrupt());
+        bind(engine.element("mute-output"), "click", () => engine.muteOutput());
         bind(engine.element("form"), "submit", event => {
             event.preventDefault(); engine.submit(engine.element("text")?.value || "");
         });

@@ -40,13 +40,16 @@ from caller_runtime.services.admission import (
     SettlementObserver,
     TestAdmissionService,
 )
+from caller_runtime.settings import REASONING_EFFORT, REASONING_EFFORTS, ReasoningEffort
 
 Reply = TypeVar("Reply")
 READINESS_INPUT = "Initialize the published Welcome conversation without invoking actions."
 # The provider minimum; a full Welcome reply on a reasoning model can outlast the startup budget.
 READINESS_OUTPUT_TOKENS = 16
-# A greeting is at most two short sentences; low reasoning effort keeps it fast.
+# A greeting is at most two short sentences; the configured effort (default low) keeps it fast.
 GREETING_OUTPUT_TOKENS = 256
+# The condensed account of the oldest history entries (feature 007, R11).
+CONDENSE_OUTPUT_TOKENS = 2048
 # A request still running when its work budget ends is left to finish in the background up to
 # this cap, so its outcome is known and the slot can be released; it is never sent again.
 MODEL_REQUEST_CAP_SECONDS = 60.0
@@ -147,6 +150,7 @@ class FoundryTextAdapter:
         telemetry: Telemetry | None = None,
         call_observer: Callable[[bool], None] | None = None,
         request_cap_seconds: float = MODEL_REQUEST_CAP_SECONDS,
+        reasoning_effort: ReasoningEffort = REASONING_EFFORT,
     ) -> None:
         try:
             parts = urlsplit(endpoint)
@@ -173,6 +177,7 @@ class FoundryTextAdapter:
                 or not 1 <= max_output_tokens <= 4096
                 or type(request_cap_seconds) not in (int, float)
                 or not 0 < request_cap_seconds <= MODEL_REQUEST_CAP_SECONDS
+                or reasoning_effort not in REASONING_EFFORTS
             ):
                 raise ValueError("invalid_binding")
         except (ValueError, TypeError):
@@ -188,6 +193,7 @@ class FoundryTextAdapter:
         self._active_operations = 0
         self._disposal_unknown = False
         self._request_cap = float(request_cap_seconds)
+        self.reasoning_effort = reasoning_effort
         self._drains: set[asyncio.Task[None]] = set()
         self._detached: set[AsyncOpenAI] = set()
         self.binding_hash = hashlib.sha256(
@@ -263,12 +269,12 @@ class FoundryTextAdapter:
         prompt: ResponsePromptParam | None,
     ) -> ModelSettings:
         if (
-            handoffs
-            or previous_response_id is not None
+            previous_response_id is not None
             or conversation_id is not None
             or prompt is not None
-            or len(tools) > 128
+            or len(tools) + len(handoffs) > 128
             or any(not isinstance(tool, FunctionTool) for tool in tools)
+            or any(not isinstance(item, Handoff) for item in handoffs)
             or any(
                 value is not None
                 for value in (
@@ -296,6 +302,13 @@ class FoundryTextAdapter:
             {"name": tool.name, "description": tool.description, "schema": tool.params_json_schema}
             for tool in tools
             if isinstance(tool, FunctionTool)
+        ] + [
+            {
+                "name": item.tool_name,
+                "description": item.tool_description,
+                "schema": item.input_json_schema,
+            }
+            for item in handoffs
         ]
         try:
             size = len(
@@ -309,7 +322,7 @@ class FoundryTextAdapter:
             raise PermissionError("invalid_model_context") from None
         # A prompt (16 KiB) plus the modality's platform rules and agent additions fit in 36 KiB.
         if (instructions is not None and len(instructions.encode("utf-8")) > 36 * 1024) or (
-            size + 4096 + len(tools) * 1024 > self.max_input_tokens
+            size + 4096 + (len(tools) + len(handoffs)) * 1024 > self.max_input_tokens
         ):
             raise PermissionError("model_context_limit")
         return replace(
@@ -358,7 +371,7 @@ class FoundryTextAdapter:
                 model_settings=checked,
                 tools=tools,
                 output_schema=output_schema,
-                handoffs=[],
+                handoffs=handoffs,
                 tracing=ModelTracing.DISABLED,
             )
 
@@ -418,7 +431,7 @@ class FoundryTextAdapter:
                 instructions=instructions,
                 input=prompt,
                 store=False,
-                reasoning={"effort": "low"},
+                reasoning={"effort": self.reasoning_effort},
                 max_output_tokens=GREETING_OUTPUT_TOKENS,
             )
 
@@ -432,6 +445,42 @@ class FoundryTextAdapter:
             )
         text = response.output_text.strip() if response.status == "completed" else ""
         if not text or len(text.encode("utf-8")) > 4096:
+            raise PermissionError("model_unavailable")
+        return text
+
+    async def condense(
+        self,
+        slot: TestSlot,
+        work: WorkBudget,
+        *,
+        instructions: str,
+        inputs: list[TResponseInputItem],
+    ) -> str:
+        """Ask for a condensed account of history entries; one bounded, tool-free request."""
+        if self._closed:
+            raise PermissionError("model_unavailable")
+        self._settings(instructions, inputs, ModelSettings(), [], [], None, None, None)
+
+        async def request(client: AsyncOpenAI) -> Response:
+            return await client.responses.create(
+                model=self.deployment,
+                instructions=instructions,
+                input=inputs,
+                store=False,
+                reasoning={"effort": self.reasoning_effort},
+                max_output_tokens=CONDENSE_OUTPUT_TOKENS,
+            )
+
+        response = await self._attempt(slot, work, request)
+        if self._telemetry is not None and response.usage is not None:
+            self._telemetry.model_usage(
+                mode=slot.mode,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                reasoning_tokens=_reasoning_tokens(response.usage),
+            )
+        text = response.output_text.strip() if response.status == "completed" else ""
+        if not text:
             raise PermissionError("model_unavailable")
         return text
 
@@ -637,7 +686,7 @@ class FoundryTextAdapter:
                         model_settings=checked,
                         tools=tools,
                         output_schema=output_schema,
-                        handoffs=[],
+                        handoffs=handoffs,
                         tracing=ModelTracing.DISABLED,
                     ),
                 )

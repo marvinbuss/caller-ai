@@ -47,8 +47,15 @@ def complete() -> dict[str, str]:
     }
 
 
+TUNING = (
+    "CALLER_TRANSCRIPTION_WAIT_SECONDS",
+    "CALLER_REASONING_EFFORT",
+    "CALLER_VOICE_DELEGATION_UPDATES",
+)
+
+
 def load(monkeypatch: pytest.MonkeyPatch, values: dict[str, str]) -> Settings:
-    for name in complete():
+    for name in [*complete(), *TUNING]:
         monkeypatch.delenv(name, raising=False)
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -167,3 +174,57 @@ def test_the_reason_codes_are_the_fixed_contract_set() -> None:
         "store_unavailable",
         "key_invalid",
     }
+
+
+def test_the_tuning_settings_are_optional_with_reviewed_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from caller_runtime.settings import (
+        REASONING_EFFORT,
+        TRANSCRIPTION_WAIT_SECONDS,
+        VOICE_DELEGATION_UPDATES,
+    )
+
+    live = load(monkeypatch, complete()).live()
+    assert live.transcription_wait_seconds == TRANSCRIPTION_WAIT_SECONDS == 0.5
+    assert live.reasoning_effort == REASONING_EFFORT == "low"
+    assert live.voice_delegation_updates is VOICE_DELEGATION_UPDATES
+
+
+@pytest.mark.parametrize(
+    "name,value,field,expected",
+    [
+        ("CALLER_TRANSCRIPTION_WAIT_SECONDS", "0", "transcription_wait_seconds", 0.0),
+        ("CALLER_TRANSCRIPTION_WAIT_SECONDS", "2", "transcription_wait_seconds", 2.0),
+        ("CALLER_TRANSCRIPTION_WAIT_SECONDS", "1.25", "transcription_wait_seconds", 1.25),
+        ("CALLER_REASONING_EFFORT", "minimal", "reasoning_effort", "minimal"),
+        ("CALLER_REASONING_EFFORT", "medium", "reasoning_effort", "medium"),
+        ("CALLER_VOICE_DELEGATION_UPDATES", "true", "voice_delegation_updates", True),
+        ("CALLER_VOICE_DELEGATION_UPDATES", "false", "voice_delegation_updates", False),
+    ],
+)
+def test_set_tuning_values_are_used(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str, field: str, expected: object
+) -> None:
+    assert getattr(load(monkeypatch, {**complete(), name: value}).live(), field) == expected
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("CALLER_TRANSCRIPTION_WAIT_SECONDS", "2.5"),
+        ("CALLER_TRANSCRIPTION_WAIT_SECONDS", "-1"),
+        ("CALLER_TRANSCRIPTION_WAIT_SECONDS", "abc"),
+        ("CALLER_TRANSCRIPTION_WAIT_SECONDS", "nan"),
+        ("CALLER_REASONING_EFFORT", "high"),
+        ("CALLER_REASONING_EFFORT", "none"),
+        ("CALLER_VOICE_DELEGATION_UPDATES", "yes"),
+        ("CALLER_VOICE_DELEGATION_UPDATES", "TRUE"),
+    ],
+)
+def test_an_invalid_tuning_value_stops_the_start(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    with pytest.raises(StartupError) as raised:
+        load(monkeypatch, {**complete(), name: value}).validate_startup()
+    assert raised.value.code == "settings_invalid" and value not in str(raised.value)

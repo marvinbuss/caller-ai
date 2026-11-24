@@ -1,6 +1,7 @@
 """Published-configuration console; controls are Reflex, content/media are browser-volatile.
 
-The console page renders the start, stop, mute and interrupt controls, the device pickers, the
+The console page renders the start and stop controls, the "Mute input" and "Mute output"
+switches (both act only in the browser), the device pickers, the
 text form and the status line for one test of the published configuration. Reflex owns the
 controls and the permit request; the `LiveAudio` component owns the microphone, speaker and
 relay socket in the browser. Transcripts and audio live only in browser memory; they pass through
@@ -121,7 +122,7 @@ def console_controls() -> rx.Component:
                 ),
                 icon_control("square", "Stop test", "test-stop", disabled=True),
                 icon_control("mic-off", "Mute input", "test-mute", disabled=True),
-                icon_control("volume-x", "Interrupt output", "test-interrupt", disabled=True),
+                icon_control("volume-x", "Mute output", "test-mute-output", disabled=True),
                 align="end",
                 wrap="wrap",
                 gap="10px",

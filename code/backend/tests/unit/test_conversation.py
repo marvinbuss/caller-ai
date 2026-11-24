@@ -13,6 +13,31 @@ from tests.unit.test_admission import authority_store as authority_store
 from tests.unit.test_admission import live_case as live_case
 
 
+def handoff_to(body, description):
+    """The `handover_<n>` tool of a model request whose description names the destination."""
+    names = [
+        tool["name"]
+        for tool in body.get("tools", [])
+        if tool["name"].startswith("handover_") and tool.get("description") == description
+    ]
+    assert len(names) == 1, (description, [tool.get("description") for tool in body["tools"]])
+    return names[0]
+
+
+async def caller_says(controller, text, *, start_ms=0.0, end_ms=None):
+    """Feed one verified caller transcript delta, as the voice endpoint does."""
+    await controller.accept_transcript(
+        {
+            "type": "session.input_transcript.delta",
+            "delta": text,
+            "start_ms": start_ms,
+            "end_ms": start_ms + 50 if end_ms is None else end_ms,
+        },
+        generation=controller.policy.slot.generation,
+        input_audio_accepted=False,
+    )
+
+
 def test_shared_policy_routes_initial_entry_but_rejects_missing_agent_edge(admission_case):
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
     from caller_runtime.services.conversation_policy import ConversationPolicy
@@ -34,13 +59,20 @@ def test_shared_policy_routes_initial_entry_but_rejects_missing_agent_edge(admis
         limits.mark_ready(clock.utc_now())
         work = WorkBudget.accept(limits, clock.utc_now())
         assert policy.active_agent_id == "welcome"
-        await policy.enter_routing(work)
-        await policy.route("alpha", work)
+        with pytest.raises(PermissionError, match="handover_not_allowed"):
+            await policy.handover("a-entry", "routing", work)
+        await policy.handover("routing", "lifecycle", work)
+        record = await policy.handover("a-entry", "routing", work)
         assert policy.active_agent_id == "a-entry" and policy.active_community_id == "alpha"
+        assert (record.source_role, record.destination_agent_id, record.outcome) == (
+            "routing",
+            "a-entry",
+            "applied",
+        )
         previous = policy.agent_epoch
         with pytest.raises(PermissionError, match="handover_not_allowed"):
-            await policy.route_to_peer(
-                "a-source", work, source_agent_id="a-entry", source_agent_epoch=previous
+            await policy.handover(
+                "a-source", "peer", work, source_agent_id="a-entry", source_agent_epoch=previous
             )
         assert policy.active_agent_id == "a-entry" and policy.agent_epoch == previous
 
@@ -67,79 +99,42 @@ def test_shared_policy_keeps_source_through_routing_and_denies_stale_epochs(admi
         )
         limits.mark_ready(clock.utc_now())
         work = WorkBudget.accept(limits, clock.utc_now())
-        assert policy.routing_directory() is None
-        await policy.enter_routing(work)
-        directory = policy.routing_directory()
-        assert directory is not None
-        assert [entry["communityId"] for entry in json.loads(directory.split("\n", 1)[1])] == [
-            "alpha",
-            "beta",
-        ]
-        await policy.route("alpha", work)
-        assert policy.routing_directory() is None
-        await policy.transfer_community("beta", work)
-        assert policy.active_agent_id == "routing" and policy.active_community_id == "alpha"
-        # A transfer may only complete to its pending destination, so only that one is listed.
-        directory = policy.routing_directory()
-        assert directory is not None
-        assert json.loads(directory.split("\n", 1)[1]) == [
-            {"communityId": "beta", "name": "Beta", "routingDescription": "Synthetic beta routing"}
-        ]
-        reconstructed = ConversationPolicy(
-            slot=policy.slot, snapshot=cache.pin(), admission=service
-        )
+        await policy.handover("routing", "lifecycle", work)
+        assert [item.agent_id for item in policy.offered()] == ["a-entry", "b-entry", "goodbye"]
+        await policy.handover("b-entry", "routing", work)
+        # beta has no connection to alpha, so Routing is the way there; it must name the target.
         with pytest.raises(PermissionError, match="handover_not_allowed"):
-            await reconstructed.route("beta", work)
-        with pytest.raises(PermissionError):
-            await policy.route("alpha", work)
-        await policy.route("beta", work)
-        assert policy.active_agent_id == "b-entry" and policy.active_community_id == "beta"
+            await policy.handover("routing", "routing", work)
+        record = await policy.handover("routing", "routing", work, community_id="alpha")
+        assert (record.path, record.target_community_id) == ("routing", "alpha")
+        assert policy.active_agent_id == "routing" and policy.active_community_id == "beta"
+        assert policy.pending_destination == "alpha"
+        # During a transfer only the pending destination is enabled.
+        assert [item.agent_id for item in policy.offered() if policy.enabled(item)] == ["a-entry"]
+        with pytest.raises(PermissionError, match="handover_not_allowed"):
+            await policy.handover("b-entry", "routing", work)
+        await policy.handover("a-entry", "routing", work)
+        assert policy.active_agent_id == "a-entry" and policy.active_community_id == "alpha"
+        assert policy.pending_destination is None
         old_epoch = policy.agent_epoch
-        await policy.route_to_peer(
-            "b-peer", work, source_agent_id="b-entry", source_agent_epoch=old_epoch
+        await policy.handover(
+            "b-entry", "direct", work, source_agent_id="a-entry", source_agent_epoch=old_epoch
         )
-        assert policy.active_agent_id == "b-peer"
+        assert policy.active_agent_id == "b-entry" and policy.active_community_id == "beta"
         with pytest.raises(PermissionError, match="stale_agent_epoch"):
-            await policy.route_to_peer(
-                "b-entry", work, source_agent_id="b-entry", source_agent_epoch=old_epoch
+            await policy.handover(
+                "b-peer", "peer", work, source_agent_id="b-entry", source_agent_epoch=old_epoch
             )
-        with pytest.raises(PermissionError):
-            await policy.transfer_community("alpha", work)
-        await policy.goodbye(work)
-        assert policy.active_agent_id == "goodbye"
-        with pytest.raises(PermissionError):
-            await policy.enter_routing(work)
+        await policy.handover("b-peer", "peer", work)
+        await policy.handover("goodbye", "lifecycle", work)
+        assert policy.active_agent_id == "goodbye" and policy.active_community_id == "beta"
+        with pytest.raises(PermissionError, match="handover_not_allowed"):
+            await policy.handover("routing", "lifecycle", work)
 
     asyncio.run(scenario())
 
 
-def test_speech_policy_requires_confirmed_segment_retirement_before_owner_changes(admission_case):
-    from caller_runtime.domain.conversation import SessionLimits, WorkBudget
-    from caller_runtime.services.conversation_policy import ConversationPolicy
-
-    service, repository, container, clock, permit, cache = admission_case
-
-    async def scenario():
-        await repository.initialize(
-            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
-        )
-        slot = await service.reserve(permit(1, mode="speech"))
-        await service.mark_ready(slot.session_id, slot.owner_epoch)
-        policy = ConversationPolicy(slot=slot, snapshot=cache.pin(), admission=service)
-        limits = SessionLimits(
-            started_at=slot.started_at,
-            admission_deadline_utc=slot.admission_deadline_utc,
-            auth_expires_at=slot.auth_expires_at,
-        )
-        limits.mark_ready(clock.utc_now())
-        with pytest.raises(PermissionError, match="speech_transition_unavailable"):
-            await policy.enter_routing(WorkBudget.accept(limits, clock.utc_now()))
-        assert policy.active_agent_id == "welcome"
-
-    asyncio.run(scenario())
-
-
-def test_speech_policy_requires_real_bound_segment_settlement_not_a_noop_hook(live_case):
+def test_speech_handover_keeps_the_one_live_session_and_its_generation(live_case):
     from caller_runtime.domain.conversation import SessionLimits, WorkBudget
     from caller_runtime.services.conversation_policy import ConversationPolicy
 
@@ -154,35 +149,22 @@ def test_speech_policy_requires_real_bound_segment_settlement_not_a_noop_hook(li
         )
         limits.mark_ready(clock.utc_now())
         work = WorkBudget.accept(limits, clock.utc_now())
-
-        async def pretend_retired(previous, budget):
-            return None
-
         policy = ConversationPolicy(
-            slot=slot,
-            snapshot=service.configuration.pin(),
-            admission=service,
-            retire_speech=pretend_retired,
+            slot=slot, snapshot=service.configuration.pin(), admission=service
         )
-        with pytest.raises(PermissionError, match="live_segment_not_closed"):
-            await policy.enter_routing(work)
-        assert policy.active_agent_id == "welcome" and policy.agent_epoch == slot.agent_epoch
-
-        async def retire(previous, budget):
-            await segment.close()
-
-        policy = ConversationPolicy(
-            slot=slot, snapshot=service.configuration.pin(), admission=service, retire_speech=retire
-        )
-        await policy.enter_routing(work)
+        await policy.handover("routing", "lifecycle", work)
+        await policy.handover("b-entry", "routing", work)
         observed = (
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority.slots[0]
-        assert (
-            observed.active_agent_id == "routing" and observed.agent_epoch == slot.agent_epoch + 1
-        )
-        assert observed.closure_receipt is not None and observed.resources["live"].settled == 1
-        assert socket.closed == 1
+        # An agent change raises the agent epoch only; the Live session stays open (FR-013).
+        assert observed.active_agent_id == "b-entry"
+        assert observed.agent_epoch == slot.agent_epoch + 2
+        assert observed.generation == slot.generation
+        assert observed.resources["live"].attempted == 1
+        assert observed.resources["live"].settled == 0 and observed.closure_receipt is None
+        assert socket.closed == 0 and not segment.protocol.closed
+        await segment.close()
 
     asyncio.run(scenario())
 
@@ -256,8 +238,8 @@ def test_capability_dispatch_is_bound_intent_gated_and_never_replayed(admission_
         )
         limits.mark_ready(clock.utc_now())
         initial = WorkBudget.accept(limits, clock.utc_now())
-        await policy.enter_routing(initial)
-        await policy.route("beta", initial)
+        await policy.handover("routing", "lifecycle", initial)
+        await policy.handover("b-entry", "routing", initial)
         clock.advance(60)
         work = WorkBudget.accept(limits, clock.utc_now())
         observations = CleanupObservations(owner_id=service.owner_id, utc_now=clock.utc_now)
@@ -342,8 +324,8 @@ def test_capability_invalid_input_never_requests_credentials_or_records_intent(
         )
         limits.mark_ready(clock.utc_now())
         work = WorkBudget.accept(limits, clock.utc_now())
-        await policy.enter_routing(work)
-        await policy.route("beta", work)
+        await policy.handover("routing", "lifecycle", work)
+        await policy.handover("b-entry", "routing", work)
         client = ConversationCapabilityClient(
             endpoint="https://management.fixture.example",
             approved_hosts=frozenset({"management.fixture.example"}),
@@ -478,7 +460,8 @@ def text_execution_case(admission_case):
             )
 
     class Chunks(httpx2.AsyncByteStream):
-        def __init__(self):
+        def __init__(self, body=None):
+            self.body = body
             self.action = controls["wire_actions"].pop(0) if controls.get("wire_actions") else None
             if self.action is not None:
                 controls.setdefault("wire_action_observations", []).append(
@@ -495,17 +478,14 @@ def text_execution_case(admission_case):
             if self.action is not None:
                 call_name, arguments = self.action
                 call = (call_name, arguments)
-            elif controls.get("initial_flow") and len(requests) <= 2:
-                name = "enter_routing" if len(requests) == 1 else "route_community"
-                arguments = {} if len(requests) == 1 else {"community_id": "beta"}
-                call = (name, arguments)
+            elif controls.get("route") is not None:
+                # Concurrent sessions: the call follows this request, not a shared order.
+                call = controls["route"](self.body)
+            elif controls.get("initial_flow") and len(requests) == 1:
+                # Welcome hands over to Routing without a model step; Routing picks beta.
+                call = (handoff_to(requests[-1], "Synthetic beta routing"), {})
             elif controls.get("handover") and len(requests) == 1:
-                arguments = {
-                    "agent_id": "b-peer",
-                    "request_summary": "Synthetic approved summary",
-                    "transfer_reason": "Synthetic directed transfer",
-                }
-                call = ("handover_agent", arguments)
+                call = (handoff_to(requests[-1], "b-peer"), {})
             for chunk in model_stream(
                 "Synthetic greeting that the live model streams before it routes"
                 if call and controls.get("text_with_call")
@@ -541,6 +521,17 @@ def text_execution_case(admission_case):
                     json={"error": {"message": "synthetic-private-provider-response"}},
                 )
             return httpx2.Response(200, json=model_reply(controls["greeting"]))
+        if body.get("max_output_tokens") == 2048 and not body.get("stream"):
+            # Condensing requests (R11) are kept apart like greetings.
+            controls.setdefault("condense_requests", []).append(body)
+            if controls.get("condense_status"):
+                return httpx2.Response(
+                    controls["condense_status"],
+                    json={"error": {"message": "synthetic-private-provider-response"}},
+                )
+            return httpx2.Response(
+                200, json=model_reply(controls.get("condensed", "Synthetic condensed account"))
+            )
         requests.append(body)
         if controls.get("prepare") and not body.get("stream"):
             assert not body.get("tools") and body["store"] is False
@@ -569,7 +560,9 @@ def text_execution_case(admission_case):
         entered.set()
         if controls["blocked"]:
             await release.wait()
-        return httpx2.Response(200, headers={"Content-Type": "text/event-stream"}, stream=Chunks())
+        return httpx2.Response(
+            200, headers={"Content-Type": "text/event-stream"}, stream=Chunks(body)
+        )
 
     adapter = FoundryTextAdapter(
         endpoint="https://approved-fixture.openai.azure.com",
@@ -598,8 +591,8 @@ def text_execution_case(admission_case):
         limits.mark_ready(clock.utc_now())
         work = WorkBudget.accept(limits, clock.utc_now())
         if not controls.get("initial_flow"):
-            await policy.enter_routing(work)
-            await policy.route("beta", work)
+            await policy.handover("routing", "lifecycle", work)
+            await policy.handover("b-entry", "routing", work)
         adapter._telemetry = controls.get("telemetry")
         return ConversationExecutor(
             policy=policy,
@@ -695,7 +688,9 @@ def test_text_executor_has_one_pending_input_and_busy_does_not_refresh_idle(
     asyncio.run(scenario())
 
 
-def test_text_executor_applies_directed_tool_handover_with_filtered_context(text_execution_case):
+def test_text_executor_applies_an_sdk_handoff_and_the_destination_sees_everything(
+    text_execution_case,
+):
     setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
 
     async def scenario():
@@ -708,12 +703,279 @@ def test_text_executor_applies_directed_tool_handover_with_filtered_context(text
         assert controller.policy.agent_epoch == original_epoch + 1 and len(requests) == 2
         expected = modality_defaults.TEXT_PLATFORM_RULES + "\n\nSynthetic prompt for b-peer"
         assert requests[1]["instructions"] == expected
-        target_context = json.dumps(requests[1]["input"])
-        assert "Synthetic approved summary" in target_context
-        assert "Synthetic original source-only detail" not in target_context
-        assert "Synthetic prompt for b-entry" not in target_context
-        assert any(message["type"] == "agent.changed" for message in messages)
+        # No reset and no context filter: the destination continues with the full input (FR-007).
+        target = requests[1]["input"]
+        assert "Synthetic original source-only detail" in json.dumps(target)
+        calls = [item for item in target if item.get("type") == "function_call"]
+        outputs = [item for item in target if item.get("type") == "function_call_output"]
+        assert [call["name"] for call in calls] == [handoff_to(requests[0], "b-peer")]
+        assert [output["output"] for output in outputs] == ["applied"]
+        assert outputs[0]["call_id"] == calls[0]["call_id"]
+        assert not any(item.get("type") == "reasoning" for item in target)
+        assert "Synthetic prompt for b-entry" not in json.dumps(target)
+        # b-peer has its own handoffs, not b-entry's.
+        assert handoff_to(requests[1], "Routing can reach: Alpha")
+        assert not any(tool.get("description") == "b-peer" for tool in requests[1]["tools"])
+        changed = [message for message in messages if message["type"] == "agent.changed"]
+        assert changed == [
+            {
+                "type": "agent.changed",
+                "agentId": "b-peer",
+                "communityId": "beta",
+                "generation": controller.policy.slot.generation,
+            }
+        ]
         assert messages[-1]["type"] == "text.completed"
+        kinds = [entry.kind for entry in controller.history.entries]
+        assert kinds == ["user_text", "handover", "agent_answer"]
+        handover = controller.history.entries[1].handover
+        assert (handover.source_agent_id, handover.destination_agent_id, handover.path) == (
+            "b-entry",
+            "b-peer",
+            "peer",
+        )
+        await adapter.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_refused_handoff_is_recorded_and_the_requesting_agent_hears_why(
+    text_execution_case, monkeypatch
+):
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+
+    async def refuse(self, *arguments, **keywords):
+        raise PermissionError("handover_not_allowed")
+
+    async def scenario():
+        controller = await setup()
+        controls["handover"] = True
+        monkeypatch.setattr(ConversationPolicy, "handover", refuse)
+        epoch = controller.policy.agent_epoch
+        await controller.submit_text("text-refused", "Synthetic refused request")
+        await controller.process_next(emit=emit)
+        assert controller.policy.active_agent_id == "b-entry"
+        assert controller.policy.agent_epoch == epoch and len(requests) == 2
+        # The requesting agent runs again with the handoff output `refused: <reason>`.
+        expected = modality_defaults.TEXT_PLATFORM_RULES + "\n\nSynthetic prompt for b-entry"
+        assert requests[1]["instructions"] == expected
+        outputs = [
+            item["output"]
+            for item in requests[1]["input"]
+            if item.get("type") == "function_call_output"
+        ]
+        assert outputs == ["refused: refused_graph"]
+        assert not any(message["type"] == "agent.changed" for message in messages)
+        assert messages[-1]["type"] == "text.completed"
+        refused = [entry for entry in controller.history.entries if entry.kind == "handover"]
+        assert len(refused) == 1 and refused[0].handover.outcome == "refused"
+        assert refused[0].handover.reason == "refused_graph"
+        assert refused[0].items()[1]["output"] == "refused: refused_graph"
+        await adapter.close()
+
+    asyncio.run(scenario())
+
+
+def test_a1_a6_a_colleague_sees_earlier_facts_and_tool_results_without_a_new_call(
+    text_execution_case,
+):
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+
+    async def scenario():
+        controller = await setup()
+        # b-entry's sorted destinations: b-peer (handover_0), Goodbye, Routing.
+        controls["wire_actions"] = [
+            ("report_progress", {"state": "completed", "message": "Order A-100 is shipped."})
+        ]
+        await controller.submit_text("text-a1", "My order number is A-100.")
+        await controller.process_next(emit=emit)
+        controls["wire_actions"] = [("handover_0", {})]
+        await controller.submit_text("text-a6", "Can a colleague check the delivery?")
+        await controller.process_next(emit=emit)
+        assert controller.policy.active_agent_id == "b-peer"
+        received = requests[-1]["input"]
+        # A1: the order number said to the first agent is in the colleague's input.
+        assert "My order number is A-100." in json.dumps(received)
+        # A6: the earlier tool call and its result are there too, so no new call is needed.
+        calls = [item["name"] for item in received if item.get("type") == "function_call"]
+        assert calls == ["report_progress", "handover_0"]
+        assert "Status (completed): Order A-100 is shipped." in json.dumps(received)
+        assert len(requests) == 4
+        await adapter.close()
+
+    asyncio.run(scenario())
+
+
+def test_a3_after_a_transfer_through_routing_billing_sees_the_earlier_billing_exchange(
+    text_execution_case,
+):
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+
+    async def scenario():
+        controller = await setup()
+        await controller.submit_text("text-billing", "Synthetic billing question")
+        await controller.process_next(emit=emit)
+        # b-entry → Routing naming alpha (beta has no connection to alpha) → a-entry.
+        controls["wire_actions"] = [("handover_2", {"community_id": "alpha"}), ("handover_0", {})]
+        await controller.submit_text("text-alpha", "Synthetic alpha question")
+        await controller.process_next(emit=emit)
+        assert controller.policy.active_agent_id == "a-entry"
+        assert controller.policy.pending_destination is None
+        # a-entry → b-entry directly over the alpha → beta connection.
+        controls["wire_actions"] = [("handover_0", {})]
+        await controller.submit_text("text-back", "Back to my bill, please.")
+        await controller.process_next(emit=emit)
+        assert controller.policy.active_agent_id == "b-entry"
+        received = json.dumps(requests[-1]["input"])
+        assert "Synthetic billing question" in received and "Synthetic alpha question" in received
+        assert requests[-1]["instructions"].endswith("Synthetic prompt for b-entry")
+        paths = [e.handover.path for e in controller.history.entries if e.kind == "handover"]
+        assert paths == ["routing", "routing", "direct"]
+        await adapter.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_chain_routing_entry_colleague_stays_within_the_step_limit(text_execution_case):
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    # Routing's sorted destinations: a-entry, b-entry, Goodbye; b-entry's: b-peer, Goodbye, Routing.
+    controls["wire_actions"] = [("handover_1", {}), ("handover_0", {})]
+
+    async def scenario():
+        controls["initial_flow"] = True
+        controller = await setup()
+        await controller.submit_text("text-chain", "Synthetic chain request")
+        await controller.process_next(emit=emit)
+        assert not any(message["type"] == "error" for message in messages), messages
+        assert controller.policy.active_agent_id == "b-peer" and len(requests) == 3
+        assert [m["agentId"] for m in messages if m["type"] == "agent.changed"] == [
+            "routing",
+            "b-entry",
+            "b-peer",
+        ]
+        handovers = [e.handover for e in controller.history.entries if e.kind == "handover"]
+        assert [(h.source_agent_id, h.destination_agent_id, h.path) for h in handovers] == [
+            ("routing", "b-entry", "routing"),
+            ("b-entry", "b-peer", "peer"),
+        ]
+        # Every step of the chain saw the request, and the last one both handoffs.
+        assert all("Synthetic chain request" in json.dumps(r["input"]) for r in requests)
+        assert [i["output"] for i in requests[2]["input"] if "output" in i] == ["applied"] * 2
+        await adapter.close()
+
+    asyncio.run(scenario())
+
+
+def test_every_handover_is_reported_with_roles_path_size_and_latency_but_no_content(
+    text_execution_case,
+):
+    # Feature 007, FR-018/FR-019: content-free events, one per handover, one session id.
+    from caller_runtime.observability import Telemetry
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    telemetry = Telemetry("caller-runtime", "local")
+    # Routing → b-entry → b-peer.
+    controls["wire_actions"] = [("handover_1", {}), ("handover_0", {})]
+
+    async def scenario():
+        from opentelemetry import trace
+
+        controls["initial_flow"], controls["telemetry"] = True, telemetry
+        controller = await setup()
+        with telemetry.span("test.work", {"test.kind": "text", "test.phase": "active"}):
+            trace_id = format(trace.get_current_span().get_span_context().trace_id, "032x")
+            await controller.submit_text("text-chain", "Synthetic private chain request")
+            await controller.process_next(emit=emit)
+        await adapter.close()
+        return controller, trace_id
+
+    try:
+        controller, trace_id = asyncio.run(scenario())
+        new = [
+            event
+            for event in telemetry.events
+            if event["event"] in {"test.handover", "test.history"}
+            or event.get("measurement") == "handover_seconds"
+        ]
+        handovers = [e for e in new if e["event"] == "test.handover"]
+        assert [
+            (e["outcome"], e["reason_code"], e["source_role"], e["destination_role"], e["path"])
+            for e in handovers
+        ] == [
+            ("success", "applied", "welcome", "routing", "lifecycle"),
+            ("success", "applied", "routing", "ordinary", "routing"),
+            ("success", "applied", "ordinary", "ordinary", "peer"),
+        ]
+        sizes = [e["history_kib"] for e in new if e["event"] == "test.history"]
+        assert sizes == ["<16"] * 3
+        latencies = [(e["path"], float(e["value"])) for e in new if "measurement" in e]
+        assert [path for path, _ in latencies] == ["routing", "peer"]
+        assert all(0 <= value <= 600 for _, value in latencies)
+        assert all(e["kind"] == "text" for e in new)
+        # One session correlation id and the work's trace on every new event.
+        assert len({e["correlation_id"] for e in new}) == 1
+        assert {e["trace_id"] for e in new} == {trace_id}
+        shown = json.dumps(new)
+        for marker in ("Synthetic private chain request", "Synthetic shared streamed reply"):
+            assert marker not in shown
+        # No prompt and no handoff name: the measurement name is the only "handover_" text.
+        assert "Synthetic prompt for" not in shown
+        assert "handover_" not in shown.replace("handover_seconds", "")
+        assert controller.policy.active_agent_id == "b-peer"
+    finally:
+        telemetry.close()
+
+
+def test_a_refused_handover_is_reported_as_a_failure_with_its_reason(text_execution_case):
+    from caller_runtime.observability import Telemetry
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    telemetry = Telemetry("caller-runtime", "local")
+    # b-entry's handoff to b-peer with an argument it does not take: refused_graph.
+    controls["wire_actions"] = [("handover_0", {"community_id": "alpha"})]
+
+    async def scenario():
+        controls["telemetry"] = telemetry
+        controller = await setup()
+        await controller.submit_text("text-refused", "Synthetic request")
+        await controller.process_next(emit=emit)
+        await adapter.close()
+
+    try:
+        asyncio.run(scenario())
+        refused = [
+            e
+            for e in telemetry.events
+            if e["event"] == "test.handover" and e["outcome"] == "failure"
+        ]
+        assert [(e["reason_code"], e["path"], e["destination_role"]) for e in refused] == [
+            ("refused_graph", "peer", "ordinary")
+        ]
+        assert not [e for e in telemetry.events if e.get("measurement") == "handover_seconds"]
+    finally:
+        telemetry.close()
+
+
+def test_welcome_hands_over_to_routing_after_the_text_greeting_and_never_runs_a_request(
+    text_execution_case,
+):
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+
+    async def scenario():
+        controls["initial_flow"] = True
+        controls["greeting"] = "Welcome! How can I help?"
+        controller = await setup()
+        assert controller.policy.active_agent_id == "welcome"
+        await controller.open_text(emit, started=asyncio.get_running_loop().time())
+        assert controller.policy.active_agent_id == "routing"
+        assert [m["type"] for m in messages] == ["text.delta", "text.completed", "agent.changed"]
+        assert [entry.kind for entry in controller.history.entries] == ["agent_answer"]
+        assert controller.history.entries[0].agent_id == "welcome"
+        # The move happens once; a later call does nothing.
+        assert not await controller.leave_welcome(emit)
+        assert not requests
         await adapter.close()
 
     asyncio.run(scenario())
@@ -767,7 +1029,7 @@ def test_speech_delegation_uses_shared_executor_and_exact_id_without_guessing(
         if clear:
             assert appended[0]["content"] == "Synthetic shared streamed reply"
             assert (
-                requests[0]["instructions"] == VOICE_PLATFORM_RULES + "\n\nSynthetic welcome prompt"
+                requests[0]["instructions"] == VOICE_PLATFORM_RULES + "\n\nSynthetic routing prompt"
             )
         else:
             assert "clarify" in appended[0]["content"].lower()
@@ -927,6 +1189,7 @@ def test_spoken_greeting_is_the_first_assistant_history_entry(live_case, text_ex
                 generation=1,
                 input_audio_accepted=False,
             )
+        await caller_says(controller, "Synthetic correlated task", start_ms=150)
         await socket.events.put(
             json.dumps(
                 {
@@ -956,10 +1219,13 @@ def test_spoken_greeting_is_the_first_assistant_history_entry(live_case, text_ex
         )
         await controller.process_next(emit=emit)
         sent = requests[-1]["input"]
-        assert sent[0]["role"] == "assistant"
-        assert "Hello and welcome. How can I help?" in json.dumps(sent[0])
+        assert sent[0] == {
+            "role": "assistant",
+            "content": "[Voice assistant, spoken] Hello and welcome. How can I help?",
+        }
+        assert sent[1] == {"role": "user", "content": "[Caller, spoken] Synthetic correlated task"}
+        # Speech after the delegation is still in progress, so the work item does not see it.
         assert "Later answer speech" not in json.dumps(sent)
-        assert "Synthetic correlated task" in json.dumps(sent[1])
         await segment.close()
         await adapter.close()
 
@@ -976,32 +1242,27 @@ def test_text_executor_runs_initial_welcome_routing_and_exact_entry_on_one_budge
         controller = await setup()
         accepted = await controller.submit_text("text-initial", "Synthetic beta request")
         await controller.process_next(emit=emit)
-        assert controller.policy.active_agent_id == "b-entry" and len(requests) == 3
-        directory = (
-            "Communities you can route to (JSON). Call `route_community` with one communityId; "
-            "never tell the user an id:\n"
-            + json.dumps(
-                [
-                    {
-                        "communityId": community,
-                        "name": community.title(),
-                        "routingDescription": "Synthetic " + community + " routing",
-                    }
-                    for community in ("alpha", "beta")
-                ],
-                separators=(",", ":"),
-            )
-        )
+        # Welcome hands over without a model step (FR-030); Routing hands off to beta's entry.
+        assert controller.policy.active_agent_id == "b-entry" and len(requests) == 2
         assert [request["instructions"] for request in requests] == [
             modality_defaults.TEXT_PLATFORM_RULES + "\n\n" + prompt
-            for prompt in (
-                "Synthetic welcome prompt",
-                "Synthetic routing prompt\n\n" + directory,
-                "Synthetic prompt for b-entry",
-            )
+            for prompt in ("Synthetic routing prompt", "Synthetic prompt for b-entry")
         ]
+        # Routing's choices are its handoffs, described by the communities' routing descriptions.
+        descriptions = {
+            tool["description"]
+            for tool in requests[0]["tools"]
+            if tool["name"].startswith("handover")
+        }
+        assert {"Synthetic alpha routing", "Synthetic beta routing"} <= descriptions
         assert all("Synthetic beta request" in json.dumps(request["input"]) for request in requests)
         assert controller.queue.lookup("text-initial") == accepted.receipt
+        assert [
+            message["agentId"] for message in messages if message["type"] == "agent.changed"
+        ] == [
+            "routing",
+            "b-entry",
+        ]
         assert messages[-1]["type"] == "text.completed"
         await adapter.close()
 
@@ -1030,122 +1291,14 @@ def test_a_reply_that_greets_and_routes_in_one_response_continues_to_the_entry(
         await controller.submit_text("text-greeting", "Synthetic beta request")
         await controller.process_next(emit=emit)
         assert not any(message["type"] == "error" for message in messages), messages
-        assert controller.policy.active_agent_id == "b-entry" and len(requests) == 3
+        assert controller.policy.active_agent_id == "b-entry" and len(requests) == 2
         assert messages[-1]["type"] == "text.completed"
         await adapter.close()
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("confirmed", [True, False])
-def test_speech_handover_retires_actual_socket_before_any_continuation(
-    live_case, monkeypatch, confirmed
-):
-    from caller_runtime.domain.conversation import WorkBudget
-    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
-
-    service, repository, clock, socket, opened = live_case
-    created, messages = [], []
-
-    async def emit(message):
-        messages.append(message)
-
-    async def scenario():
-        original, segment = await opened()
-        slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
-        retire = service.retire_generation
-        retiring = []
-
-        async def observed_retire(*arguments, **keywords):
-            # Capture still arriving for the old segment is dropped from here on, not fatal.
-            retiring.append(segments.starting)
-            with pytest.raises(PermissionError, match="stale_generation"):
-                await segment.send_audio(b"\0" * 960)
-            return await retire(*arguments, **keywords)
-
-        monkeypatch.setattr(service, "retire_generation", observed_retire)
-
-        async def connect(url, **options):
-            assert socket.closed == 1 and segment.protocol.closed
-            observed = (
-                await repository.read(deadline=asyncio.get_running_loop().time() + 1)
-            ).authority.slots[0]
-            assert observed.resources["live"].attempted > observed.resources["live"].settled
-            # Clients learn the new generation before its credits or audio can reach them.
-            assert messages[-1]["type"] == "agent.changed"
-            # No capture credit is granted until the new segment has started.
-            assert segments.starting
-            fresh = type(socket)()
-            created.append(fresh)
-            return fresh
-
-        monkeypatch.setattr(segment.adapter, "_factory", connect)
-        if not confirmed:
-
-            async def fail_receive():
-                raise ConnectionError("synthetic-unknown-close")
-
-            socket.close_reply = False
-            monkeypatch.setattr(socket, "recv", fail_receive)
-        segments = SpeechSegments(
-            current=segment,
-            instructions_for=lambda current: "Synthetic continuation instructions",
-            emit=emit,
-            context_for=lambda current: [f"Synthetic note for {current.active_agent_id}"],
-        )
-        policy = ConversationPolicy(
-            slot=slot,
-            snapshot=service.configuration.pin(),
-            admission=service,
-            retire_speech=segments.retire,
-            continue_speech=segments.continue_with,
-        )
-        work = WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10))
-        if confirmed:
-            await policy.enter_routing(work)
-            assert retiring == [True]
-            assert policy.active_agent_id == "routing" and len(created) == 1
-            # The new segment gets the context note for the new agent as quiet thinking.
-            assert [
-                (event["delegation_id"], event["content"])
-                for event in created[0].sent
-                if event["type"] == "session.thinking.append"
-            ] == [(None, "Synthetic note for routing")]
-            assert segments.current.intent.generation == policy.slot.generation > slot.generation
-            assert (
-                policy.slot.actor_key == slot.actor_key
-                and policy.slot.expires_at == slot.expires_at
-            )
-            assert policy.slot.revision_id == slot.revision_id
-            with pytest.raises(PermissionError):
-                await segment.next_event()
-            assert messages[0]["type"] == "generation.changed"
-            assert messages[1:] == [
-                {
-                    "type": "agent.changed",
-                    "agentId": "routing",
-                    "communityId": None,
-                    "generation": policy.slot.generation,
-                }
-            ]
-            assert policy.slot.generation > messages[0]["generation"]
-            assert not segments.starting
-            await segments.current.close()
-        else:
-            with pytest.raises(PermissionError):
-                await policy.enter_routing(work)
-            assert not created and policy.active_agent_id == "welcome"
-            observed = (
-                await repository.read(deadline=asyncio.get_running_loop().time() + 1)
-            ).authority.slots[0]
-            assert observed.terminal_fence and observed.resources["live"].settled == 0
-            with pytest.raises(PermissionError):
-                await segments.continue_with(slot, work)
-
-    asyncio.run(scenario())
-
-
-def test_speech_interrupt_retires_generation_without_adopting_old_work(
+def test_speech_handover_keeps_the_socket_and_announces_the_agent_at_the_same_generation(
     live_case, text_execution_case, monkeypatch
 ):
     from caller_runtime.services.conversation import ConversationExecutor
@@ -1159,146 +1312,18 @@ def test_speech_interrupt_retires_generation_without_adopting_old_work(
         slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
 
         async def connect(url, **options):
-            assert socket.closed == 1 and segment.protocol.closed
-            return type(socket)()
+            raise AssertionError("an agent change must not open a second Live session")
 
         monkeypatch.setattr(segment.adapter, "_factory", connect)
-        segments = SpeechSegments(
-            current=segment,
-            instructions_for=lambda current: "Synthetic interrupted continuation",
-            emit=emit,
-        )
+        segments = SpeechSegments(current=segment)
         policy = ConversationPolicy(
-            slot=slot,
-            snapshot=service.configuration.pin(),
-            admission=service,
-            retire_speech=segments.retire,
-            continue_speech=segments.continue_with,
-        )
-        controller = ConversationExecutor(
-            policy=policy, text_adapter=adapter, utc_now=clock.utc_now, speech_segments=segments
-        )
-        await socket.events.put(
-            json.dumps(
-                {
-                    "type": "session.delegation.created",
-                    "delegation": {
-                        "id": "delegation-old",
-                        "type": "delegation",
-                        "target": "client",
-                    },
-                    "offset_ms": 10,
-                }
-            )
-        )
-        event = await segment.next_event()
-        accepted = await controller.submit_delegation(
-            segment, event, task_text="Synthetic old work", unambiguous=True
-        )
-        old_work = controller.queue.take(now=clock.utc_now())
-        await policy.interrupt(accepted.receipt.work)
-        assert (
-            policy.agent_epoch == slot.agent_epoch and policy.slot.generation == slot.generation + 1
-        )
-        assert policy.slot.expires_at == slot.expires_at
-        with pytest.raises(PermissionError, match="stale_generation"):
-            await controller._gate(old_work)
-        with pytest.raises(PermissionError):
-            await segment.append_context("delegation-old", "Obsolete facts")
-        assert not requests
-        controller.queue.close()
-        await segments.current.close()
-        await adapter.close()
-
-    asyncio.run(scenario())
-
-
-def test_speech_transport_disposal_failure_never_authorizes_continuation(live_case, monkeypatch):
-    from caller_runtime.domain.conversation import WorkBudget
-    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
-
-    service, repository, clock, socket, opened = live_case
-
-    async def scenario():
-        original, segment = await opened()
-        slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
-
-        async def fail_dispose():
-            raise ConnectionError("synthetic-disposal-unknown")
-
-        async def emit(message):
-            return None
-
-        monkeypatch.setattr(socket, "close", fail_dispose)
-        segments = SpeechSegments(
-            current=segment, instructions_for=lambda current: "Synthetic continuation", emit=emit
-        )
-        policy = ConversationPolicy(
-            slot=slot,
-            snapshot=service.configuration.pin(),
-            admission=service,
-            retire_speech=segments.retire,
-            continue_speech=segments.continue_with,
-        )
-        with pytest.raises(PermissionError):
-            await policy.enter_routing(
-                WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10))
-            )
-        assert segment.protocol.closed and not segment.disposed
-        assert policy.active_agent_id == "welcome"
-        with pytest.raises(PermissionError):
-            await segments.continue_with(
-                slot, WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10))
-            )
-        assert (
-            (await repository.read(deadline=asyncio.get_running_loop().time() + 1))
-            .authority.slots[0]
-            .terminal_fence
-        )
-
-    asyncio.run(scenario())
-
-
-def test_speech_sdk_handover_uses_new_segment_general_context_not_old_delegation(
-    live_case, text_execution_case, monkeypatch
-):
-    from caller_runtime.services.conversation import ConversationExecutor
-    from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
-
-    service, repository, clock, socket, opened = live_case
-    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
-
-    async def scenario():
-        original, segment = await opened()
-        slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
-        sockets = [socket]
-
-        async def connect(url, **options):
-            assert all(previous.closed == 1 for previous in sockets)
-            fresh = type(socket)()
-            sockets.append(fresh)
-            return fresh
-
-        monkeypatch.setattr(segment.adapter, "_factory", connect)
-        configured = {
-            agent["agentId"]: agent for agent in service.configuration.pin().for_runtime()["agents"]
-        }
-        segments = SpeechSegments(
-            current=segment,
-            instructions_for=lambda current: configured[current.active_agent_id]["prompt"],
-            emit=emit,
-        )
-        policy = ConversationPolicy(
-            slot=slot,
-            snapshot=service.configuration.pin(),
-            admission=service,
-            retire_speech=segments.retire,
-            continue_speech=segments.continue_with,
+            slot=slot, snapshot=service.configuration.pin(), admission=service
         )
         controller = ConversationExecutor(
             policy=policy, text_adapter=adapter, utc_now=clock.utc_now, speech_segments=segments
         )
         controls["initial_flow"] = True
+        await caller_says(controller, "Synthetic beta request")
         await socket.events.put(
             json.dumps(
                 {
@@ -1308,7 +1333,7 @@ def test_speech_sdk_handover_uses_new_segment_general_context_not_old_delegation
                         "type": "delegation",
                         "target": "client",
                     },
-                    "offset_ms": 10,
+                    "offset_ms": 100,
                 }
             )
         )
@@ -1319,17 +1344,22 @@ def test_speech_sdk_handover_uses_new_segment_general_context_not_old_delegation
             unambiguous=True,
         )
         await controller.process_next(emit=emit)
-        assert policy.active_agent_id == "b-entry" and len(requests) == 3 and len(sockets) == 3
-        final = [
-            event for event in sockets[-1].sent if event["type"] == "session.commentary.append"
-        ]
-        assert len(final) == 1 and final[0]["delegation_id"] is None
+        assert policy.active_agent_id == "b-entry" and len(requests) == 2
+        assert policy.slot.generation == slot.generation and socket.closed == 0
+        assert segments.current is segment and not segment.protocol.closed
+        # The answer goes to the delegation that asked, on the one Live session (FR-013).
+        final = [event for event in socket.sent if event["type"] == "session.commentary.append"]
+        assert len(final) == 1 and final[0]["delegation_id"] == "delegation-initial"
         assert final[0]["content"] == "Synthetic shared streamed reply"
-        assert all(
-            not any(event["type"] == "session.commentary.append" for event in previous.sent)
-            for previous in sockets[:-1]
-        )
+        changes = [message for message in messages if message["type"] == "agent.changed"]
+        assert [(m["agentId"], m["generation"]) for m in changes] == [
+            ("routing", slot.generation),
+            ("b-entry", slot.generation),
+        ]
+        assert not any(message["type"] == "generation.changed" for message in messages)
         assert not any(event["type"].startswith("text.") for event in messages)
+        # GPT-Live never receives tool calls, results or handovers (FR-013).
+        assert not any("handover_" in json.dumps(event) for event in socket.sent)
         assert (
             controller.queue.lookup(
                 accepted.receipt.task_id,
@@ -1338,14 +1368,17 @@ def test_speech_sdk_handover_uses_new_segment_general_context_not_old_delegation
             )
             == accepted.receipt
         )
-        await segments.current.close()
+        kinds = [entry.kind for entry in controller.history.entries]
+        assert kinds == ["caller_speech", "handover", "delegation_result"]
+        assert {entry.at_ms for entry in controller.history.entries[1:]} == {100.0}
+        await segment.close()
         await adapter.close()
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("fault", [False, True])
-def test_speech_reader_tracks_authorized_generation_only_and_never_fault_reconnects(
+def test_speech_reader_keeps_one_session_across_agent_changes_and_never_fault_reconnects(
     live_case, monkeypatch, fault
 ):
     import base64
@@ -1360,7 +1393,6 @@ def test_speech_reader_tracks_authorized_generation_only_and_never_fault_reconne
         slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
         entered = asyncio.Event()
         receive = socket.recv
-        created = []
 
         async def observed_receive():
             entered.set()
@@ -1369,30 +1401,17 @@ def test_speech_reader_tracks_authorized_generation_only_and_never_fault_reconne
             return await receive()
 
         async def connect(url, **options):
-            assert not fault and socket.closed == 1
-            fresh = type(socket)()
-            created.append(fresh)
-            return fresh
-
-        async def emit(message):
-            return None
+            raise AssertionError("no reconnect")
 
         monkeypatch.setattr(socket, "recv", observed_receive)
         monkeypatch.setattr(segment.adapter, "_factory", connect)
-        segments = SpeechSegments(
-            current=segment, instructions_for=lambda current: "Synthetic continuation", emit=emit
-        )
+        segments = SpeechSegments(current=segment)
         policy = ConversationPolicy(
-            slot=slot,
-            snapshot=service.configuration.pin(),
-            admission=service,
-            retire_speech=segments.retire,
-            continue_speech=segments.continue_with,
+            slot=slot, snapshot=service.configuration.pin(), admission=service
         )
         if fault:
             with pytest.raises(PermissionError):
                 await segments.next_event()
-            assert not created
             assert (
                 (await repository.read(deadline=asyncio.get_running_loop().time() + 1))
                 .authority.slots[0]
@@ -1401,11 +1420,13 @@ def test_speech_reader_tracks_authorized_generation_only_and_never_fault_reconne
         else:
             reader = asyncio.create_task(segments.next_event())
             await asyncio.wait_for(entered.wait(), 1)
-            await policy.enter_routing(
-                WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10))
+            await policy.handover(
+                "routing",
+                "lifecycle",
+                WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10)),
             )
             pcm = b"\0" * 960
-            await created[0].events.put(
+            await socket.events.put(
                 json.dumps(
                     {
                         "type": "session.output_audio.delta",
@@ -1414,7 +1435,7 @@ def test_speech_reader_tracks_authorized_generation_only_and_never_fault_reconne
                 )
             )
             generation, event = await asyncio.wait_for(reader, 1)
-            assert generation == policy.slot.generation > slot.generation and event["pcm"] == pcm
+            assert generation == policy.slot.generation == slot.generation and event["pcm"] == pcm
             await segments.current.close()
 
     asyncio.run(scenario())
@@ -1489,9 +1510,7 @@ def test_speech_transcript_budget_is_volatile_and_only_verified_user_speech_refr
     async def scenario():
         original, segment = await opened()
         slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
-        segments = SpeechSegments(
-            current=segment, instructions_for=lambda current: "Synthetic voice", emit=emit
-        )
+        segments = SpeechSegments(current=segment)
         policy = ConversationPolicy(
             slot=slot, snapshot=service.configuration.pin(), admission=service
         )
@@ -1525,6 +1544,7 @@ def test_speech_transcript_budget_is_volatile_and_only_verified_user_speech_refr
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority.slots[0]
         assert updated.idle_expires_at == clock.utc_now() + timedelta(seconds=120)
+        # Transcripts are history now: they count against the 256 KiB conversation limit.
         for index in range(9):
             await controller.accept_transcript(
                 base
@@ -1534,9 +1554,17 @@ def test_speech_transcript_budget_is_volatile_and_only_verified_user_speech_refr
             )
         assert 63000 < controller.retained_bytes < 256 * 1024
         with pytest.raises(PermissionError, match="transcript_limit"):
-            await controller.accept_transcript(
-                base | {"delta": "x" * 7000}, generation=1, input_audio_accepted=False
-            )
+            for index in range(9, 60):
+                await controller.accept_transcript(
+                    base
+                    | {
+                        "delta": "x" * 7000,
+                        "start_ms": index * 1000,
+                        "end_ms": (index + 1) * 1000,
+                    },
+                    generation=1,
+                    input_audio_accepted=False,
+                )
         assert controller.retained_bytes == 0
         await controller.close()
         assert not requests and socket.closed == 1
@@ -1701,9 +1729,7 @@ def test_authority_loss_still_disposes_owned_resources_but_never_releases(
             slot = await service.check_output(
                 original.session_id, original.owner_epoch, generation=1
             )
-            segments = SpeechSegments(
-                current=segment, instructions_for=lambda current: "Synthetic voice", emit=emit
-            )
+            segments = SpeechSegments(current=segment)
             policy = ConversationPolicy(
                 slot=slot, snapshot=service.configuration.pin(), admission=service
             )
@@ -1878,7 +1904,7 @@ def test_audio_flow_rejects_malformed_before_pcm_acceptance(fault):
         AudioFlow(generation=1, monotonic=lambda: 0.0).input(frame)
 
 
-def test_wire_audio_shares_writer_budget_and_discards_actual_retired_generation(
+def test_wire_audio_shares_writer_budget_and_keeps_playing_across_an_agent_change(
     live_case, text_execution_case, monkeypatch
 ):
     import struct
@@ -1896,23 +1922,9 @@ def test_wire_audio_shares_writer_budget_and_discards_actual_retired_generation(
         original, segment = await opened()
         slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
         wire = VoiceWire(SimpleNamespace())
-
-        async def connect(url, **options):
-            assert socket.closed == 1
-            return type(socket)()
-
-        monkeypatch.setattr(segment.adapter, "_factory", connect)
-        segments = SpeechSegments(
-            current=segment,
-            instructions_for=lambda current: "Synthetic continuation",
-            emit=wire.emit,
-        )
+        segments = SpeechSegments(current=segment)
         policy = ConversationPolicy(
-            slot=slot,
-            snapshot=service.configuration.pin(),
-            admission=service,
-            retire_speech=segments.retire,
-            continue_speech=segments.continue_with,
+            slot=slot, snapshot=service.configuration.pin(), admission=service
         )
         controller = ConversationExecutor(
             policy=policy, text_adapter=adapter, utc_now=clock.utc_now, speech_segments=segments
@@ -1920,18 +1932,18 @@ def test_wire_audio_shares_writer_budget_and_discards_actual_retired_generation(
         wire.session = controller
         await wire.audio_output(b"\0" * 24000, generation=1)
         assert wire.audio.pending_bytes == 24000 and wire._outbound.qsize() == 25
-        await policy.interrupt(WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10)))
-        assert wire.audio.pending_bytes == 0 and wire._outbound.qsize() == 1
-        await wire.audio_output(b"\0" * 960, generation=1)
-        assert wire._outbound.qsize() == 1
-        await wire.audio_output(b"\0" * 960, generation=policy.slot.generation)
-        generation, changed = wire._outbound.get_nowait()
-        wire._outbound.task_done()
-        assert json.loads(changed)["type"] == "generation.changed"
+        await policy.handover(
+            "routing",
+            "lifecycle",
+            WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10)),
+        )
+        # An agent change keeps the generation, so queued speech is not discarded (FR-013).
+        assert policy.slot.generation == 1
+        assert wire.audio.pending_bytes == 24000 and wire._outbound.qsize() == 25
         generation, frame = wire._outbound.get_nowait()
         wire._outbound.task_done()
         assert isinstance(frame, bytes)
-        assert struct.unpack(">BII", frame[:9]) == (1, policy.slot.generation, 1)
+        assert struct.unpack(">BII", frame[:9]) == (1, 1, 1)
         wire.dispose()
         assert wire.audio.pending_bytes == 0 and wire._outbound.empty()
         await controller.close()
@@ -2014,7 +2026,8 @@ def test_correlated_fragments_need_shared_backend_clarity_before_any_actions(
         assert deadline == accepted.receipt.work.work_accepted_at + timedelta(seconds=30)
         await controller.process_next(emit=emit)
         assert len(requests) == 1 + int(clear)
-        expected = VOICE_PLATFORM_RULES + "\n\nSynthetic welcome prompt"
+        # Welcome never runs a request: the move to Routing comes first (FR-030).
+        expected = VOICE_PLATFORM_RULES + "\n\nSynthetic routing prompt"
         assert requests[0]["instructions"] == expected
         assert "Synthetic correlated fragment text" in json.dumps(requests[0]["input"])
         # The clarity check and the speech work both ask for low reasoning effort.
@@ -2245,8 +2258,15 @@ def test_wire_rejects_old_played_generation_even_when_audio_sequence_is_reused(
     asyncio.run(scenario())
 
 
-def test_wire_duplicate_accepted_interrupt_is_acknowledged_after_generation_advances(
-    live_case, text_execution_case
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"type": "output.interrupt", "generation": 1},
+        {"type": "input.mute", "muted": True},
+    ],
+)
+def test_wire_refuses_the_removed_interrupt_and_mute_controls(
+    live_case, text_execution_case, message
 ):
     from types import SimpleNamespace
 
@@ -2269,28 +2289,9 @@ def test_wire_duplicate_accepted_interrupt_is_acknowledged_after_generation_adva
         )
         wire = VoiceWire(SimpleNamespace())
         wire.session = controller
-        raw = json.dumps(
-            {
-                "type": "output.interrupt",
-                "sequence": 1,
-                "sessionId": slot.session_id,
-                "generation": 1,
-            }
-        )
-        assert wire.command(raw)[1] is False
-        wire._advance(2)
-        assert wire.command(raw)[1] is True
-        with pytest.raises(PermissionError, match="invalid_sequence"):
-            wire.command(
-                json.dumps(
-                    {
-                        "type": "output.interrupt",
-                        "sequence": 1,
-                        "sessionId": slot.session_id,
-                        "generation": 2,
-                    }
-                )
-            )
+        # Mute input and Mute output act only in the browser and send nothing (T047).
+        with pytest.raises(PermissionError, match="invalid_control"):
+            wire.command(json.dumps(message | {"sequence": 1, "sessionId": slot.session_id}))
         wire.dispose()
         await segment.close()
         await controller.close()
@@ -2346,6 +2347,16 @@ def test_voice_progress_control_is_validated(event):
         server_control(event)
     valid = {"type": "progress", "state": "still_working", "text": "Checking.", "generation": 1}
     assert server_control(valid) == valid
+
+
+def test_voice_history_condensed_control_carries_no_fields():
+    # Feature 007, R11: the Test page shows a status line; the content stays in the runtime.
+    from caller_runtime.api.voice import server_control
+
+    valid = {"type": "history.condensed", "generation": 1}
+    assert server_control(valid) == valid
+    with pytest.raises(PermissionError):
+        server_control(valid | {"text": "Synthetic condensed account"})
 
 
 def progress_actions(*pairs):
@@ -2409,12 +2420,13 @@ def test_report_progress_validates_streams_and_lets_the_agent_continue(
             "cancellation_confirmed",
         ]
         # Final and waiting states enter history before the answer; still_working does not.
-        turns = controller.text_turns()
-        assert [turn["content"] for turn in turns if turn["content"].startswith("Status")] == [
+        entries = controller.history.entries
+        assert [e.items()[0]["content"] for e in entries if e.kind == "progress"] == [
             "Status (waiting_for_input): Which order do you mean?",
             "Status (completed): Your order was updated.",
         ]
-        assert turns[-1]["content"] == "Synthetic shared streamed reply"
+        assert entries[-1].kind == "agent_answer"
+        assert entries[-1].content == "Synthetic shared streamed reply"
         reasons = [
             (event["outcome"], event["reason_code"])
             for event in telemetry.events
@@ -2591,7 +2603,8 @@ def test_failure_line_stands_in_only_without_a_final_progress_state(
         reasons = [e["reason_code"] for e in telemetry.events if e["event"] == "test.progress"]
         if final:
             assert spoken == ["The lookup failed."] and reasons == ["failed"]
-            assert controller.text_turns()[-1]["content"] == "Status (failed): The lookup failed."
+            last = controller.history.entries[-1]
+            assert last.items()[0]["content"] == "Status (failed): The lookup failed."
         else:
             assert spoken == [WORK_FAILED_LINE] and reasons == ["fallback_line"]
         await segment.close()
@@ -2778,6 +2791,27 @@ def test_greeting_request_uses_welcome_with_mode_rules_low_effort_and_no_tools(
     asyncio.run(scenario())
 
 
+def test_configured_reasoning_effort_reaches_work_and_greeting_requests(text_execution_case):
+    from caller_runtime.domain.conversation import WorkBudget
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+
+    async def scenario():
+        controller = await setup()
+        # CALLER_REASONING_EFFORT applies to every working agent and the greeting (T031).
+        controller.reasoning_effort = adapter.reasoning_effort = "medium"
+        await controller.submit_text("text-effort", "Synthetic effort request")
+        await controller.process_next(emit=emit)
+        assert [request["reasoning"] for request in requests] == [{"effort": "medium"}]
+        controls["greeting"] = "Hello."
+        now = controller.utc_now()
+        await controller.greeting_text("text", WorkBudget(now, now + timedelta(seconds=5)))
+        assert controls["greeting_requests"][-1]["reasoning"] == {"effort": "medium"}
+        await controller.close()
+
+    asyncio.run(scenario())
+
+
 def test_greeting_request_is_cancellable_and_still_settles(text_execution_case, admission_case):
     from caller_runtime.domain.conversation import WorkBudget
     from caller_runtime.services.conversation import ConversationExecutor
@@ -2839,7 +2873,9 @@ def test_text_open_streams_the_greeting_and_keeps_it_as_the_first_assistant_turn
         expected = "Welcome! How can I help?" if outcome == "model" else TEXT_FALLBACK_GREETING
         assert [m["type"] for m in messages] == ["text.delta", "text.completed"]
         assert messages[0]["text"] == expected
-        assert controller.text_turns() == [{"role": "assistant", "content": expected}]
+        assert [(e.kind, e.content) for e in controller.history.entries] == [
+            ("agent_answer", expected)
+        ]
         # One request per turn: the open request makes only the greeting call.
         assert not requests and len(controls["greeting_requests"]) == 1
         with pytest.raises(PermissionError, match="^mode_mismatch$"):
@@ -2898,7 +2934,8 @@ def test_aggregate_context_overflow_fails_before_model_without_trimming_security
 
     async def scenario():
         controller = await setup()
-        controller._history = [{"role": "user", "content": "synthetic-private-context-" * 12000}]
+        for _ in range(5):
+            controller.history.record_user_text("synthetic-private-context-" * 2300)
         assert controller.retained_bytes > 256 * 1024
         with pytest.raises(PermissionError, match="^conversation_context_limit$"):
             await controller.submit_text("text-overflow", "Synthetic new request")
@@ -2970,71 +3007,6 @@ def test_configured_agent_registry_reuses_pinned_publication_and_reviewed_tools(
         assert speech[agent["agentId"]].instructions == (
             VOICE_PLATFORM_RULES + "\n\n" + agent["prompt"]
         )
-
-
-def note_graph(count, *, description="Synthetic routing description"):
-    return {
-        "agents": [
-            {"agentId": "welcome", "name": "Welcome", "role": "welcome", "prompt": "Secret A"},
-            {"agentId": "goodbye", "name": "Goodbye", "role": "goodbye", "prompt": "Secret B"},
-            {
-                "agentId": "entry-0",
-                "name": "Entry",
-                "role": "ordinary",
-                "prompt": "Secret C",
-                "communityId": "c-0",
-            },
-        ],
-        "communities": [
-            {
-                "communityId": f"c-{index}",
-                "name": f"Community {index}",
-                "routingDescription": description,
-                "enabled": index != 1,
-                **({"routable": False} if index == 2 else {}),
-            }
-            for index in range(count)
-        ],
-        "communityConnections": [
-            {"sourceCommunityId": "c-0", "targetCommunityId": "c-3"},
-            {"sourceCommunityId": "c-0", "targetCommunityId": "c-1"},
-        ],
-    }
-
-
-def note_for(graph, agent_id, community_id=None):
-    from types import SimpleNamespace
-
-    from caller_runtime.services.conversation_policy import context_note
-
-    snapshot = SimpleNamespace(for_runtime=lambda: graph)
-    slot = SimpleNamespace(active_agent_id=agent_id, active_community_id=community_id)
-    return context_note(snapshot, slot)
-
-
-def test_context_note_names_the_agent_and_reachable_communities_without_prompts():
-    parts = note_for(note_graph(5, description="d" * 400), "welcome")
-    note = "".join(parts)
-    assert note.startswith("Welcome (welcome)\nCommunities you can route to:\n")
-    # Disabled and non-routable communities are left out; descriptions stop at 160 characters.
-    assert "Community 0: " + "d" * 160 + "\n" in note
-    assert "Community 1" not in note and "Community 2" not in note
-    assert "d" * 161 not in note and "Secret" not in note
-    entry = "".join(note_for(note_graph(5), "entry-0", "c-0"))
-    assert entry.splitlines()[0] == "Entry (ordinary)" and "Community 3: " in entry
-    assert "Community 1" not in entry and "Community 4" not in entry
-    assert "".join(note_for(note_graph(5), "goodbye")).endswith(
-        "Communities you can route to: none"
-    )
-
-
-def test_context_note_is_capped_at_2000_bytes_in_parts_of_500():
-    parts = note_for(note_graph(60, description="é" * 160), "welcome")
-    note = "".join(parts)
-    assert all(len(part.encode("utf-8")) <= 500 for part in parts)
-    assert len(note.encode("utf-8")) <= 2000
-    shown = note.count("Community ")
-    assert note.rstrip().endswith(f"…and {58 - shown} more communities")
 
 
 @pytest.mark.parametrize("corruption", ["hosted", "over-budget", "duplicate-name"])

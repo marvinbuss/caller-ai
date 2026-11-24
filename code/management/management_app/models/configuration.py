@@ -46,6 +46,8 @@ class Agent(ConfigurationModel):
     capability_assignments: list[CapabilityAssignment] = Field(alias="capabilityAssignments")
     voice_addition: OptionalText = Field(default=None, alias="voiceAddition", exclude_if=_absent)
     text_addition: OptionalText = Field(default=None, alias="textAddition", exclude_if=_absent)
+    # Schema 2.3.0: what the agent handles, offered to the agents that may hand over to it.
+    description: OptionalText = Field(default=None, exclude_if=_absent)
 
     @field_validator("prompt")
     @classmethod
@@ -129,11 +131,15 @@ class ConversationSettings(ConfigurationModel):
         default=None, alias="textGlobalPrompt", exclude_if=_absent
     )
     quiet_handover: bool | None = Field(default=None, alias="quietHandover", exclude_if=_absent)
+    announce_agent_changes: bool | None = Field(
+        default=None, alias="announceAgentChanges", exclude_if=_absent
+    )
 
 
 EMPTY_LAYOUT: Final[dict[str, Any]] = {"communities": [], "agentsByCommunity": {}}
 SCHEMA_VERSION: Final = "2.1.0"
 MODALITY_SCHEMA_VERSION: Final = "2.2.0"
+HANDOVER_SCHEMA_VERSION: Final = "2.3.0"
 # The 2.2.0 fields: their presence alone makes a published revision 2.2.0.
 MODALITY_SETTINGS: Final = (
     "voiceInstructions",
@@ -144,6 +150,10 @@ MODALITY_SETTINGS: Final = (
     "quietHandover",
 )
 AGENT_ADDITIONS: Final = ("voiceAddition", "textAddition")
+# The 2.3.0 fields (feature 007): editor-only, and their presence alone makes a revision 2.3.0.
+HANDOVER_SETTINGS: Final = ("announceAgentChanges",)
+AGENT_HANDOVER_FIELDS: Final = ("description",)
+DESCRIPTION_LIMIT: Final = 1024
 
 
 def uses_modality_fields(graph: dict[str, Any]) -> bool:
@@ -153,8 +163,15 @@ def uses_modality_fields(graph: dict[str, Any]) -> bool:
     )
 
 
+def uses_handover_fields(graph: dict[str, Any]) -> bool:
+    settings = graph.get("conversationSettings") or {}
+    return any(key in settings for key in HANDOVER_SETTINGS) or any(
+        key in agent for agent in graph.get("agents", []) for key in AGENT_HANDOVER_FIELDS
+    )
+
+
 class ConfigurationGraph(ConfigurationModel):
-    schema_version: Literal["2.0.0", "2.1.0", "2.2.0"] = Field(alias="schemaVersion")
+    schema_version: Literal["2.0.0", "2.1.0", "2.2.0", "2.3.0"] = Field(alias="schemaVersion")
     agents: list[Agent] = Field(max_length=200)
     communities: list[Community] = Field(max_length=50)
     relationships: list[Relationship] = Field(max_length=1000)

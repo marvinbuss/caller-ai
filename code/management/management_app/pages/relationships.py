@@ -1,9 +1,9 @@
-"""Policy-filtered handover paths and allowlisted context-field editing.
+"""Policy-filtered handover paths between two agents of one community.
 
-Each row is one handover path between two agents with the context fields it passes on. The
-server offers only the sources and targets the relationship rules allow, and the context fields
-are a fixed allowlist, so a manager can switch a listed field on or off but cannot add one.
-Relationships that a lifecycle role requires are shown as required and cannot be removed.
+Each row is one handover path. The server offers only the sources and targets the relationship
+rules allow. Relationships that a lifecycle role requires are shown as required and cannot be
+removed. The per-path context fields are no longer edited: every agent sees the whole
+conversation (feature 007, FR-021), and stored values stay unchanged.
 """
 
 from typing import Any, cast
@@ -15,7 +15,6 @@ from reflex.vars.object import ObjectVar
 from management_app.state.configuration_editor import ConfigurationEditorState as Editor
 
 REMOVE = cast(EventHandler, Editor.delete_relationship)
-SET_FIELD = cast(EventHandler, Editor.set_context_field)
 
 
 def relationship_row(relationship: ObjectVar[dict[str, Any]]) -> rx.Component:
@@ -72,28 +71,6 @@ def relationship_row(relationship: ObjectVar[dict[str, Any]]) -> rx.Component:
                     ),
                 ),
                 align="center",
-            ),
-            rx.el.label(
-                rx.el.input(
-                    type="checkbox",
-                    checked=relationship["summary"].to(bool),
-                    on_change=SET_FIELD(identifier, "request_summary"),
-                ),
-                "Request summary",
-                display="flex",
-                align_items="center",
-                gap="8px",
-            ),
-            rx.el.label(
-                rx.el.input(
-                    type="checkbox",
-                    checked=relationship["reason"].to(bool),
-                    on_change=SET_FIELD(identifier, "transfer_reason"),
-                ),
-                "Transfer reason",
-                display="flex",
-                align_items="center",
-                gap="8px",
             ),
             rx.cond(
                 relationship["error"].to(str) != "",

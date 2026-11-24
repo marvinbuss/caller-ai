@@ -109,6 +109,21 @@ resolved projection's unknown fields. To roll back:
 3. Roll the runtime back only together with management, never alone while management serves
    2.2.0 projections.
 
+## Schema 2.3.0 Rollback Order
+
+Management writes schema `2.3.0` only when a revision carries an agent `description` or
+`announceAgentChanges` (feature 007). Roll back the runtime first, then management:
+
+1. Roll the runtime back. A runtime from before feature 007 refuses `2.3.0` revisions (its model
+   is strict) and keeps serving the last revision it loaded; new revisions wait until step 2.
+2. With the current management, publish the content again without the new fields: clear every
+   agent description and switch "Announce agent changes" off. Confirm `schemaVersion` is no
+   longer `2.3.0` and that the runtime loads the revision.
+3. Roll management back.
+
+Stored text conversations of history version 2 are not read by an earlier runtime; they expire
+with their `ttl`.
+
 ## Conditional Store Recovery
 
 The Cosmos adapter requests Strong reads in the exact organization partition. The owner must

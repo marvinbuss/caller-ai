@@ -540,15 +540,18 @@ def test_confirmed_community_deletion_preserves_protected_roles_and_valid_paths(
     assert validator.validate(draft.graph) == []
 
 
-def test_same_community_relationship_and_allowed_context_edits_are_valid(draft, validator) -> None:
+def test_same_community_relationship_edits_are_valid_and_keep_the_stored_fields(
+    draft, validator
+) -> None:
     peer = draft.add_agent("community-alpha", "Alpha peer", "Synthetic peer prompt")
     assert [item["agentId"] for item in draft.relationship_targets("agent-alpha")] == [peer]
     identifier = draft.add_relationship("agent-alpha", peer)
-    draft.set_context_field(identifier, "transfer_reason", False)
     relationship = next(
         item for item in draft.graph["relationships"] if item["relationshipId"] == identifier
     )
-    assert relationship["allowedContextFields"] == ["request_summary"]
+    # Context fields are no longer edited (feature 007, FR-021); the stored value is unchanged.
+    assert relationship["allowedContextFields"] == ["request_summary", "transfer_reason"]
+    assert not hasattr(draft, "set_context_field")
     assert validator.validate(draft.graph) == []
     draft.delete_relationship(identifier)
     assert validator.validate(draft.graph) == []
@@ -599,17 +602,13 @@ def test_routing_entry_and_enabled_edits_do_not_create_lifecycle_edges(draft, va
     assert validator.validate(draft.graph) == []
 
 
-def test_relationship_duplicates_and_raw_context_are_rejected_without_partial_edits(
-    draft, validator
-) -> None:
+def test_relationship_duplicates_are_rejected_without_partial_edits(draft, validator) -> None:
     peer = draft.add_agent("community-alpha", "Alpha peer", "Synthetic peer prompt")
-    identifier = draft.add_relationship("agent-alpha", peer)
+    draft.add_relationship("agent-alpha", peer)
     assert validator.validate(draft.graph) == []
     before = copy.deepcopy(draft.graph)
     with pytest.raises(ValueError, match="duplicate_relationship"):
         draft.add_relationship("agent-alpha", peer)
-    with pytest.raises(ValueError, match="context_field_prohibited"):
-        draft.set_context_field(identifier, "conversation", True)
     assert draft.graph == before
 
 

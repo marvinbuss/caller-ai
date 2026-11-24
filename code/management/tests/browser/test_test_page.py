@@ -31,6 +31,7 @@ CONSOLE_ACTORS = (
     *(f"console-speech-{event}-{width}" for event in SPEECH_EXITS for width in SPEECH_WIDTHS),
     *(f"console-text-{entry}" for entry in TEXT_ENTRIES),
     "console-roles",
+    "console-rules",
 )
 
 
@@ -535,7 +536,7 @@ def test_console_unavailable_media_is_visible_before_ticket(
 
 @pytest.mark.parametrize("width", SPEECH_WIDTHS)
 @pytest.mark.parametrize("exit_event", SPEECH_EXITS)
-def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
+def test_console_synthetic_speech_pcm_mute_switches_and_confirmed_stop(
     browser: Browser, configuration_host, width: int, exit_event: str
 ) -> None:
     context, page = open_manager(
@@ -546,7 +547,7 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
         fresh_session=exit_event == "logout",
     )
     page.evaluate("""() => {
-        window.syntheticMedia = {requests: 0, stopped: 0, sent: 0, received: 0};
+        window.syntheticMedia = {requests: 0, stopped: 0, sent: 0, received: 0, controls: []};
         const NativeNode = window.AudioWorkletNode;
         window.AudioWorkletNode = class extends NativeNode {
             constructor(...arguments_) {
@@ -572,6 +573,7 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
             }
             send(value) {
                 if (value instanceof ArrayBuffer) window.syntheticMedia.sent++;
+                else window.syntheticMedia.controls.push(JSON.parse(value).type);
                 return super.send(value);
             }
         };
@@ -661,14 +663,18 @@ def test_console_synthetic_speech_pcm_mute_interrupt_and_confirmed_stop(
             return media.sent === before &&
                 document.getElementById('test-status').textContent === 'ready';
         }""")
-        page.get_by_role("button", name="Interrupt output", exact=True).click()
-        expect(page.locator("#test-playback")).to_have_text("Interrupted")
+        mute_output = page.get_by_role("button", name="Mute output", exact=True)
+        mute_output.click()
+        # Mute output sets the playback volume to zero; the audio keeps playing silently.
+        expect(mute_output).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#test-status")).to_have_text("ready")
+        mute_output.click()
+        expect(mute_output).to_have_attribute("aria-pressed", "false")
         before = page.evaluate("window.syntheticMedia.sent")
-        page.evaluate("""() => {
-            const media = window.syntheticMedia;
-            media.node.port.onmessage({data: {...media.oldClear, type: 'cleared'}});
-        }""")
         page.wait_for_function("before => window.syntheticMedia.sent > before", arg=before)
+        # Neither switch sends a message of its own (feature 007).
+        controls = page.evaluate("window.syntheticMedia.controls")
+        assert not {"input.mute", "output.interrupt"} & set(controls)
         expect(page.locator("#test-status")).to_have_text("ready")
         page.get_by_role("button", name="Stop test", exact=True).click()
         expect(page.locator("#test-capture")).to_have_text("Off")
@@ -724,3 +730,34 @@ def test_test_page_follows_roles_and_the_tester_only_switch(
     finally:
         context.request.get(host["management"] + "/_test/tester-only/false")
         context.close()
+
+
+def test_custom_platform_rules_without_handover_rules_show_the_notice(
+    browser: Browser, configuration_host, configuration_graph
+):
+    # Feature 007: custom rules published before the handover rules existed lack them.
+    from tests.browser.test_configuration_editor import publish_graph
+
+    notice = "Custom platform rules have no handover rules. Handovers may be less accurate."
+    context, page = open_manager(browser, configuration_host, "console-rules")
+    try:
+        open_test_page(page)
+        expect(page.get_by_text(notice, exact=True)).to_have_count(0)
+        graph = dict(configuration_graph)
+        graph["conversationSettings"] = {"textPlatformRules": "Synthetic custom text rules"}
+        publish_graph(
+            configuration_host,
+            graph,
+            headers={"X-Caller-Confirm-Platform-Rules": "confirmed"},
+        )
+        page.reload(wait_until="networkidle")
+        expect(page.get_by_role("heading", name="Test", exact=True)).to_be_visible()
+        expect(page.get_by_text(notice, exact=True)).to_be_visible()
+    finally:
+        context.close()
+        # Restoring the shipped rules is a platform rules change too, so it needs the confirmation.
+        publish_graph(
+            configuration_host,
+            configuration_graph,
+            headers={"X-Caller-Confirm-Platform-Rules": "confirmed"},
+        )

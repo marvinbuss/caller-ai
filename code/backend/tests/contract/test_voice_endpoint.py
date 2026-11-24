@@ -148,7 +148,7 @@ def refusal(socket):
             if event["type"] == "error":
                 errors.append(event)
             else:
-                assert event["type"] == "audio.credit"
+                assert event["type"] in {"audio.credit", "agent.changed"}
     return errors, failure.value.code
 
 
@@ -157,7 +157,8 @@ def next_event(socket, kind):
         event = socket.receive_json()
         if event["type"] == kind:
             return event
-        assert event["type"] in {"audio.credit", "transcript.delta", "generation.changed"}
+        # One Live session per test: an agent change sends only `agent.changed` (FR-013).
+        assert event["type"] in {"audio.credit", "transcript.delta", "agent.changed"}
 
 
 def authority_slots(endpoint):
@@ -253,11 +254,12 @@ def test_audio_interruption_and_stop_release_the_slot_only_after_closure_is_conf
         provider = endpoint.provider_sockets[0]
         pcm = b"\x05\0" * 480
         socket.send_bytes(struct.pack(">BII", 1, ready["generation"], 1) + pcm)
-        socket.send_json(
-            {"type": "input.mute", "sequence": 1, "sessionId": ready["sessionId"], "muted": True}
-        )
-        assert next_event(socket, "command.ack")["acceptedSequence"] == 1
-        appended = [e for e in provider.sent if e["type"] == "session.input_audio.append"]
+        # Mute input and Mute output act only in the browser; neither sends a message (T047).
+        provider_sent = []
+        while not provider_sent:
+            provider_sent = [e for e in provider.sent if e["type"] == "session.input_audio.append"]
+            next_event(socket, "audio.credit")
+        appended = provider_sent
         assert len(appended) == 1 and base64.b64decode(appended[0]["audio"]) == pcm
         assert len(authority_slots(endpoint)) == 1
 
@@ -277,7 +279,7 @@ def test_audio_interruption_and_stop_release_the_slot_only_after_closure_is_conf
             if frame.get("bytes") is not None:
                 break
         assert struct.unpack(">BII", frame["bytes"][:9]) == (1, ready["generation"], 1)
-        socket.send_json({"type": "stop", "sequence": 2, "sessionId": ready["sessionId"]})
+        socket.send_json({"type": "stop", "sequence": 1, "sessionId": ready["sessionId"]})
         ended = next_event(socket, "ended")
         assert ended["code"] == "stopped" and ended["cleanupStatus"] == "complete"
         assert not authority_slots(endpoint)
@@ -397,7 +399,7 @@ def test_a_greeting_burst_waits_for_played_acknowledgements_instead_of_ending(en
         while received < 50:
             frame = socket.receive()
             if frame.get("bytes") is None:
-                assert json.loads(frame["text"])["type"] == "audio.credit", frame
+                assert json.loads(frame["text"])["type"] in {"audio.credit", "agent.changed"}
                 continue
             _protocol, generation, sequence = struct.unpack(">BII", frame["bytes"][:9])
             assert sequence == received + 1 and len(frame["bytes"]) == 969
@@ -474,7 +476,7 @@ def test_live_events_behind_queued_speech_are_read_before_that_speech_plays(endp
             event = json.loads(frame["text"])
             if event["type"] == "transcript.delta":
                 break
-            assert event["type"] == "audio.credit", event
+            assert event["type"] in {"audio.credit", "agent.changed"}, event
         # Nothing was played back, so at most the 0.5-s window of the queued speech was sent.
         assert event["speaker"] == "user" and event["fragment"] == "Synthetic caller words"
         assert frames <= 25
@@ -696,19 +698,25 @@ def test_a_failing_greeting_request_logs_deadline_without_a_fallback(endpoint):
         stop(socket, ready)
 
 
-def test_live_gets_voice_instructions_a_context_note_and_a_quiet_handover(
+def routable_descriptions(revision):
+    agents = {agent["agentId"]: agent for agent in revision["agents"]}
+    return [
+        community["routingDescription"] or community["name"]
+        for community in revision["communities"]
+        if community["enabled"]
+        and agents[community["entryAgentId"]]["enabled"]
+        and community.get("routable", True)
+    ]
+
+
+def test_live_gets_voice_instructions_with_the_static_block_when_updates_are_off(
     endpoint, runtime_revision_v2
 ):
+    # Feature 007, R5: no thinking context note and no update; the scope is in the instructions.
+    from caller_runtime.services.delegation_update import BLOCK_HEADER, FITS
     from caller_runtime.services.modality_defaults import VOICE_INSTRUCTIONS
-    from caller_runtime.services.speech_parts import QUIET_HANDOVER
 
     revision = runtime_revision_v2()
-    welcome = next(agent for agent in revision["agents"] if agent["role"] == "welcome")
-    routable = [
-        community
-        for community in revision["communities"]
-        if community["enabled"] and community.get("routable", True)
-    ]
     endpoint.controls["greeting"], endpoint.controls["greeting_block"] = "Unused", True
     with endpoint.connect() as socket:
         socket.send_json(endpoint.message(1))
@@ -717,20 +725,63 @@ def test_live_gets_voice_instructions_a_context_note_and_a_quiet_handover(
         instructions = provider.start["session"]["instructions"]
         assert instructions.startswith(VOICE_INSTRUCTIONS + "\nDelegate reasoning")
         assert len(instructions.encode("utf-8")) <= 16 * 1024
+        block = instructions.split("\n\n" + BLOCK_HEADER + "\n", 1)[1]
+        assert all("- " + text in block for text in routable_descriptions(revision))
+        assert FITS in block
         prompts = [agent["prompt"] for agent in revision["agents"]]
         assert not any(prompt in instructions for prompt in prompts)
-        notes = [
+        release_model(endpoint)
+        time.sleep(0.1)
+        assert not [
             event
             for event in provider.sent
-            if event["type"] == "session.thinking.append" and event["delegation_id"] is None
+            if event["type"] == "session.instructions.append"
+            or (event["type"] == "session.thinking.append" and event["delegation_id"] is None)
         ]
-        note = "".join(event["content"] for event in notes)
-        assert notes and all(len(event["content"].encode("utf-8")) <= 500 for event in notes)
-        assert len(note.encode("utf-8")) <= 2000
-        assert note.startswith(f"{welcome['name']} (welcome)")
-        assert "Communities you can route to:" in note
-        assert all(community["name"] + ": " in note for community in routable)
-        assert not any(prompt in note for prompt in prompts)
+        stop(socket, ready)
+
+
+def test_live_gets_a_delegation_update_after_start_when_updates_are_on(
+    endpoint, runtime_revision_v2, monkeypatch
+):
+    from caller_runtime.services.delegation_update import BLOCK_HEADER, UPDATE_HEADER
+    from caller_runtime.services.modality_defaults import VOICE_INSTRUCTIONS
+
+    options = endpoint.runtime.options.model_copy(update={"voice_delegation_updates": True})
+    monkeypatch.setattr(endpoint.runtime, "options", options)
+    revision = runtime_revision_v2()
+    endpoint.controls["greeting"], endpoint.controls["greeting_block"] = "Unused", True
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        provider = endpoint.provider_sockets[0]
+        instructions = provider.start["session"]["instructions"]
+        assert BLOCK_HEADER not in instructions
+        assert instructions.startswith(VOICE_INSTRUCTIONS + "\nDelegate reasoning")
+
+        def parts():
+            return [e for e in provider.sent if e["type"] == "session.instructions.append"]
+
+        wait_for(parts)
+        update = "".join(event["content"] for event in parts())
+        assert all(len(event["content"].encode("utf-8")) <= 500 for event in parts())
+        assert len(update.encode("utf-8")) <= 2000
+        assert update.startswith(UPDATE_HEADER + "\n")
+        assert all("- " + text in update for text in routable_descriptions(revision))
+        prompts = [agent["prompt"] for agent in revision["agents"]]
+        assert not any(prompt in update for prompt in prompts)
+        release_model(endpoint)
+        stop(socket, ready)
+
+
+def test_a_delegation_gets_a_quiet_handover(endpoint):
+    from caller_runtime.services.speech_parts import QUIET_HANDOVER
+
+    endpoint.controls["greeting"], endpoint.controls["greeting_block"] = "Unused", True
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        provider = endpoint.provider_sockets[0]
         provider_event(
             endpoint,
             {

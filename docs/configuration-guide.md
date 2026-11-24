@@ -157,13 +157,14 @@ Only accepted user text or verified input speech resets 120-second idle; lifetim
 seconds and earlier login/security expiry wins. Stop requires no surviving business/login
 permission and uses the separate bounded cleanup path.
 
-Voice handover/interrupt confirms old-segment closure and disposal before continuation,
-retaining logical actor/revision/deadlines. Unknown closure ends the test with capacity still
-occupied, not reconnect or success. Closure evidence is resource-specific: verified no-attempt
-disposal, definitively settled/disposed text work, or exact authenticated Live close plus
-settled work. Never use time, restart, a missing provider ID, cancelled coroutine or TCP close
-as evidence that capacity is free. Reviewed recovery uses the same verifier, not direct store
-editing, force-clear, socket adoption or replay.
+A voice agent change keeps the one Live session and its generation: the old agent's work is
+fenced by the agent epoch, and nothing is closed or reconnected (feature 007). There is no
+interrupt command; the caller interrupts the voice assistant by speaking. Unknown closure at the
+end of a test ends it with capacity still occupied, not reconnect or success. Closure evidence
+is resource-specific: verified no-attempt disposal, definitively settled/disposed text work, or
+exact authenticated Live close plus settled work. Never use time, restart, a missing provider
+ID, cancelled coroutine or TCP close as evidence that capacity is free. Reviewed recovery uses
+the same verifier, not direct store editing, force-clear, socket adoption or replay.
 
 Runtime context is volatile and bounded to 256 KiB, transcript to 64 KiB; user text is at most
 4 KiB and complete text reply at most 64 KiB. Invalid/busy/duplicate text, heartbeat and output
@@ -222,10 +223,10 @@ nonempty and at most 128 characters; agent-name uniqueness is case-sensitive.
 | Complete graph | `schemaVersion=2.0.0`, `agents`, `communities`, `relationships`, `communityConnections`, `layout`, `tools`, `mcpConnections`; all references resolve within this graph |
 | Published revision | Graph plus server-owned `id`, `organizationId=default`, increasing `revisionNumber`, UTC `createdAt`, verified opaque `createdBy`, canonical SHA-256 `graphHash`; immutable after publication |
 | Active pointer | `id=active`, `organizationId`, `revisionId`, `revisionNumber`, UTC `publishedAt`, server `_etag`; conditional publication base, not an editable graph field |
-| Agent | `agentId`, unique `name`, `prompt`, `enabled`, `role`, nullable `communityId`, `capabilityAssignments`; nonempty prompt when enabled |
+| Agent | `agentId`, unique `name`, `prompt`, `enabled`, `role`, nullable `communityId`, `capabilityAssignments`, optional `description` (schema 2.3.0, at most 1 KiB of UTF-8); nonempty prompt when enabled |
 | Community | `communityId`, `name`, `routingDescription`, `enabled`, `entryAgentId`; entry is an ordinary member, and an enabled community requires an enabled entry |
-| Relationship | `relationshipId`, `sourceAgentId`, `targetAgentId`, `allowedContextFields`; distinct ordinary endpoints in one community, unique ordered pair, only `request_summary` and `transfer_reason` context names |
-| Community connection | `connectionId`, `sourceCommunityId`, `targetCommunityId`, `allowedContextFields`; distinct existing communities and a unique ordered pair, never an implied reverse path |
+| Relationship | `relationshipId`, `sourceAgentId`, `targetAgentId`, `allowedContextFields`; distinct ordinary endpoints in one community, unique ordered pair, only `request_summary` and `transfer_reason` context names. Since feature 007 the context names are kept as stored but filter nothing: every agent sees the whole conversation |
+| Community connection | `connectionId`, `sourceCommunityId`, `targetCommunityId`, `allowedContextFields`; distinct existing communities and a unique ordered pair, never an implied reverse path. A connection is a direct handover to the target's entry agent; its context names are kept but ignored |
 | Layout | `communities` positions and `agentsByCommunity`; each position has `nodeId`, finite `x`/`y` within -100000 through 100000, belongs to that view and grants no permission |
 | Tool | `toolId`, `name`, `description`, `schemaVersion`, `inputSchema`, `outputAllowlist`, `enabled`, `approvedDestinationRef`, optional `mcpConnectionId`, fixed `effect=read_only`, fixed `classification=public` |
 | MCP connection | `connectionId`, `name`, `approvedEndpointRef`, `enabled`, opaque `credentialRef`, `reviewedCapabilityCatalog` |
@@ -283,10 +284,13 @@ settings panel under the graph.
 - **Agents**: add, rename, enable or disable, move to another custom community and delete custom
   agents. The entry agent of a community cannot be disabled, moved or deleted until another entry
   is chosen. The settings panel shows when and by whom the agent last changed in a published
-  revision.
+  revision, and holds the agent's **Description (used to choose handover destinations)**, with
+  a byte counter (see [Handovers](#handovers-schema-230)).
 - **Handovers**: draw a link between two agents of the same custom community. Links across
   communities, to pre-defined agents or between default communities are refused with the rule
-  that blocked them; the refusal changes nothing.
+  that blocked them; the refusal changes nothing. A link carries no context fields: every agent
+  sees the whole conversation. A community connection is labelled **Direct handover to the entry
+  agent**.
 - **Tools**: the Tools section below the graph lists the reviewed tools, the agents that use each
   one, and confirms a removal by naming the agents that lose it.
 
@@ -305,10 +309,13 @@ Open **Settings** (`/settings`); it needs the editor role. It groups the service
 - **Voice**: the voice drop-down lists the runtime's voice catalog grouped by language, labeled
   like "Quartz — English (Australian), feminine", with the environment default marked. The idle
   timeout is an integer from 30 to 120 seconds. The voice conversation instructions, voice
-  platform rules, voice global prompt and the quiet update switch are described below.
+  platform rules, voice global prompt and the quiet update on delegation switch are described
+  below.
 - **Text**: the reply length limit is an integer from 1 to the runtime's limit; it applies to text
   replies and delegated work, not to spoken output. The text platform rules and text global
   prompt are described below.
+- **Handovers**: the **Announce agent changes** checkbox, described in
+  [Handovers](#handovers-schema-230).
 - **Service (read-only)**: the Foundry service host, the text and voice model deployments and the
   voice region.
 
@@ -338,7 +345,7 @@ counter and **Restore default**; a text that is not stored shows the shipped def
 | `voiceGlobalPrompt` | Voice | 0 to 8 KiB | Every working agent in voice conversations |
 | `textPlatformRules` | Text | 0 to 8 KiB | Every working agent in text conversations |
 | `textGlobalPrompt` | Text | 0 to 8 KiB | Every working agent in text conversations |
-| `quietHandover` | Voice (switch) | on or off | The quiet update the speaking model gets on each delegation |
+| `quietHandover` | Voice (switch "Quiet update on delegation") | on or off | The quiet update the speaking model gets on each delegation |
 | Agent `voiceAddition`, `textAddition` | Agent settings panel | 0 to 4 KiB each | That agent, in that modality only |
 
 A working agent's instructions are composed per modality in this order, separated by a blank
@@ -351,8 +358,8 @@ line, with empty parts left out:
 
 The composed text is at most 36 KiB in either modality. The speaking model never receives
 platform rules, global prompts, agent prompts or additions: it gets the voice conversation
-instructions and a short automatic context note naming the active agent and the communities it
-can route to.
+instructions and the delegation scope, one line per community it may delegate for, taken from
+the routing descriptions (see [Handovers](#handovers-schema-230)).
 
 - **Absent means default.** **Restore default** removes the stored value, and an empty agent
   addition is not stored. A revision is written as schema `2.2.0` only when it carries at least one
@@ -364,11 +371,55 @@ can route to.
   `configuration_text_too_large` and the field's path.
 - **Empty platform rules** are allowed; the Test page then shows "Platform rules for voice are
   empty" (or text).
-- **Quiet update on handover** is on by default. Switched off, the speaking model gets no quiet
-  note when it hands a request to the agents.
+- **Quiet update on delegation** (stored key `quietHandover`) is on by default. Switched off, the
+  speaking model gets no quiet note when it hands a request to the agents.
 - Users with only the tester role never receive these texts.
 - New values apply to conversations started after publication; a running conversation keeps the
   revision it started with.
+
+### Handovers (schema 2.3.0)
+
+Agents hand a request over to each other as part of the same piece of work, and every agent sees
+the whole conversation (feature 007). The published graph decides who may hand over to whom:
+
+- an agent reaches its colleagues along its links in the same community;
+- a **community connection** is a direct handover to the target community's entry agent;
+- an agent reaches any other routable community through Routing, which hands the request to that
+  community's entry agent;
+- every working agent can end the conversation through Goodbye.
+
+An entry agent or Routing that receives a request hands it on to the best-fitting agent and
+speaks to the user only to resolve something unclear.
+
+| Field | Where | Default | Used by |
+|-------|-------|---------|---------|
+| Agent `description` | Agent settings panel, "Description (used to choose handover destinations)" | none | Colleagues that may hand over to this agent; without a description they see its name |
+| `announceAgentChanges` | Settings, Handovers, "Announce agent changes" | off | Every working agent, in both modalities |
+
+- **Description.** At most 1 KiB of UTF-8; a longer one is refused with
+  `configuration_text_too_large` at `agents[N].description`. Describe what the agent handles,
+  not how. A handover to another community uses that community's routing description.
+- **Announce agent changes** is off by default, and handovers are quiet: "When off, agents hand
+  over to each other without saying so." Agents still say who is helping when the user asks.
+  When on, the line "After a handover, the receiving agent says briefly who is now helping."
+  follows the platform rules of every agent. Switching it off removes the field.
+- **It is not the quiet update.** "Quiet update on delegation" concerns the voice assistant: the
+  silent note it gets when it hands a request to the agents. "Announce agent changes" concerns
+  the agents: whether one says that it took over from another.
+- **Handover rules in the platform rules.** The shipped voice and text platform rules end with a
+  "Handover rules:" block that tells agents when to hand over. Custom platform rules published
+  before feature 007 do not have it; the Test page then shows "Custom platform rules have no
+  handover rules. Handovers may be less accurate." To restore the rules, use **Restore default**
+  on the platform rules (this needs the platform rules confirmation), or copy the "Handover
+  rules:" block of the shipped default into your custom rules.
+- **Voice assistant scope.** The speaking model only decides whether to delegate. It gets one
+  line per community it may delegate for (its routing description, or its name when the
+  description is empty), cut to 160 characters, either in its start instructions or, with
+  `CALLER_VOICE_DELEGATION_UPDATES=true`, as updates when the reachable communities change. No
+  agent prompt or user content is included.
+- **Version.** A revision is written as `2.3.0` only when it carries a description or
+  `announceAgentChanges`; otherwise it keeps the version it would have had. Users with only the
+  tester role receive neither field.
 
 **Pre-defined agents.** Their settings panel offers **Restore default**, which sets the draft
 prompt to the current shipped Welcome, Routing or Goodbye default; the prompt stays editable.
@@ -540,13 +591,17 @@ system-default routing, not a claim that the UI has selected physical headset ha
 
 Input credits cover every reserved/unacknowledged frame within 250ms/12000 PCM bytes; playback
 is at most 500ms/24000 PCM bytes, with acknowledgements only after worklet consumption. Frames
-carry the actual generation and sequence. Mute flushes capture immediately; interrupt clears
-output and fences the retired generation. Stop clears local audio, media tracks and volatile
-messages without waiting for a round trip. Navigation, hidden documents, device loss and socket
-failure also fence locally. None proves an external action succeeded or a provider closed.
+carry the actual generation and sequence. **Mute input** stops capture in the browser and
+flushes it immediately; nothing is sent to the runtime. **Mute output** sets the playback volume
+to zero in the browser only; the voice assistant keeps speaking and its transcript is still
+shown. There is no Interrupt button: the caller interrupts the voice assistant by speaking. An
+agent change updates the agent in the metadata and adds no conversation row. Stop clears local
+audio, media tracks and volatile messages without waiting for a round trip. Navigation, hidden
+documents, device loss and socket failure also fence locally. None proves an external action
+succeeded or a provider closed.
 
 Capture grants and worklet flush acknowledgements carry a bounded local capture identity.
-Mute/unmute and interruption invalidate older queued capture and grants; fresh grants wait
+Mute input and unmute invalidate older queued capture and grants; fresh grants wait
 for the matching flush acknowledgement. These local identifiers never replace the runtime's
 wire generation or create credit. Socket callbacks are bound to their actual socket/epoch,
 so a delayed close/error from a completed test cannot stop a later explicit start. The current

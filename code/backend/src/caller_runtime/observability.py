@@ -43,6 +43,8 @@ TEST_OPERATIONS = frozenset(
         "test.greeting",
         "test.speech_parts",
         "test.progress",
+        "test.handover",
+        "test.history",
     }
 )
 TEST_MEASUREMENTS = {
@@ -56,7 +58,14 @@ TEST_MEASUREMENTS = {
         }
     ),
     "test.latency": frozenset(
-        {"backend_first_text_seconds", "work_seconds", "cleanup_seconds", "admission_seconds"}
+        {
+            "backend_first_text_seconds",
+            "work_seconds",
+            "cleanup_seconds",
+            "admission_seconds",
+            "handover_seconds",
+            "transcription_wait_seconds",
+        }
     ),
     "test.greeting": frozenset({"greeting_seconds"}),
     "test.speech_parts": frozenset({"parts", "dropped_parts"}),
@@ -104,8 +113,30 @@ TEST_REASONS = frozenset(
         "fallback_line",
         "rate_limited",
         "stale",
+        "applied",
+        "refused_graph",
+        "refused_stale",
+        "refused_budget",
+        "refused_step_limit",
+        "condensed",
+        "limit",
     }
 )
+ROLES = frozenset({"welcome", "routing", "goodbye", "ordinary"})
+HANDOVER_PATHS = frozenset({"peer", "direct", "routing", "lifecycle"})
+HISTORY_RANGES = frozenset({"<16", "16-64", "64-128", "128-192", ">=192"})
+# Closed, content-free fields per event; `bool` marks a yes/no field (FR-018).
+TEST_FIELDS: dict[str, dict[str, frozenset[str] | type[bool]]] = {
+    "test.handover": {"source_role": ROLES, "destination_role": ROLES, "path": HANDOVER_PATHS},
+    "test.delegation": {
+        "first_role": ROLES,
+        "handled_role": ROLES,
+        "handed_on": bool,
+        "untranscribed": bool,
+    },
+    "test.history": {"history_kib": HISTORY_RANGES},
+    "test.latency": {"path": HANDOVER_PATHS},
+}
 OPERATIONS = (
     frozenset(
         {
@@ -290,6 +321,7 @@ class Telemetry:
         reason: str | None = None,
         measurement: str | None = None,
         value: int | float | None = None,
+        fields: Mapping[str, str | bool] | None = None,
     ) -> None:
         if name not in EVENTS:
             raise ValueError("unsafe_event_name")
@@ -318,6 +350,15 @@ class Telemetry:
                 raise ValueError("unsafe_test_measurement")
         elif value is not None:
             raise ValueError("unsafe_test_measurement")
+        allowed = TEST_FIELDS.get(name, {})
+        for key, item in (fields or {}).items():
+            accepted = allowed.get(key)
+            if accepted is None or (
+                type(item) is not bool
+                if accepted is bool
+                else not isinstance(item, str) or item not in accepted
+            ):
+                raise ValueError("unsafe_test_field")
         if self._closed:
             return
         context = trace.get_current_span().get_span_context()
@@ -336,6 +377,8 @@ class Telemetry:
             event["kind"] = "voice" if mode == "speech" else "text"
         if reason is not None:
             event["reason_code"] = reason
+        for key, item in (fields or {}).items():
+            event[key] = ("true" if item else "false") if type(item) is bool else str(item)
         if measurement is not None:
             event["measurement"] = measurement
             event["value"] = str(value)

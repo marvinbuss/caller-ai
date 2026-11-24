@@ -1,67 +1,38 @@
-"""Pinned active-agent position and the speech-session continuation it drives.
+"""Pinned active-agent position, handovers along the published graph, and the one Live session.
 
 `ConversationPolicy` moves a session between agents and communities only along the pinned
 configuration revision and only through admission transitions, so model text can never widen what
-a session may reach. `SpeechSegments` carries Live speech across such a move by retiring the old
-speech session and continuing on a new generation; a failed continuation fails the session.
+a session may reach. `handover` is the one way to change the active agent (feature 007): it
+rechecks the destination against the same rules that offered it (`handover_rules`), applies the
+transition within the work budget and returns the `Handover` record. A refusal raises with a fixed
+code and leaves the position unchanged. `SpeechSegments` holds the one Live session of a voice
+test, which an agent change never replaces.
 """
 
 import asyncio
-import json
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from caller_runtime.adapters.capability_client import ConversationCapabilityClient
 from caller_runtime.adapters.gpt_live import GptLiveSession
 from caller_runtime.domain.configuration import RevisionSnapshot
 from caller_runtime.domain.conversation import TestSlot, WorkBudget
+from caller_runtime.domain.shared_history import Handover, HandoverReason
 from caller_runtime.domain.visibility import CommunityVisibility
 from caller_runtime.services.admission import AdmissionError, TestAdmissionService
-from caller_runtime.services.speech_parts import split_reply
+from caller_runtime.services.handover_rules import (
+    Destination,
+    HandoverPath,
+    destinations,
+    enabled,
+)
 
-CONTEXT_NOTE_BYTES = 2000
-DESCRIPTION_CHARS = 160
-DIRECTORY_DESCRIPTION_CHARS = 1000
-
-
-def context_note(snapshot: RevisionSnapshot, slot: TestSlot) -> list[str]:
-    """The quiet note for the speaking model: the active agent and the communities reachable
-    from it, in parts of at most 500 bytes and 2,000 bytes in total. It holds no instructions."""
-    graph = snapshot.for_runtime()
-    agent = next(item for item in graph["agents"] if item["agentId"] == slot.active_agent_id)
-    enabled = {
-        community["communityId"]: community
-        for community in graph["communities"]
-        if community["enabled"] is True
-    }
-    if agent["role"] == "goodbye":
-        reachable = []
-    elif slot.active_community_id is None:
-        reachable = [item for item in enabled.values() if item.get("routable", True) is True]
-    else:
-        reachable = [
-            enabled[edge["targetCommunityId"]]
-            for edge in graph["communityConnections"]
-            if edge["sourceCommunityId"] == slot.active_community_id
-            and edge["targetCommunityId"] in enabled
-        ]
-    lines = [
-        f"{agent['name']} ({agent['role']})",
-        "Communities you can route to:" + ("" if reachable else " none"),
-    ]
-
-    def size(values: list[str]) -> int:
-        return len("\n".join(values).encode("utf-8"))
-
-    for index, community in enumerate(reachable):
-        line = f"{community['name']}: {community['routingDescription'][:DESCRIPTION_CHARS]}"
-        left = len(reachable) - index - 1
-        tail = [f"…and {left} more communities"] if left else []
-        if size([*lines, line, *tail]) > CONTEXT_NOTE_BYTES:
-            lines.append(f"…and {left + 1} more communities")
-            break
-        lines.append(line)
-    return split_reply("\n".join(lines))
+# Policy and admission codes a handover refusal reports to the model (FR-008).
+REFUSALS: dict[str, HandoverReason] = {
+    "stale_agent_epoch": "refused_stale",
+    "handover_not_allowed": "refused_graph",
+    "work_deadline_exceeded": "refused_budget",
+    "work_step_limit": "refused_step_limit",
+}
 
 
 class ConversationPolicy:
@@ -71,8 +42,6 @@ class ConversationPolicy:
         slot: TestSlot,
         snapshot: RevisionSnapshot,
         admission: TestAdmissionService,
-        retire_speech: Callable[[TestSlot, WorkBudget], Awaitable[None]] | None = None,
-        continue_speech: Callable[[TestSlot, WorkBudget], Awaitable[None]] | None = None,
     ) -> None:
         if (
             slot.revision_id != snapshot.revision_id
@@ -86,10 +55,7 @@ class ConversationPolicy:
             agent["agentId"]: agent for agent in snapshot.for_runtime()["agents"]
         }
         self._lock = asyncio.Lock()
-        self._retire_speech = retire_speech
-        self._continue_speech = continue_speech
         self._pending_destination: str | None = None
-        self.transfer_context: dict[str, str] = {}
 
     @property
     def active_agent_id(self) -> str:
@@ -103,37 +69,33 @@ class ConversationPolicy:
     def agent_epoch(self) -> int:
         return self.slot.agent_epoch
 
+    @property
+    def pending_destination(self) -> str | None:
+        """The community a transfer through Routing is heading to, if one is in progress."""
+        return self._pending_destination
+
+    def restore_pending(self, community_id: str | None) -> None:
+        """Resume a stored Routing transfer; ignored unless Routing is active and may reach it."""
+        self._pending_destination = None
+        if community_id is not None and any(
+            destination.path == "routing" and destination.community_id == community_id
+            for destination in self.offered()
+        ):
+            self._pending_destination = community_id
+
+    def offered(self) -> list[Destination]:
+        """The handovers the active agent may request now, in their published order."""
+        return destinations(self.snapshot, self.active_agent_id)
+
+    def enabled(self, destination: Destination) -> bool:
+        if self._agents[self.active_agent_id]["role"] != "routing":
+            return True
+        return enabled(destination, self._pending_destination)
+
     async def settled(self) -> TestSlot:
         """Return the slot once any transition this policy is applying has finished."""
         async with self._lock:
             return self.slot
-
-    def routing_directory(self) -> str | None:
-        """Directory metadata for the active Routing agent: the communities `route` accepts now,
-        as JSON with ids, names and routing descriptions cut to 1,000 characters. `None` for any
-        other role. It grants nothing; `route` rechecks every choice."""
-        if self._agents[self.active_agent_id]["role"] != "routing":
-            return None
-        communities = self.visibility.view_for(self.active_agent_id)["communities"]
-        if self.active_community_id is not None:
-            communities = [
-                community
-                for community in self.snapshot.for_runtime()["communities"]
-                if community["communityId"] == self._pending_destination
-            ]
-        entries = [
-            {
-                "communityId": community["communityId"],
-                "name": community["name"],
-                "routingDescription": community["routingDescription"][:DIRECTORY_DESCRIPTION_CHARS],
-            }
-            for community in communities
-        ]
-        return (
-            "Communities you can route to (JSON). Call `route_community` with one communityId; "
-            "never tell the user an id:\n"
-            + json.dumps(entries, ensure_ascii=False, separators=(",", ":"))
-        )
 
     def _source(
         self, agent_id: str | None = None, agent_epoch: int | None = None
@@ -145,10 +107,6 @@ class ConversationPolicy:
         return self._agents[self.active_agent_id]
 
     async def _move(self, destination: str, community: str | None, work: WorkBudget) -> None:
-        if self.slot.mode == "speech":
-            if self._retire_speech is None:
-                raise PermissionError("speech_transition_unavailable")
-            await self._retire_speech(self.slot, work)
         try:
             self.slot = await self.admission.transition(
                 self.slot.session_id,
@@ -161,8 +119,82 @@ class ConversationPolicy:
             )
         except AdmissionError as error:
             raise PermissionError(error.code) from None
-        if self.slot.mode == "speech" and self._continue_speech is not None:
-            await self._continue_speech(self.slot, work)
+
+    def record(
+        self,
+        destination_id: str,
+        path: HandoverPath,
+        *,
+        community_id: str | None = None,
+        reason: HandoverReason = "applied",
+    ) -> Handover:
+        """The Handover record of a request by the active agent, applied or refused."""
+        source = self._agents[self.active_agent_id]
+        destination = self._agents.get(destination_id, source)
+        target = community_id if path == "routing" and community_id is not None else None
+        if target is None:
+            target = destination.get("communityId")
+        return Handover.model_validate(
+            {
+                "sourceAgentId": source["agentId"],
+                "sourceRole": source["role"],
+                "destinationAgentId": destination["agentId"],
+                "destinationRole": destination["role"],
+                "targetCommunityId": target,
+                "path": path,
+                "outcome": "applied" if reason == "applied" else "refused",
+                "reason": reason,
+            }
+        )
+
+    async def handover(
+        self,
+        destination_id: str,
+        path: HandoverPath,
+        work: WorkBudget,
+        *,
+        community_id: str | None = None,
+        source_agent_id: str | None = None,
+        source_agent_epoch: int | None = None,
+    ) -> Handover:
+        """Apply one handover of the active agent (contracts/handover.md, applying a handover)."""
+        async with self._lock:
+            source = self._source(source_agent_id, source_agent_epoch)
+            if source["role"] == "welcome":
+                # Welcome never runs a request; the application moves it to Routing (R7).
+                if (
+                    path != "lifecycle"
+                    or community_id is not None
+                    or destination_id != self.visibility.lifecycle_target("routing")
+                ):
+                    raise PermissionError("handover_not_allowed")
+                community, pending = None, None
+            else:
+                offered = next(
+                    (
+                        item
+                        for item in self.offered()
+                        if item.agent_id == destination_id and item.path == path
+                    ),
+                    None,
+                )
+                if offered is None or not self.enabled(offered):
+                    raise PermissionError("handover_not_allowed")
+                if offered.community_choices:
+                    # Ordinary to Routing names its target; the position keeps its community.
+                    if community_id not in offered.community_choices:
+                        raise PermissionError("handover_not_allowed")
+                    community, pending = self.active_community_id, community_id
+                elif community_id is not None:
+                    raise PermissionError("handover_not_allowed")
+                elif offered.role == "goodbye":
+                    community, pending = self.active_community_id, None
+                else:
+                    community, pending = offered.community_id, None
+            record = self.record(destination_id, path, community_id=community_id)
+            await self._move(destination_id, community, work)
+            self._pending_destination = pending
+            return record
 
     async def restore_position(
         self, agent_id: str, community_id: str | None, work: WorkBudget
@@ -183,107 +215,6 @@ class ConversationPolicy:
             if (agent_id, community_id) != (self.active_agent_id, self.active_community_id):
                 await self._move(agent_id, community_id, work)
             return True
-
-    async def enter_routing(
-        self,
-        work: WorkBudget,
-        *,
-        source_agent_id: str | None = None,
-        source_agent_epoch: int | None = None,
-    ) -> None:
-        async with self._lock:
-            if self._source(source_agent_id, source_agent_epoch)["role"] != "welcome":
-                raise PermissionError("handover_not_allowed")
-            await self._move(self.visibility.lifecycle_target("routing"), None, work)
-
-    async def route(
-        self,
-        community_id: str,
-        work: WorkBudget,
-        *,
-        source_agent_id: str | None = None,
-        source_agent_epoch: int | None = None,
-    ) -> None:
-        async with self._lock:
-            if self._source(source_agent_id, source_agent_epoch)["role"] != "routing":
-                raise PermissionError("handover_not_allowed")
-            if self.active_community_id is None:
-                entry = self.visibility.initial_entry(self.active_agent_id, community_id)
-            else:
-                if community_id != self._pending_destination:
-                    raise PermissionError("handover_not_allowed")
-                entry = self.visibility.transfer_entry(self.active_community_id, community_id)
-            await self._move(entry["agentId"], community_id, work)
-            self._pending_destination = None
-
-    async def route_to_peer(
-        self,
-        destination_id: str,
-        work: WorkBudget,
-        *,
-        source_agent_id: str,
-        source_agent_epoch: int,
-        context: dict[str, str] | None = None,
-    ) -> None:
-        async with self._lock:
-            self._source(source_agent_id, source_agent_epoch)
-            destination = self.visibility.handover_target(source_agent_id, destination_id)
-            edge = next(
-                edge
-                for edge in self.snapshot.for_runtime()["relationships"]
-                if edge["sourceAgentId"] == source_agent_id
-                and edge["targetAgentId"] == destination_id
-            )
-            await self._move(destination["agentId"], destination["communityId"], work)
-            self.transfer_context = {
-                key: value
-                for key, value in (context or {}).items()
-                if key in edge["allowedContextFields"]
-            }
-
-    async def transfer_community(
-        self,
-        destination_id: str,
-        work: WorkBudget,
-        *,
-        source_agent_id: str | None = None,
-        source_agent_epoch: int | None = None,
-        context: dict[str, str] | None = None,
-    ) -> None:
-        async with self._lock:
-            self._source(source_agent_id, source_agent_epoch)
-            transfer = self.visibility.community_transfer(self.active_agent_id, destination_id)
-            edge = next(
-                edge
-                for edge in self.snapshot.for_runtime()["communityConnections"]
-                if edge["sourceCommunityId"] == transfer["sourceCommunityId"]
-                and edge["targetCommunityId"] == destination_id
-            )
-            await self._move(transfer["routing"]["agentId"], transfer["sourceCommunityId"], work)
-            self._pending_destination = destination_id
-            self.transfer_context = {
-                key: value
-                for key, value in (context or {}).items()
-                if key in edge["allowedContextFields"]
-            }
-
-    async def interrupt(self, work: WorkBudget) -> None:
-        async with self._lock:
-            if (
-                self.slot.mode != "speech"
-                or self._retire_speech is None
-                or self._continue_speech is None
-            ):
-                raise PermissionError("speech_transition_unavailable")
-            previous = self.slot
-            await self._retire_speech(previous, work)
-            fenced = await self.admission.check_output(
-                previous.session_id, previous.owner_epoch, generation=previous.generation + 1
-            )
-            if fenced.resources["live"].attempted != fenced.resources["live"].settled:
-                raise PermissionError("live_segment_not_closed")
-            self.slot = fenced
-            await self._continue_speech(self.slot, work)
 
     async def capability(
         self,
@@ -307,175 +238,39 @@ class ConversationPolicy:
                 work=work,
             )
 
-    async def goodbye(
-        self,
-        work: WorkBudget,
-        *,
-        source_agent_id: str | None = None,
-        source_agent_epoch: int | None = None,
-    ) -> None:
-        async with self._lock:
-            if self._source(source_agent_id, source_agent_epoch)["role"] == "goodbye":
-                raise PermissionError("handover_not_allowed")
-            await self._move(
-                self.visibility.lifecycle_target("goodbye"), self.active_community_id, work
-            )
-
 
 class SpeechSegments:
-    def __init__(
-        self,
-        *,
-        current: GptLiveSession,
-        instructions_for: Callable[[TestSlot], str],
-        emit: Callable[[dict[str, Any]], Awaitable[None]],
-        context_for: Callable[[TestSlot], list[str]] | None = None,
-    ) -> None:
-        self._current: GptLiveSession | None = current
+    """The one Live session of a voice test; it is settled only when the test ends (FR-013)."""
+
+    def __init__(self, *, current: GptLiveSession) -> None:
+        self._current = current
         self._adapter = current.adapter
-        self._instructions_for, self._emit = instructions_for, emit
-        self._context_for = context_for
-        self._lock = asyncio.Lock()
-        self._confirmed: TestSlot | None = None
         self._failed = False
-        self._changed = asyncio.Event()
-        self._transition_work: WorkBudget | None = None
         self._session_id, self._owner_epoch = current.intent.session_id, current.intent.owner_epoch
 
     @property
     def current(self) -> GptLiveSession:
-        if self._current is None:
+        if self._failed:
             raise PermissionError("live_unavailable")
         return self._current
 
-    @property
-    def starting(self) -> bool:
-        """True from retiring a segment until the next one has started; no capture can be
-        forwarded meanwhile."""
-        return self._transition_work is not None and not self._failed
-
-    async def send_context(
-        self, segment: GptLiveSession, slot: TestSlot, work: WorkBudget | None = None
-    ) -> None:
-        """Send the context note as quiet thinking right after a segment starts."""
-        if self._context_for is None:
-            return
-        for part in self._context_for(slot):
-            await segment.append_context(None, part, quiet=True, work=work)
-
-    async def _fail(self, slot: TestSlot | None = None) -> None:
+    async def _fail(self) -> None:
         self._failed = True
-        self._changed.set()
         try:
             async with asyncio.timeout(1):
                 await self._adapter.admission.mark_terminal(self._session_id, self._owner_epoch)
         except Exception:
             pass
 
-    async def retire(self, slot: TestSlot, work: WorkBudget) -> None:
-        async with self._lock:
-            if self._failed or self._current is None or self._confirmed is not None:
-                raise PermissionError("speech_transition_unavailable")
-            previous = self._current
-            if (
-                previous.intent.session_id != slot.session_id
-                or previous.intent.generation != slot.generation
-            ):
-                raise PermissionError("stale_generation")
-            self._changed.clear()
-            self._transition_work = work
-            previous.retire_output()
-            try:
-                async with asyncio.timeout(work.remaining(self._adapter.utc_now())):
-                    fenced = await self._adapter.admission.retire_generation(
-                        slot.session_id, slot.owner_epoch, generation=slot.generation, work=work
-                    )
-                    await self._emit(
-                        {
-                            "type": "generation.changed",
-                            "generation": fenced.generation,
-                            "reason": "segment_retired",
-                        }
-                    )
-                    await previous.close(
-                        deadline=asyncio.get_running_loop().time()
-                        + work.remaining(self._adapter.utc_now())
-                    )
-                    work.require(self._adapter.utc_now())
-                    self._confirmed = fenced
-                    self._current = None
-            except BaseException:
-                await self._fail(slot)
-                raise PermissionError("speech_transition_unavailable") from None
-
-    async def continue_with(self, slot: TestSlot, work: WorkBudget) -> None:
-        async with self._lock:
-            fenced = self._confirmed
-            if self._failed or self._current is not None or fenced is None:
-                raise PermissionError("speech_transition_unavailable")
-            if (
-                slot.session_id != fenced.session_id
-                or slot.owner_epoch != fenced.owner_epoch
-                or slot.generation < fenced.generation
-                or slot.revision_id != fenced.revision_id
-                or slot.actor_key != fenced.actor_key
-                or slot.expires_at != fenced.expires_at
-            ):
-                raise PermissionError("stale_owner")
-            self._confirmed = None
-            try:
-                work.require(self._adapter.utc_now())
-                if slot.agent_epoch != fenced.agent_epoch:
-                    # Credits and audio of the new generation must not reach the client first.
-                    await self._emit(
-                        {
-                            "type": "agent.changed",
-                            "agentId": slot.active_agent_id,
-                            "communityId": slot.active_community_id,
-                            "generation": slot.generation,
-                        }
-                    )
-                self._current = await self._adapter.start(
-                    slot, instructions=self._instructions_for(slot), work=work
-                )
-                await self.send_context(self._current, slot, work)
-                work.require(self._adapter.utc_now())
-                self._transition_work = None
-                self._changed.set()
-            except BaseException:
-                await self._fail(slot)
-                raise PermissionError("speech_transition_unavailable") from None
-
-    async def _wait_continuation(self) -> None:
-        work = self._transition_work
-        if self._failed or work is None:
-            raise PermissionError("speech_transition_unavailable")
-        async with asyncio.timeout(work.remaining(self._adapter.utc_now())):
-            await self._changed.wait()
-        if self._failed:
-            raise PermissionError("speech_transition_unavailable")
-        work.require(self._adapter.utc_now())
-
     async def next_event(self) -> tuple[int, dict[str, Any]]:
-        while not self._failed:
-            previous = self._current
-            if previous is None:
-                await self._wait_continuation()
-                continue
-            try:
-                event = await previous.next_event()
-            except PermissionError:
-                if self._current is not previous and not self._failed:
-                    continue
-                if self._transition_work is not None and not self._failed:
-                    await self._wait_continuation()
-                    continue
-                await self._fail()
-                raise PermissionError("live_unavailable") from None
-            if self._current is not previous or self._transition_work is not None:
-                continue
-            if event["type"] == "session.closed":
-                await self._fail()
-                raise PermissionError("live_unavailable")
-            return previous.intent.generation, event
-        raise PermissionError("live_unavailable")
+        if self._failed:
+            raise PermissionError("live_unavailable")
+        try:
+            event = await self._current.next_event()
+        except PermissionError:
+            await self._fail()
+            raise PermissionError("live_unavailable") from None
+        if event["type"] == "session.closed":
+            await self._fail()
+            raise PermissionError("live_unavailable")
+        return self._current.intent.generation, event

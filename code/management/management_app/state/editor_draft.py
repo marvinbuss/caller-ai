@@ -105,10 +105,11 @@ class EditorDraft:
 
     def edit_agent(self, identifier: str, name: str, value: str | bool) -> None:
         agent = self._agent(identifier)
-        if name in {"voiceAddition", "textAddition"}:
+        if name in {"voiceAddition", "textAddition", "description"}:
             if not isinstance(value, str):
                 raise ValueError("invalid_field_type")
-            # An empty addition is the default, so it is not stored (schema 2.2.0, FR-034).
+            # An empty addition or description is the default, so it is not stored (schema
+            # 2.2.0 and 2.3.0, FR-034).
             if value:
                 agent[name] = value
             else:
@@ -223,16 +224,6 @@ class EditorDraft:
         self.graph["relationships"].remove(
             self._capability("relationships", "relationshipId", identifier)
         )
-
-    def set_context_field(self, identifier: str, name: str, enabled: bool) -> None:
-        if name not in {"request_summary", "transfer_reason"}:
-            raise ValueError("context_field_prohibited")
-        if not isinstance(enabled, bool):
-            raise ValueError("invalid_field_type")
-        relationship = self._capability("relationships", "relationshipId", identifier)
-        fields = set(relationship["allowedContextFields"])
-        fields.add(name) if enabled else fields.discard(name)
-        relationship["allowedContextFields"] = sorted(fields)
 
     def add_agent(self, community_id: str, name: str, prompt: str) -> str:
         self._community(community_id)

@@ -53,6 +53,10 @@ module "runtime_app" {
     CALLER_WORKLOAD_AUDIENCE        = var.app_environment.identity.runtime_app_client_id
     CALLER_WORKLOAD_ROLE            = var.app_environment.identity.roles.management
     CALLER_WORKLOAD_PRINCIPAL_ID    = module.management_identity.principal_id
+    # Feature 007 tuning; empty when unset in the variable file.
+    CALLER_TRANSCRIPTION_WAIT_SECONDS = local.runtime_tuning.transcription_wait_seconds
+    CALLER_REASONING_EFFORT           = local.runtime_tuning.reasoning_effort
+    CALLER_VOICE_DELEGATION_UPDATES   = local.runtime_tuning.voice_delegation_updates
   }
 
   depends_on = [module.secret_store, module.data_store, module.model_access]

@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from reflex.event import EventHandler
 from reflex_base.registry import RegistrationContext
 
+from management_app.models.configuration import DESCRIPTION_LIMIT
 from management_app.services import graph_view
 from management_app.services.default_prompts import (
     ADDITION_LIMIT,
@@ -110,11 +111,17 @@ class ConfigurationEditorState(rx.State):
                 "protected": agent["role"] != "ordinary",
                 "communityOptions": customs,
                 "lastChanged": self._stamp_text(agent["agentId"]),
-                **{field: agent.get(field, "") for field in ("voiceAddition", "textAddition")},
                 **{
-                    field + "Bytes": f"{len(agent.get(field, '').encode('utf-8'))} of "
-                    f"{ADDITION_LIMIT} bytes"
-                    for field in ("voiceAddition", "textAddition")
+                    field: agent.get(field, "")
+                    for field in ("voiceAddition", "textAddition", "description")
+                },
+                **{
+                    field + "Bytes": f"{len(agent.get(field, '').encode('utf-8'))} of {limit} bytes"
+                    for field, limit in (
+                        ("voiceAddition", ADDITION_LIMIT),
+                        ("textAddition", ADDITION_LIMIT),
+                        ("description", DESCRIPTION_LIMIT),
+                    )
                 },
             }
             for index, agent in enumerate(self._draft.graph["agents"])
@@ -617,8 +624,6 @@ class ConfigurationEditorState(rx.State):
                         relationship["targetAgentId"], "Unknown agent"
                     ),
                     "required": relationship["relationshipId"] in required,
-                    "summary": "request_summary" in relationship["allowedContextFields"],
-                    "reason": "transfer_reason" in relationship["allowedContextFields"],
                     "error": self.errors.get(f"relationships[{index}].allowedContextFields", ""),
                 }
             )
@@ -1101,11 +1106,3 @@ class ConfigurationEditorState(rx.State):
             self._changed()
         except ValueError:
             self.error = "Required lifecycle relationships cannot be removed"
-
-    @rx.event
-    def set_context_field(self, identifier: str, name: str, enabled: bool) -> None:
-        try:
-            self._editing().set_context_field(identifier, name, enabled)
-            self._changed()
-        except ValueError:
-            self.error = "Transfer field change unavailable"

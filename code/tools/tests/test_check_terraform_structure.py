@@ -143,3 +143,26 @@ def test_the_repository_tree_is_valid():
 
     found, roots, modules = module.check()
     assert found == [] and (roots, modules) == (3, 13)
+
+
+def test_the_monitoring_module_alerts_on_handover_failures():
+    # Feature 007, FR-019: the query of the observability contract, alerting when Count > 0.
+    import re
+
+    root = Path(__file__).resolve().parents[3]
+    main = (root / "code/infra/terraform/modules/monitoring/main.tf").read_text(encoding="utf-8")
+    block = re.search(
+        r'handover-failures = \{\s*query\s*=\s*"(?P<query>[^\n]*)"\s*threshold\s*=\s*(?P<at>\S+)',
+        main,
+    )
+    assert block is not None and block["at"] == "0"
+    contract = (
+        root / "specs/007-shared-conversation-history/contracts/observability.md"
+    ).read_text(encoding="utf-8")
+    expected = re.search(r"## Alert: handover failures.*?```kusto\n(.*?)```", contract, re.S)
+    assert expected is not None
+
+    def normal(query: str) -> str:
+        return " ".join(query.replace('"', "'").split())
+
+    assert normal(block["query"]) == normal(expected[1])

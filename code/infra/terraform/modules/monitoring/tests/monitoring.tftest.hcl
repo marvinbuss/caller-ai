@@ -53,12 +53,17 @@ run "platform_metric_alerts_per_app" {
   }
 }
 
-run "log_query_alerts_cover_dependency_failures_and_latency" {
+run "log_query_alerts_cover_dependency_failures_latency_and_handovers" {
   command = plan
 
   assert {
-    condition     = toset(keys(azurerm_monitor_scheduled_query_rules_alert_v2.this)) == toset(["dependency-failures", "latency"])
-    error_message = "Dependency failure and latency alerts are required (Principle VII)."
+    condition     = toset(keys(azurerm_monitor_scheduled_query_rules_alert_v2.this)) == toset(["dependency-failures", "latency", "handover-failures"])
+    error_message = "Dependency failure, latency and handover failure alerts are required (Principle VII, FR-019)."
+  }
+
+  assert {
+    condition     = azurerm_monitor_scheduled_query_rules_alert_v2.this["handover-failures"].criteria[0].threshold == 0
+    error_message = "Handover failures alert as soon as the query returns a row."
   }
 
   assert {

@@ -75,6 +75,18 @@
           ],
           "default": null,
           "title": "Textaddition"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
         }
       },
       "required": [
@@ -362,6 +374,18 @@
           ],
           "default": null,
           "title": "Quiethandover"
+        },
+        "announceAgentChanges": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Announceagentchanges"
         }
       },
       "title": "ConversationSettings",
@@ -694,7 +718,8 @@
       "enum": [
         "2.0.0",
         "2.1.0",
-        "2.2.0"
+        "2.2.0",
+        "2.3.0"
       ],
       "title": "Schemaversion",
       "type": "string"

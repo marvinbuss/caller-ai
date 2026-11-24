@@ -296,7 +296,7 @@ def settings_content() -> rx.Component:
                                         disabled=SettingsState.read_only,
                                         aria_describedby="settings-quietHandover-help",
                                     ),
-                                    "Quiet update on handover",
+                                    "Quiet update on delegation",
                                     display="flex",
                                     align_items="center",
                                     gap="8px",
@@ -312,7 +312,7 @@ def settings_content() -> rx.Component:
                                     type="button",
                                     variant="soft",
                                     size="1",
-                                    aria_label="Restore default quiet update on handover",
+                                    aria_label="Restore default quiet update on delegation",
                                     on_click=SettingsState.restore_quiet_handover,
                                     disabled=SettingsState.read_only,
                                 ),
@@ -346,6 +346,30 @@ def settings_content() -> rx.Component:
                                 "Text global prompt",
                                 "Added after the platform rules for every agent in text "
                                 "conversations.",
+                            ),
+                        ),
+                        _section(
+                            "Handovers",
+                            rx.el.label(
+                                rx.el.input(
+                                    type="checkbox",
+                                    id="settings-announceAgentChanges",
+                                    checked=SettingsState.announce_changes,
+                                    on_change=SettingsState.set_announce_changes,
+                                    disabled=SettingsState.read_only,
+                                    aria_describedby="settings-announceAgentChanges-help",
+                                ),
+                                "Announce agent changes",
+                                display="flex",
+                                align_items="center",
+                                gap="8px",
+                                font_weight="500",
+                            ),
+                            rx.text(
+                                "When off, agents hand over to each other without saying so.",
+                                id="settings-announceAgentChanges-help",
+                                size="2",
+                                color=COLORS["text-muted"],
                             ),
                         ),
                         _section(

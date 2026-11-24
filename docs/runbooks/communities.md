@@ -55,28 +55,29 @@ Routing receives only enabled community IDs, names, routing descriptions and eli
 references. Welcome and Goodbye have no discovery directories. Shared lifecycle identities
 are resolved by trusted code, not by unrestricted model discovery.
 
-Directory information is included as JSON metadata in the receiving SDK instructions. Routing's
-instructions end with the communities `route_community` accepts at that moment (ID, name and
-routing description cut to 1,000 characters): every enabled, routable community with an enabled
-entry, or only the pending destination during a cross-community transfer. It is
+Since feature 007 agents hand over with SDK handoffs instead of `route_community` and the other
+application handover tools. Each agent is offered one handoff per destination the pinned graph
+allows: its colleagues along its links, the entry agent of every community its community
+connects to (a direct handover), Routing for another routable community, which it must name,
+and Goodbye. Routing is offered the entry agent of every enabled, routable community with an
+enabled entry, or only the pending destination during a cross-community transfer. The handoff
+descriptions are the colleague's description (or name) and the communities' routing
+descriptions; no directory is added to the instructions. The offer is
 not authority: trusted code rechecks role, enabled state, community membership, entry identity
-and the pinned source-to-target relationship before preparing a receiver. Guessed foreign IDs
-fail before any model connection. Ordinary agents cannot directly target foreign ordinary
-agents. Cross-community selection commits Routing first, then the selected enabled entry.
+and the pinned source-to-target path, the agent epoch, the work budget and the step limit when a
+handoff is applied, and records a refusal with its reason. Ordinary agents cannot directly
+target foreign ordinary agents. A transfer through Routing commits Routing first, then the
+selected enabled entry.
 
 ## Transfer Content
 
-Only `request_summary` and `transfer_reason` are candidates, further restricted by that pinned
-relationship's `allowedContextFields`. Each value must be text at most 4096 UTF-8 bytes; empty
-values are omitted. Raw history, audio, prompts, tool results and unknown supplied fields are
-not replayed. Transfer selection does not mutate the source. Selected values are volatile and
-are cleared after the attempt; Python reference release is not a physical memory-erasure claim.
-
-Composition explicitly injects [canonical detection policy](../../code/contracts/secret-detection-policy.json)
-version 1. Recognized credential patterns and secret-reference URIs are rejected with fixed,
-content-free errors. Detection is not complete and cannot judge whether arbitrary prose is an
-appropriate minimal summary. The trusted producer remains responsible for content minimization.
-Never use these fields to send credentials, whole transcripts or unrelated private facts.
+There are no transfer fields any more. Every agent continues from the conversation's whole
+shared history: the user's and caller's words, earlier answers, tool calls and their results,
+handovers and progress. `request_summary`, `transfer_reason` and `allowedContextFields` remain
+in stored revisions but filter nothing, and the editor no longer shows them. Prompts, tool
+definitions and credentials never enter the history. Communities therefore separate routing and
+permissions, not information; see the
+[threat assessment](../security.md#shared-conversation-history).
 
 ## Preparation and Commit
 
