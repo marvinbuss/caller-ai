@@ -67,6 +67,13 @@ no reconnect: a dropped socket or a faulted provider session ends the test and t
 new one. A closed connection, empty local state, lease expiry or TCP close alone never releases a
 slot.
 
+Since feature 007 a voice session makes exactly one Live attempt: an agent change keeps the Live
+session and its generation, so the slot holds one Live closure to settle at the end, whatever the
+number of handovers. The Test page's "Mute input" and "Mute output" switches act only in the
+browser (capture stops, playback is silenced); they send nothing to the runtime and change no
+slot, generation or Live session. Recovery of a slot whose Live closure was never confirmed is
+unchanged (see below).
+
 ## Instance Loss and Dependency Failure
 
 | Situation | Behavior | Operator action |

@@ -512,6 +512,27 @@ def test_progress_is_relayed_with_exactly_message_state_and_text():
     assert (progress[0]["state"], progress[0]["text"]) == ("still_working", "Checking.")
 
 
+@pytest.mark.parametrize("data", [{}, {"text": "x"}], ids=["valid", "extra-field"])
+def test_history_condensed_is_relayed_without_fields(data):
+    # Feature 007, FR-016: older parts were condensed before the answer.
+    async def handler(request):
+        return sse(
+            ("conversation", {"conversationId": "conversation-1"}),
+            ("history.condensed", data),
+            ("text.delta", {"messageId": "message-1", "text": "Done."}),
+            ("text.completed", {"messageId": "message-1", "text": ""}),
+        )
+
+    browser, _requests, _tokens = run_text_session(handler, ["Question"])
+
+    condensed = [value for value in browser.displayed if value["type"] == "history.condensed"]
+    if data:
+        assert not condensed
+    else:
+        assert len(condensed) == 1
+        assert set(condensed[0]) == {"type", "sessionId", "sequence", "generation"}
+
+
 @pytest.mark.parametrize(
     "data",
     [

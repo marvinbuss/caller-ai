@@ -55,6 +55,9 @@ def runtime_options(live: LiveSettings) -> RuntimeOptions:
             voice=live.live_voice,
             max_clock_skew_seconds=float(live.max_clock_skew_seconds),
             text_history_ttl_seconds=live.text_history_ttl_seconds,
+            transcription_wait_seconds=live.transcription_wait_seconds,
+            reasoning_effort=live.reasoning_effort,
+            voice_delegation_updates=live.voice_delegation_updates,
         )
     except Exception:
         raise StartupError("settings_invalid") from None

@@ -315,8 +315,6 @@ class TestSessionClient:
                     "ping": {"nonce"},
                     "pong": {"nonce"},
                     "audio.played": {"audioSequence", "generation"},
-                    "input.mute": {"muted"},
-                    "output.interrupt": {"generation"},
                 }
                 kind = value.get("type")
                 if (
@@ -365,6 +363,7 @@ class TestSessionClient:
                     "command.ack": {"acceptedSequence"},
                     "agent.changed": {"agentId", "communityId"},
                     "generation.changed": {"reason"},
+                    "history.condensed": set(),
                     "error": {"code", "cleanupStatus", "correlationId"},
                     "ended": {"code", "cleanupStatus", "correlationId"},
                     "audio.credit": {"availableSamples", "acceptedAudioSequence"},

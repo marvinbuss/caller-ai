@@ -39,6 +39,7 @@ them at start and never echo a value in an error.
 | `CALLER_WORKLOAD_AUDIENCE` | no | Client ID of the runtime's own app registration: the required audience of a workload token (FR-052). |
 | `CALLER_WORKLOAD_ROLE` | no | Application role on the runtime registration that a caller must hold (`identity.roles.management`). |
 | `CALLER_WORKLOAD_PRINCIPAL_ID` | no | Object ID of the management app's managed identity: the only caller accepted (FR-052). |
+| `CALLER_TRANSCRIPTION_WAIT_SECONDS`, `CALLER_REASONING_EFFORT`, `CALLER_VOICE_DELEGATION_UPDATES` | no | Optional tuning of feature 007 from `application.tuning`: the voice transcription wait (0 to 2 s, default 0.5), the reasoning effort (`minimal`, `low` or `medium`, default `low`) and the voice delegation updates (`true` or `false`, default `false`). An empty value keeps the default. |
 
 Runtime probes: startup and readiness `GET /readyz`, liveness `GET /healthz`, port 8000.
 

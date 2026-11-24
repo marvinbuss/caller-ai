@@ -29,6 +29,36 @@ test doubles and a fixed latency list (0.3, 0.9, 1.5, 2.2 and 3.0 seconds). They
 and the failure behavior, not model latency on int. The voice int measurement covers the voice
 sessions on `int` from 2026-11-13 to 2026-11-19 (images up to `sha-d3aa69d`).
 
+## Shared history and handovers (feature 007)
+
+Every agent now continues from the whole conversation, and a handover costs **one model step per
+agent on the path** (Routing, then an entry agent, then perhaps a colleague), inside the existing
+work budget (20 s text, 30 s speech) and step limit (8). Each step's input is the shared history,
+so the input size per turn grows with the conversation until condensing (above 192 KiB, one
+extra bounded call of at most 2,048 output tokens) brings it below 128 KiB. A voice delegation
+may wait up to `CALLER_TRANSCRIPTION_WAIT_SECONDS` (0.5 s by default) for its transcript.
+
+| Measurement | Declared | Local load test | int measurement |
+|-------------|----------|-----------------|-----------------|
+| Answer after a handover (SC-005 target) | Starts within the work budget: no `work_deadline_exceeded`, no `refused_budget` | 5 concurrent voice sessions at the 5-slot limit, each with three handovers, one refused handover, one condensing and one slow transcript: every answer within the budget, no `refused_budget` | Pending (T087, T088) |
+| Handover delay per path and modality (SC-005) | Recorded, no threshold: p50 and p90 of `handover_seconds` by `path` and `kind` | Measured with the doubles only (no model latency) | Pending (T088) |
+| Input size per turn | Recorded: `test.history` `history_kib` range at each handover | Below 16 KiB in the load test | Pending (T088) |
+| Cost per conversation | Recorded: `input_tokens` and `output_tokens` of `test.usage` per conversation, handovers and condensing included | Not measured (doubles) | Pending (T088) |
+| Slots and Live attempts | Unchanged: one slot and one Live attempt per voice session, released after verified cleanup | No extra admission refusal; every slot released; one `session.start` per session | Pending |
+
+The local results come from `code/backend/tests/load/test_handover_capacity.py`. The queries are
+in [monitoring](runbooks/monitoring.md#handover-delegation-and-history-events).
+
+**Follow-up criteria for a dispatch step (option A of R1).** After the acceptance runs (T087),
+record here:
+
+- the added handover delay per path and modality (SC-005);
+- wrong destinations and repeated questions in the 18 acceptance runs (SC-001, SC-002);
+- how often voice requests are still rejected as unclear (`test.delegation` with reason
+  `invalid_input`).
+
+All three are **pending** until T087.
+
 ## Current State
 
 Actual model cost per turn and per Live voice second, Cosmos RU demand, deployed instance and

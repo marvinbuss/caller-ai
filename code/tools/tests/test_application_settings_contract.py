@@ -74,3 +74,26 @@ def test_the_two_secret_settings_are_only_key_vault_references_in_terraform() ->
     contract = CONTRACT.read_text(encoding="utf-8")
     secrets = re.findall(r"^\| `(CALLER_[A-Z_]+)` \| \*\*yes\*\*", contract, re.MULTILINE)
     assert set(secrets) == {"CALLER_ENTRA_CLIENT_SECRET", "CALLER_SIGNING_KEY_PEM"}
+
+
+def test_the_runtime_tuning_settings_come_only_from_the_optional_tuning_object() -> None:
+    tuning = {
+        "CALLER_TRANSCRIPTION_WAIT_SECONDS": "transcription_wait_seconds",
+        "CALLER_REASONING_EFFORT": "reasoning_effort",
+        "CALLER_VOICE_DELEGATION_UPDATES": "voice_delegation_updates",
+    }
+    assert set(tuning) <= terraform_names("runtime_app")
+    assert not set(tuning) & terraform_names("management_app")
+    text = TERRAFORM.read_text(encoding="utf-8")
+    for name, key in tuning.items():
+        assert re.search(rf"^\s+{name}\s*=\s*local\.runtime_tuning\.{key}$", text, re.MULTILINE)
+    variables = (TERRAFORM.parent / "variables.tf").read_text(encoding="utf-8")
+    block = re.search(r"tuning = optional\(object\(\{(.*?)\}\), \{\}\)", variables, re.DOTALL)
+    assert block is not None
+    assert re.findall(r"^\s+([a-z_]+)\s*=\s*optional\(", block.group(1), re.MULTILINE) == list(
+        tuning.values()
+    )
+    main = (TERRAFORM.parent / "main.tf").read_text(encoding="utf-8")
+    for key in tuning.values():
+        # An unset value must reach the runtime as an empty string, never as a default.
+        assert re.search(rf'{key}\s*=\s*local\.tuning\.{key} == null \? "" :', main)

@@ -92,16 +92,24 @@ def test_live_instructions_come_from_voice_instructions_without_layers_or_additi
 ):
     from caller_runtime.composition import LIVE_DELEGATION_SUFFIX, live_instructions
     from caller_runtime.domain.configuration import RevisionSnapshot
+    from caller_runtime.services.delegation_update import BLOCK_HEADER, static_delegation_block
     from caller_runtime.services.modality_defaults import VOICE_INSTRUCTIONS
 
     snapshot = RevisionSnapshot.validate(layered(runtime_revision_v2()), etag='"layered"')
-    instructions = live_instructions(snapshot)
+    instructions = live_instructions(snapshot, delegation_updates=True)
     assert instructions == "Synthetic voice instructions" + LIVE_DELEGATION_SUFFIX
+    # With delegation updates off (the default) the static block follows (feature 007, R5).
+    static = live_instructions(snapshot)
+    assert static.startswith(instructions + "\n\n" + BLOCK_HEADER + "\n")
+    assert static.endswith(static_delegation_block(snapshot, limit=16 * 1024))
+    assert len(static.encode("utf-8")) <= 16 * 1024
     for layer in ("Synthetic voice rules", "Synthetic voice global", "Synthetic voice addition"):
-        assert layer not in instructions
-    assert all(agent["prompt"] not in instructions for agent in snapshot.for_runtime()["agents"])
+        assert layer not in static
+    assert all(agent["prompt"] not in static for agent in snapshot.for_runtime()["agents"])
     slice_one = RevisionSnapshot.validate(runtime_revision_v2(), etag='"slice-one"')
-    assert live_instructions(slice_one) == VOICE_INSTRUCTIONS + LIVE_DELEGATION_SUFFIX
+    assert live_instructions(slice_one, delegation_updates=True) == (
+        VOICE_INSTRUCTIONS + LIVE_DELEGATION_SUFFIX
+    )
 
 
 def test_a_running_session_keeps_its_pinned_layers_after_a_new_publication(

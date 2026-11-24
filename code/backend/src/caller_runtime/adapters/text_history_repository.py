@@ -2,7 +2,9 @@
 
 Items are addressed by the owner's key (the partition) and the conversation id, so another
 manager's request can only ever see "not found". Every write carries an item expiry and an
-etag condition. Failures surface as fixed codes and never include storage or content detail.
+etag condition. A document stored before history version 2 loads as `ClosedConversation`: it is
+never resumed and expires under its own item expiry (FR-025). Failures surface as fixed codes and
+never include storage or content detail.
 """
 
 import asyncio
@@ -32,6 +34,13 @@ MAX_BUDGET_SECONDS = 10.001
 class StoredConversation:
     conversation: TextConversation = field(repr=False)
     etag: str
+
+
+@dataclass(frozen=True, slots=True)
+class ClosedConversation:
+    """A conversation stored before history version 2; it is not resumed (FR-025)."""
+
+    conversation_id: str
 
 
 class TextHistoryRepository:
@@ -75,14 +84,22 @@ class TextHistoryRepository:
 
     async def load(
         self, owner_key: str, conversation_id: str, *, deadline: float
-    ) -> StoredConversation | None:
-        """Return the owner's conversation, or None when it is unknown, expired or foreign."""
+    ) -> StoredConversation | ClosedConversation | None:
+        """Return the owner's conversation, `ClosedConversation` for one stored before history
+        version 2, or None when it is unknown, expired or foreign."""
         try:
             self._budget(deadline)
             async with asyncio.timeout_at(deadline):
                 document = await self._container.read_item(
                     item=conversation_id, partition_key=owner_key
                 )
+            if (
+                isinstance(document, Mapping)
+                and "historyVersion" not in document
+                and document.get("ownerKey") == owner_key
+                and document.get("id") == conversation_id
+            ):
+                return ClosedConversation(conversation_id)
             stored = self._stored(document)
         except HttpResponseError as error:
             if error.status_code == 404:

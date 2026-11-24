@@ -67,8 +67,9 @@ explicit scope. Without a declared deferral the original three-platform matrix i
 Only independently authorized `BrowserAuthorizationPort` and `BrowserProbePort` bindings can
 make programmatic observations; a reference, version string or content-free digest is not proof.
 
-Device checks cover explicit start, denied/unanswered permission, mute, autoplay, unplug,
-interrupt/stop/navigation/logout/connection loss and loopback latency. Samples report only
+Device checks cover explicit start, denied/unanswered permission, "Mute input" and "Mute
+output" (both act only in the browser; there is no Interrupt button), autoplay, unplug,
+stop/navigation/logout/connection loss and loopback latency. Samples report only
 versions, counts, timing and evidence digests, never recordings, transcripts or device labels.
 Authorization is rechecked before every probe; it receives only remaining cost/time scope.
 Unconfirmed closure, unknown cost, stale versions, clock disagreement and unavailable evidence

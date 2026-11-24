@@ -129,11 +129,7 @@ async def test_browser_speech_audio_transcripts_and_provider_bodies_remain_volat
         original, segment = await opened()
         monkeypatch.setattr(segment.adapter, "_telemetry", telemetry)
         slot = await service.check_output(original.session_id, original.owner_epoch, generation=1)
-        segments = SpeechSegments(
-            current=segment,
-            instructions_for=lambda current: "synthetic-private-live-prompt",
-            emit=emit,
-        )
+        segments = SpeechSegments(current=segment)
         policy = ConversationPolicy(
             slot=slot, snapshot=service.configuration.pin(), admission=service
         )
@@ -193,6 +189,155 @@ async def test_browser_speech_audio_transcripts_and_provider_bodies_remain_volat
     finally:
         telemetry.close()
         await adapter.close()
+
+
+# --- the shared history holds conversation content only (feature 007, SC-004) ---
+
+PRIVATE_SETTINGS = {
+    "voiceInstructions": "synthetic-private-voice-instructions",
+    "voicePlatformRules": "synthetic-private-voice-rules",
+    "voiceGlobalPrompt": "synthetic-private-voice-global",
+    "textPlatformRules": "synthetic-private-text-rules",
+    "textGlobalPrompt": "synthetic-private-text-global",
+}
+
+
+def private_revision(admission_case, runtime_revision_v2):
+    """A newer revision whose every layer, addition and instruction text is a marker."""
+    from tests.unit.test_agent_composition import layered
+
+    service, repository, container, clock, permit, cache = admission_case
+    document = layered(runtime_revision_v2(2), **PRIVATE_SETTINGS)
+    cache.install(document, etag='"private-layers"')
+    return document
+
+
+def configuration_markers(document) -> list[str]:
+    """Instructions, layers, additions, tool definitions, credentials and configuration."""
+    markers = [*PRIVATE_SETTINGS.values(), "Synthetic voice addition for"]
+    markers += [agent["prompt"] for agent in document["agents"]]
+    markers += [community["routingDescription"] for community in document["communities"]]
+    for tool in document["tools"]:
+        markers += [tool["name"], tool["description"], tool["approvedDestinationRef"]]
+    markers += [
+        document["policyHash"],
+        document["graphHash"],
+        document["id"],
+        "Delegation update.",
+        "Delegation scope",
+        "Backend tools:",
+        "Handover rules:",
+        "Progress updates:",
+        "Routing can reach",
+        "Published-policy goodbye",
+        "synthetic-text-token",
+        "synthetic-live-token",
+    ]
+    return markers
+
+
+def model_inputs(requests) -> str:
+    return json.dumps([request["input"] for request in requests if request.get("stream")])
+
+
+async def test_text_history_and_its_stored_document_hold_no_instructions_or_configuration(
+    text_execution_case, admission_case, runtime_revision_v2
+):
+    from types import SimpleNamespace
+
+    from caller_runtime.adapters.text_history_repository import TextHistoryRepository
+    from caller_runtime.observability import Telemetry
+    from caller_runtime.services.conversation import ConversationExecutor
+    from caller_runtime.services.conversation_policy import ConversationPolicy
+    from caller_runtime.services.text_conversation import TextConversationService
+    from tests.doubles import ContainerDouble
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    service, repository, container, clock, permit, cache = admission_case
+    document = private_revision(admission_case, runtime_revision_v2)
+    await repository.initialize(now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1)
+    slot = await service.reserve(permit(1))
+    slot = await service.mark_ready(slot.session_id, slot.owner_epoch)
+    controller = ConversationExecutor(
+        policy=ConversationPolicy(slot=slot, snapshot=cache.pin(), admission=service),
+        text_adapter=adapter,
+        utc_now=clock.utc_now,
+    )
+    # Routing's sorted destinations: a-entry, b-entry (handover_1), Goodbye; b-entry's: b-peer
+    # (handover_0), Goodbye, Routing.
+    controls["wire_actions"] = [
+        ("handover_1", {}),
+        ("report_progress", {"state": "completed", "message": "Order A-100 is shipped."}),
+    ]
+    await controller.submit_text("text-1", "My order is A-100.")
+    await controller.process_next(emit=emit)
+    controls["wire_actions"] = [("handover_0", {})]
+    await controller.submit_text("text-2", "Can a colleague check it?")
+    await controller.process_next(emit=emit)
+    assert controller.policy.active_agent_id == "b-peer"
+    assert {"tool_call", "tool_result", "progress", "handover"} <= {
+        entry.kind for entry in controller.history.entries
+    }
+    history = ContainerDouble(partition_field="ownerKey")
+    telemetry = Telemetry("caller-runtime", "local")
+    turns = TextConversationService(
+        runtime=SimpleNamespace(start=None),
+        history=lambda: TextHistoryRepository(
+            container=history, ttl_seconds=2_592_000, utc_now=clock.utc_now
+        ),
+        telemetry=telemetry,
+        utc_now=clock.utc_now,
+    )
+    try:
+        await turns._save(controller, permit(1).actor_key, "a" * 32, None)
+        (stored,) = history.records.values()
+        assert stored["historyVersion"] == 2 and "My order is A-100." in json.dumps(stored)
+        everything = (
+            json.dumps(stored) + json.dumps(controller.history.render()) + model_inputs(requests)
+        )
+        for marker in configuration_markers(document):
+            assert marker not in everything, marker
+    finally:
+        telemetry.close()
+        await adapter.close()
+
+
+async def test_voice_history_holds_no_instructions_updates_or_configuration(
+    text_execution_case, live_case, admission_case, runtime_revision_v2
+):
+    from tests.integration.test_voice_delegation_context import delegate, say, voice
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    document = private_revision(admission_case, runtime_revision_v2)
+    controller, segment, socket = await voice(
+        live_case, text_execution_case, delegation_updates=True
+    )
+    controls["wire_actions"] = [
+        ("handover_1", {}),
+        ("report_progress", {"state": "completed", "message": "Order A-100 is shipped."}),
+    ]
+    await say(controller, "caller", "My order is A-100.", 0, 100)
+    await say(controller, "assistant", "Let me check.", 200, 300)
+    await say(controller, "caller", "Please check it.", 400, 500)
+    await delegate(controller, segment, socket, 500, "Check order A-100.")
+    await controller.process_next(emit=emit)
+    controls["wire_actions"] = [("handover_0", {})]
+    await say(controller, "caller", "Can a colleague check it?", 2000, 2100)
+    await delegate(controller, segment, socket, 2100, "Ask a colleague.")
+    await controller.process_next(emit=emit)
+    assert controller.policy.active_agent_id == "b-peer"
+    # The voice assistant did get delegation updates, and they stay out of the history.
+    assert [event for event in socket.sent if event["type"] == "session.instructions.append"]
+    everything = (
+        json.dumps(controller.history.render())
+        + json.dumps([entry.model_dump(by_alias=True) for entry in controller.history.entries])
+        + model_inputs(requests)
+    )
+    assert "[Caller, spoken] My order is A-100." in everything
+    for marker in configuration_markers(document):
+        assert marker not in everything, marker
+    await segment.close()
+    await adapter.close()
 
 
 # --- live mode: no token, key or input value in an error, a log event or a health body ---

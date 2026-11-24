@@ -33,7 +33,9 @@ def api_client(host: dict, actor: str = "manager-one") -> httpx.Client:
     )
 
 
-def publish_graph(host: dict, graph: dict, actor: str = "manager-one") -> dict:
+def publish_graph(
+    host: dict, graph: dict, actor: str = "manager-one", headers: dict | None = None
+) -> dict:
     with api_client(host, actor) as client:
         current = client.get("/v2/configuration")
         current.raise_for_status()
@@ -45,7 +47,8 @@ def publish_graph(host: dict, graph: dict, actor: str = "manager-one") -> dict:
                 "If-Match": current.headers["ETag"],
                 "X-CSRF-Token": csrf,
                 "Origin": host["ui"],
-            },
+            }
+            | (headers or {}),
         )
         saved.raise_for_status()
         return saved.json()
@@ -310,6 +313,39 @@ def test_create_connect_change_entry_handover_and_publish_flow(
         expect(node(page, gamma_id).locator("[data-badge='Unreachable']")).to_be_visible()
         publish(page)
         expect(status(page)).to_contain_text("unreachable: gamma")
+    finally:
+        context.close()
+
+
+def test_the_description_counts_bytes_and_handovers_have_no_context_fields(
+    browser: Browser, configuration_host
+):
+    # Feature 007: the description chooses handover destinations; connections are direct paths.
+    context, page = open_editor(browser, configuration_host)
+    try:
+        outline(page, "agent-alpha (Custom, Entry)").click()
+        panel = page.get_by_test_id("agent-settings")
+        counter = page.locator("#agent-alpha-description-bytes")
+        expect(counter).to_have_text("0 of 1024 bytes")
+        panel.get_by_label("Description (used to choose handover destinations)", exact=True).fill(
+            "Synthetic billing questions"
+        )
+        expect(counter).to_have_text("27 of 1024 bytes")
+        expect(page.get_by_label("Request summary")).to_have_count(0)
+        expect(page.get_by_label("Transfer reason")).to_have_count(0)
+        outline(page, "alpha (Custom)").click()
+        settings = page.get_by_test_id("community-settings")
+        settings.get_by_label("Destination community", exact=True).select_option(label="beta")
+        settings.get_by_role("button", name="Add connection", exact=True).click()
+        expect(settings.get_by_role("listitem")).to_contain_text(
+            "Direct handover to the entry agent"
+        )
+        publish(page)
+        with api_client(configuration_host) as client:
+            published = client.get("/v2/configuration").json()
+        agent = next(row for row in published["agents"] if row["agentId"] == "agent-alpha")
+        assert agent["description"] == "Synthetic billing questions"
+        assert published["schemaVersion"] == "2.3.0"
     finally:
         context.close()
 

@@ -47,37 +47,50 @@ console never reads it. Backend errors surface with their public code and reason
 A voice session has two kinds of model. The **speaking model** (GPT-Live) talks with the caller;
 the **working agents** (the configured Welcome, Routing, Goodbye and community agents, run by the
 backend on the text model) do the reasoning, tool calls and handovers. Text conversations use the
-working agents only.
+working agents only. A call has one GPT-Live session from start to end: agents hand over to each
+other behind it, and the session, its generation and its audio path stay as they are.
 
 ```mermaid
 flowchart LR
-    subgraph Settings["Published configuration (schema 2.2.0)"]
+    subgraph Settings["Published configuration (schema 2.3.0)"]
         VI["Voice conversation instructions"]
         VR["Voice platform rules"]
         VG["Voice global prompt"]
         TR["Text platform rules"]
         TG["Text global prompt"]
-        AP["Agent prompt"]
+        AP["Agent prompt and description"]
         VA["Agent voice addition"]
         TA["Agent text addition"]
+        RD["Routing descriptions"]
     end
-    VI --> Live["Speaking model (GPT-Live)"]
-    Note["Context note: active agent, reachable communities"] --> Live
-    VR --> VoiceAgent["Working agent in voice"]
+    VI --> Live["Speaking model (GPT-Live), one session per call"]
+    RD --> Scope["Delegation scope: what the backend can do"] --> Live
+    VR --> VoiceAgent["Working agents in voice"]
     VG --> VoiceAgent
     AP --> VoiceAgent
     VA --> VoiceAgent
-    TR --> TextAgent["Working agent in text"]
+    TR --> TextAgent["Working agents in text"]
     TG --> TextAgent
     AP --> TextAgent
     TA --> TextAgent
     Live -- "delegation" --> VoiceAgent
     VoiceAgent -- "reply parts, progress" --> Live
+    History[("Shared history: one per conversation")] <--> VoiceAgent
+    History <--> TextAgent
+    Live -. "transcripts" .-> History
 ```
 
-- The speaking model gets only the voice conversation instructions and a quiet, automatic
-  context note (the active agent and the communities it can route to). It never receives an
-  agent's prompt, layers or additions.
+- The speaking model gets only the voice conversation instructions and the delegation scope: one
+  line per community it may delegate for, either in its start instructions or as delegation
+  updates. It never receives an agent's prompt, layers, additions or the shared history.
+- The **shared history** belongs to the conversation, not to an agent. The runtime owns it: in
+  voice it lives in the session's executor, ordered by session time, and holds the caller's and
+  the voice assistant's transcripts, the delegation results, tool calls and results, handovers
+  and progress; it is purged when the session ends. In text it is loaded from and saved to the
+  stored conversation. Every working agent continues from the whole history, and a handover
+  passes the same history to the destination within the same work item.
+- Handovers are SDK handoffs that the published graph offers to the active agent and the runtime
+  checks again when they are applied; see [conversation endpoints](conversation-endpoints.md#handovers).
 - A working agent's instructions are composed per modality: platform rules, global prompt,
   prompt, addition, blank-line separated with empty parts skipped, at most 36 KiB. A projection
   from an earlier management release carries no layers, so the runtime's shipped platform rules
@@ -154,9 +167,10 @@ records model/capability/Live intent before I/O, exact owner/epoch and bounded a
 watermarks. It never contains audio, transcripts, prompts or capability payloads.
 
 Stop and control loss synchronously fence business/output before awaited close or store work.
-An explicit voice interrupt/handover retires the actual old socket generation, confirms its
-authenticated close and local disposal, then permits one original-budget continuation. Late
-frames retain their actual old generation and cannot be relabelled; faults do not reconnect.
+An agent change keeps the call's one Live session and its generation; work of the replaced agent
+is fenced by the agent epoch, so its results are dropped. The caller interrupts the voice
+assistant by speaking; no interrupt message retires a socket. Late frames retain their actual
+old generation and cannot be relabelled; faults do not reconnect.
 The application protocol enforces PCM16LE mono 24 kHz, target 960-byte frames, input maximum
 1920 bytes, capture/playback windows 12000/24000 bytes, generation-bound sent/played ACKs,
 8-KiB controls and one serialized sixty-four-message writer queue.
@@ -202,11 +216,13 @@ flowchart LR
     Runtime -- "stream" --> Model[Foundry text model]
 ```
 
-Each item is keyed by owner (partition `/ownerKey`) and conversation id, holds only user and
-assistant text plus the agent position, and carries a 30-day `ttl` rewritten on every update.
-Voice sessions write nothing. See [conversation endpoints](conversation-endpoints.md), the
+Each item is keyed by owner (partition `/ownerKey`) and conversation id, holds the conversation's
+shared history (history version 2: user text, agent answers, tool calls and results, handovers,
+progress and condensed accounts) plus the agent position and a pending Routing destination, and
+carries a 30-day `ttl` rewritten on every update. Voice sessions write nothing. See
+[conversation endpoints](conversation-endpoints.md), the
 [text history runbook](runbooks/text-history.md) and the
-[threat assessment](security.md#stored-text-conversation-history).
+[threat assessment](security.md#shared-conversation-history).
 
 ## Observability, Readiness and Local Mode
 

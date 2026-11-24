@@ -129,6 +129,12 @@ def with_quiet(settings: Document, quiet: bool | None) -> Document:
     return rest if quiet is None else rest | {"quietHandover": quiet}
 
 
+def with_announce(settings: Document, announce: bool) -> Document:
+    """Settings with `announceAgentChanges: true`, or without it when off, the default (2.3.0)."""
+    rest = {key: value for key, value in settings.items() if key != "announceAgentChanges"}
+    return (rest | {"announceAgentChanges": True}) if announce else rest
+
+
 def needs_confirmation(overrides: dict[str, str | None], stored: Document) -> bool:
     """Platform rules or voice instructions differ from the active revision (FR-030, FR-037)."""
     return any(
@@ -158,9 +164,11 @@ class SettingsState(rx.State):
     texts: dict[str, str] = {}
     defaulted: dict[str, bool] = {}
     confirm_open: bool = False
-    # The quiet update on handover: shown on when the stored value is absent (FR-017).
+    # The quiet update on delegation: shown on when the stored value is absent (FR-017).
     quiet_handover: bool = True
     quiet_default: bool = True
+    # "Announce agent changes" (feature 007, FR-026): off, and absent, by default.
+    announce_changes: bool = False
     _quiet: bool | None = None
     _overrides: dict[str, str | None] = {}
     _revision: Document = {}
@@ -243,6 +251,7 @@ class SettingsState(rx.State):
                 self.idle = str(current.get("idleTimeoutSeconds", defaults["idleTimeoutSeconds"]))
                 self._overrides = text_overrides(current)
                 self._quiet = stored_quiet(current)
+                self.announce_changes = current.get("announceAgentChanges") is True
             self._show_texts()
         except Exception:
             self._revision, self._etag, self.dirty = {}, "", False
@@ -292,6 +301,11 @@ class SettingsState(rx.State):
         self.message, self.dirty = "", True
 
     @rx.event
+    def set_announce_changes(self, value: bool) -> None:
+        self.announce_changes = bool(value)
+        self.message, self.dirty = "", True
+
+    @rx.event
     def cancel_confirmation(self) -> None:
         self.confirm_open = False
 
@@ -331,15 +345,19 @@ class SettingsState(rx.State):
             for key, value in self._revision.items()
             if key in GRAPH_FIELDS and key != "conversationSettings"
         }
-        # The server writes 2.2.0 only when a 2.2.0 field remains; otherwise the stored version.
+        # The server writes 2.2.0 or 2.3.0 only when such a field remains; otherwise the stored
+        # version.
         graph["schemaVersion"] = self._revision.get("schemaVersion", "2.1.0")
         others = {
             key: value
             for key, value in stored.items()
             if key not in {"voice", "maxOutputTokens", "idleTimeoutSeconds"}
         }
-        settings = with_quiet(
-            chosen(values, self._defaults) | publishable(self._overrides, others), self._quiet
+        settings = with_announce(
+            with_quiet(
+                chosen(values, self._defaults) | publishable(self._overrides, others), self._quiet
+            ),
+            self.announce_changes,
         )
         if settings:
             graph["conversationSettings"] = settings
@@ -360,6 +378,9 @@ class SettingsState(rx.State):
                 self.dirty, self.notice_revision = False, 0
                 self._overrides = text_overrides(self._revision.get("conversationSettings") or {})
                 self._quiet = stored_quiet(self._revision.get("conversationSettings") or {})
+                self.announce_changes = (self._revision.get("conversationSettings") or {}).get(
+                    "announceAgentChanges"
+                ) is True
                 self._show_texts()
                 self.message = (
                     f"Published revision {self._revision.get('revisionNumber', '')}. "

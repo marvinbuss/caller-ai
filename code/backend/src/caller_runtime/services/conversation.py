@@ -1,7 +1,9 @@
-"""Runs one conversation's work: tool dispatch, delegation, transcripts and ordered cleanup.
+"""Runs one conversation's work: tool dispatch, handovers, the shared history and ordered cleanup.
 
 `ConversationExecutor` takes accepted text or Live delegations from a bounded queue, runs the
-pinned agents through the SDK and returns results to the text or speech caller. Every external
+pinned agents through the SDK and returns results to the text or speech caller. Every model step
+is built from the conversation's `SharedHistory` plus the current work item's own items, so the
+agent that continues after a handover sees the whole conversation (feature 007). Every external
 step first passes an admission gate, so a fenced or expired session stops before dispatch.
 Failures surface as fixed codes; content stays in memory bounded by the context limit and is
 dropped on close. `close` releases resources in a fixed order and reports whether cleanup is
@@ -12,14 +14,14 @@ import asyncio
 import hashlib
 import json
 import math
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
-from typing import Any, TypedDict
+from typing import Any, Literal, cast
 from uuid import uuid4
 
-from agents import FunctionTool, RunConfig, RunContextWrapper, Runner
+from agents import Agent, FunctionTool, Handoff, RunConfig, RunContextWrapper, Runner
 from agents.result import RunResultStreaming
 from agents.run_config import ToolExecutionConfig
 from jsonschema import Draft202012Validator
@@ -34,17 +36,36 @@ from caller_runtime.domain.conversation import (
     TestSlot,
     WorkBudget,
 )
+from caller_runtime.domain.shared_history import (
+    HISTORY_LIMIT,
+    Handover,
+    HistoryEntry,
+    SharedHistory,
+    bounded,
+)
 from caller_runtime.observability import Telemetry
+from caller_runtime.services import condensing
 from caller_runtime.services.admission import AdmissionError
 from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
-from caller_runtime.services.conversation_agents import Mode, agent_instructions, build_agents
-from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
+from caller_runtime.services.conversation_agents import (
+    Mode,
+    agent_instructions,
+    build_agents,
+    destination_handoff,
+    handoff_schema,
+)
+from caller_runtime.services.conversation_policy import (
+    REFUSALS,
+    ConversationPolicy,
+    SpeechSegments,
+)
 from caller_runtime.services.delegation import (
     Acceptance,
     DelegationQueue,
     SpeechFragments,
     WorkItem,
 )
+from caller_runtime.services.delegation_update import changed, delegation_update
 from caller_runtime.services.greeting import (
     GREETING_TARGET_SECONDS,
     TEXT_FALLBACK_GREETING,
@@ -52,7 +73,14 @@ from caller_runtime.services.greeting import (
     TEXT_GREETING_SECONDS,
     VOICE_GREETING_INPUT,
 )
+from caller_runtime.services.handover_rules import Destination
 from caller_runtime.services.speech_parts import QUIET_HANDOVER, dropped_note, split_reply
+from caller_runtime.settings import (
+    REASONING_EFFORT,
+    TRANSCRIPTION_WAIT_SECONDS,
+    VOICE_DELEGATION_UPDATES,
+    ReasoningEffort,
+)
 
 # The caller hears this only when work fails before the agent reported a final state.
 WORK_FAILED_LINE = "I could not finish that, please try again."
@@ -83,7 +111,11 @@ PART_ACK_SECONDS = 2.0
 # Parts stop this close to the end of the work budget, so a long reply never fails the item.
 PART_MARGIN_SECONDS = 0.25
 # One work item failing within its own budget; the session and its slot stay usable.
-BOUNDED_WORK_FAILURES = frozenset({"model_unavailable", "work_deadline_exceeded", "work_busy"})
+# Failures bounded to one work item: the session continues and the item's entries are kept. The
+# step limit is one of them, so a refused handover at the limit stays recorded (feature 007).
+BOUNDED_WORK_FAILURES = frozenset(
+    {"model_unavailable", "work_deadline_exceeded", "work_busy", "work_step_limit"}
+)
 # Cleanup retried once a detached model request has finished, held strongly until done.
 _LATE_CLEANUPS: set[asyncio.Task[None]] = set()
 
@@ -92,20 +124,38 @@ class TaskClarity(Metadata):
     unambiguous: bool
 
 
-class SourceBinding(TypedDict):
-    source_agent_id: str
-    source_agent_epoch: int
+class HandoverRefused(Exception):
+    """Raised from a handoff callback so the run stops; the requesting agent hears the reason."""
+
+    def __init__(self, destination: Destination, record: Handover, arguments: str) -> None:
+        super().__init__(record.reason)
+        self.destination, self.record, self.arguments = destination, record, arguments
+
+
+@dataclass(slots=True)
+class StepActions:
+    """What one model step did: at most one tool call or handoff (`called`)."""
+
+    called: bool = False
+    reported: bool = False
+    applied: tuple[Destination, Handover, str] | None = None
 
 
 @dataclass(slots=True)
 class ProgressState:
-    """Progress of one work item: the rate limit, whether a final state came and history."""
+    """Progress of one work item: the rate limit and whether a final state came."""
 
     last_state: str | None = None
     last_still_working_at: datetime | None = None
     final_reported: bool = False
     rounds: int = 0
-    entries: list[dict[str, str]] = field(default_factory=list)
+
+
+def model_items(items: list[Any]) -> list[Any]:
+    """The SDK's input items without reasoning items, which never enter model input (FR-005)."""
+    return [
+        item for item in items if not (isinstance(item, dict) and item.get("type") == "reasoning")
+    ]
 
 
 class ConversationExecutor:
@@ -120,27 +170,50 @@ class ConversationExecutor:
         cleanup_observations: CleanupObservations | None = None,
         telemetry: Telemetry | None = None,
         speech_work_seconds: int = SPEECH_WORK_SECONDS,
+        reasoning_effort: ReasoningEffort = REASONING_EFFORT,
+        transcription_wait_seconds: float = TRANSCRIPTION_WAIT_SECONDS,
+        delegation_updates: bool = VOICE_DELEGATION_UPDATES,
     ) -> None:
         self.policy, self.text_adapter, self.utc_now = policy, text_adapter, utc_now
         self.capability_client = capability_client
         self.speech_segments = speech_segments
+        self.reasoning_effort = reasoning_effort
+        self.transcription_wait_seconds = transcription_wait_seconds
+        self.delegation_updates = delegation_updates
+        # The reachable set the last delegation update described (R5).
+        self._update_destinations: tuple[str, ...] | None = None
+        self._update_watches: set[asyncio.Task[None]] = set()
         self.queue = DelegationQueue(speech_work_seconds=speech_work_seconds)
         self._current_item: WorkItem | None = None
         self._progress: dict[str, ProgressState] = {}
         self._late_cleanup: asyncio.Task[None] | None = None
         self.speech_fragments = SpeechFragments()
         self._accepting, self._processing = asyncio.Lock(), asyncio.Lock()
-        self._history: list[Any] = []
-        self._transcripts: list[dict[str, Any]] = []
-        # Assistant speech before the caller's first words or delegation is the greeting.
-        self._greeting_parts: list[str] | None = [] if policy.slot.mode == "speech" else None
+        self._leaving = asyncio.Lock()
+        # Voice orders entries by session time; text by insertion (contracts/shared-history.md).
+        self.history = SharedHistory(timeline=policy.slot.mode == "speech")
+        # The running work item's entries; they join the history when the item ends.
+        self._item_entries: list[HistoryEntry] = []
+        # Transcript deltas of the turn or response in progress: (speaker, first start_ms, text).
+        self._open_speech: tuple[str, float, list[str]] | None = None
+        # How far the caller's transcript has come, for the transcription wait (FR-024).
+        self._caller_end_ms = -1.0
+        self._caller_heard = asyncio.Event()
         self._failed = False
         self._speech: dict[str, GptLiveSession] = {}
         self._speaking = False
         self._interrupted = asyncio.Event()
         self._cleanup_observations = cleanup_observations
         self._telemetry = telemetry
+        # One correlation id per session for its events (FR-018).
         self._cleanup_correlation = uuid4().hex
+        # Per running item: the first handling role, applied handovers, and the handoff whose
+        # destination has not produced output yet (when, path), for `handover_seconds`.
+        self._first_role: str | None = None
+        self._handed_on = False
+        self._handover_started: tuple[datetime, str] | None = None
+        # Whether each accepted voice delegation was unambiguous, reported when its item ends.
+        self._delegation_ready: dict[str, bool] = {}
         self._reported_cleanup: bool | None = None
         self._closing = asyncio.Lock()
         self._cleanup_result: bool | None = None
@@ -213,14 +286,14 @@ class ConversationExecutor:
     async def open_text(
         self, emit: Callable[[dict[str, Any]], Awaitable[None]], *, started: float
     ) -> None:
-        """Stream the opening greeting of a new text conversation and keep it as its first turn.
+        """Stream the opening greeting of a new text conversation and keep it as its first entry.
 
         `started` is the loop time the open request arrived. Without a complete model greeting
         by `TEXT_GREETING_SECONDS` after it, the request is cancelled and the fixed fallback is
-        streamed instead.
+        streamed instead. Welcome then hands over to Routing (FR-030).
         """
         slot = self.policy.slot
-        if self._failed or slot.mode != "text" or self._history:
+        if self._failed or slot.mode != "text" or self.history.entries:
             raise PermissionError("mode_mismatch")
         loop = asyncio.get_running_loop()
         now = self.utc_now()
@@ -271,35 +344,151 @@ class ConversationExecutor:
                 "generation": slot.generation,
             }
         )
-        self._history = [{"role": "assistant", "content": greeting}]
+        self.history.record_agent_answer(greeting, agent_id=slot.active_agent_id)
+        await self.leave_welcome(emit)
 
-    def restore_history(self, turns: list[dict[str, str]]) -> None:
-        """Seed a fresh text session with the owner's stored turns before the first message."""
-        if self._history or self.policy.slot.mode != "text":
-            raise PermissionError("mode_mismatch")
-        self._history = [dict(turn) for turn in turns]
-        if self._context_bytes(self._history) > 256 * 1024:
-            self._history.clear()
-            raise PermissionError("conversation_context_limit")
+    def _budget(self, seconds: float = 10) -> WorkBudget:
+        now = self.utc_now()
+        slot = self.policy.slot
+        return WorkBudget(
+            now,
+            min(
+                now + timedelta(seconds=seconds),
+                slot.auth_expires_at,
+                slot.expires_at,
+                slot.idle_expires_at,
+            ),
+        )
 
-    def text_turns(self) -> list[dict[str, str]]:
-        """Return only plain user and assistant text; tool and transfer items are not stored."""
-        return [
-            {"role": item["role"], "content": item["content"]}
-            for item in self._history
-            if isinstance(item, dict)
-            and item.get("role") in {"user", "assistant"}
-            and isinstance(item.get("content"), str)
-            and item["content"]
+    async def _agent_changed(self, emit: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+        """The Test page shows the active agent in its metadata only (FR-026)."""
+        await emit(
+            {
+                "type": "agent.changed",
+                "agentId": self.policy.active_agent_id,
+                "communityId": self.policy.active_community_id,
+                "generation": self.policy.slot.generation,
+            }
+        )
+        if self.speech_segments is not None:
+            try:
+                await self.send_delegation_update()
+            except Exception:
+                self._update_unavailable()
+
+    def _update_unavailable(self) -> None:
+        if self._telemetry is not None:
+            self._telemetry.event("test.session", "failure", mode="speech", reason="unavailable")
+
+    async def send_delegation_update(self) -> None:
+        """Tell the voice assistant what it may delegate now, if that changed (R5)."""
+        if not self.delegation_updates or self.speech_segments is None or self._failed:
+            return
+        communities = changed(self.policy.snapshot, self.policy.slot, self._update_destinations)
+        if communities is None:
+            return
+        segment = self.speech_segments.current
+        sent = [
+            await segment.append_instructions(part)
+            for part in delegation_update(self.policy.snapshot, self.policy.slot, communities)
         ]
+        self._update_destinations = communities
+
+        async def watch() -> None:
+            # A missing acknowledgement is logged but never ends the session.
+            if not all([await segment.acknowledged(event, within=5.0) for event in sent]):
+                self._update_unavailable()
+
+        task = asyncio.create_task(watch())
+        self._update_watches.add(task)
+        task.add_done_callback(self._update_watches.discard)
+
+    async def leave_welcome(
+        self,
+        emit: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        work: WorkBudget | None = None,
+    ) -> bool:
+        """Apply the Welcome → Routing move (`lifecycle`, R7) once; later calls do nothing."""
+        routing = self.policy.visibility.lifecycle_target("routing")
+        welcome = self.policy.visibility.lifecycle_target("welcome")
+        async with self._leaving:
+            if self._failed or self.policy.active_agent_id != welcome:
+                return False
+            record = await self.policy.handover(routing, "lifecycle", work or self._budget())
+        self._handover_event(record)
+        if emit is not None:
+            await self._agent_changed(emit)
+        return True
+
+    def _event(
+        self,
+        name: str,
+        outcome: str,
+        *,
+        reason: str,
+        measurement: str | None = None,
+        value: float | None = None,
+        fields: Mapping[str, str | bool] | None = None,
+    ) -> None:
+        """A content-free event of this session, with its correlation id (FR-018)."""
+        if self._telemetry is not None:
+            self._telemetry.event(
+                name,
+                outcome,
+                correlation_id=self._cleanup_correlation,
+                mode=self.policy.slot.mode,
+                reason=reason,
+                measurement=measurement,
+                value=value,
+                fields=fields,
+            )
+
+    def _role(self, agent_id: str) -> str:
+        for agent in self.policy.snapshot.for_runtime()["agents"]:
+            if agent["agentId"] == agent_id:
+                return str(agent["role"])
+        return "ordinary"
+
+    def _handover_event(self, record: Handover) -> None:
+        """`test.handover` for an applied or refused handover, and `test.history` at an applied
+        one with the size of the history the destination continues with (FR-019)."""
+        applied = record.outcome == "applied"
+        self._event(
+            "test.handover",
+            "success" if applied else "failure",
+            reason=record.reason,
+            fields={
+                "source_role": record.source_role,
+                "destination_role": record.destination_role,
+                "path": record.path,
+            },
+        )
+        if applied:
+            size = self.history.rendered_bytes + self._context_bytes(
+                [item for entry in self._item_entries for item in entry.items()]
+            )
+            self._event(
+                "test.history",
+                "success",
+                reason="ready",
+                fields={"history_kib": condensing.kib_range(size)},
+            )
+
+    def restore_history(self, entries: Iterable[HistoryEntry]) -> None:
+        """Seed a fresh text session with the owner's stored entries before the first message."""
+        if self.history.entries or self.policy.slot.mode != "text":
+            raise PermissionError("mode_mismatch")
+        for entry in entries:
+            self.history.record(entry)
+        if self.history.rendered_bytes > HISTORY_LIMIT:
+            self.history.clear()
+            raise PermissionError("conversation_context_limit")
 
     async def submit_text(self, task_id: str, text: str) -> Acceptance:
         async with self._accepting:
             if self._failed or self.policy.slot.mode != "text":
                 raise PermissionError("mode_mismatch")
-            if self._context_bytes([*self._history, {"role": "user", "content": text}]) + 256 > (
-                256 * 1024
-            ):
+            if self.retained_bytes + len(text.encode("utf-8")) + 256 > HISTORY_LIMIT:
                 raise PermissionError("conversation_context_limit")
             slot = await self.policy.admission.check_output(
                 self.policy.slot.session_id,
@@ -351,6 +540,9 @@ class ConversationExecutor:
                 ):
                     raise ValueError("invalid_delegation")
                 delegation_id = event["delegation"]["id"]
+                offset_ms = float(event["offset_ms"])
+                if not math.isfinite(offset_ms) or not 0 <= offset_ms <= 3600000:
+                    raise ValueError("invalid_delegation")
                 segment.protocol.context_event(delegation_id, "Please clarify your request.")
             except Exception:
                 raise PermissionError("invalid_delegation") from None
@@ -373,9 +565,13 @@ class ConversationExecutor:
                 provider_session_id=segment.provider_session_id,
                 delegation_id=delegation_id,
                 requires_clarity_check=requires_clarity_check,
+                offset_ms=offset_ms,
             )
             if not accepted.duplicate:
-                self._close_greeting()
+                # A delegation ends the voice assistant's response before it; the caller's turn
+                # stays open, its transcript may still be catching up (FR-024).
+                if self._open_speech is not None and self._open_speech[0] == "assistant":
+                    self.flush_speech()
                 self._speech[task_id] = segment
                 # Editors can switch the quiet update off; a missing setting means on (FR-017).
                 quiet = self.policy.snapshot.conversation_settings().get("quietHandover", True)
@@ -386,13 +582,7 @@ class ConversationExecutor:
                             await segment.append_context(delegation_id, QUIET_HANDOVER, quiet=True)
                 except Exception:
                     pass
-                if self._telemetry is not None:
-                    self._telemetry.event(
-                        "test.delegation",
-                        "success" if unambiguous else "failure",
-                        mode="speech",
-                        reason="ready" if unambiguous else "invalid_input",
-                    )
+                self._delegation_ready[task_id] = unambiguous
             return accepted
 
     async def accept_transcript(
@@ -425,21 +615,8 @@ class ConversationExecutor:
         await self.policy.admission.check_output(
             self.policy.slot.session_id, self.policy.slot.owner_epoch, generation=generation
         )
-        row = {
-            "speaker": "user" if event["type"] == "session.input_transcript.delta" else "assistant",
-            "text": event["delta"],
-            "start_ms": event["start_ms"],
-            "end_ms": event["end_ms"],
-            "generation": generation,
-        }
-        candidate = self._transcripts + [row]
-        size = len(json.dumps(candidate, ensure_ascii=False, allow_nan=False).encode("utf-8"))
-        current_size = (
-            len(json.dumps(self._transcripts, ensure_ascii=False, allow_nan=False).encode("utf-8"))
-            if self._transcripts
-            else 0
-        )
-        if size > 64 * 1024 or self.retained_bytes - current_size + size > 256 * 1024:
+        speaker = "caller" if event["type"] == "session.input_transcript.delta" else "assistant"
+        if self.retained_bytes + len(event["delta"].encode("utf-8")) + 256 > HISTORY_LIMIT:
             self._failed = True
             self._purge()
             try:
@@ -450,32 +627,77 @@ class ConversationExecutor:
             except Exception:
                 pass
             raise PermissionError("transcript_limit")
-        if row["speaker"] == "user" and input_audio_accepted and event["delta"].strip():
+        if speaker == "caller" and input_audio_accepted and event["delta"].strip():
             await self.policy.admission.user_activity(
                 self.policy.slot.session_id,
                 self.policy.slot.owner_epoch,
                 generation=generation,
                 mode="speech",
             )
-            self._close_greeting()
-        elif (
-            row["speaker"] == "assistant"
-            and self._greeting_parts is not None
-            and sum(len(part.encode("utf-8")) for part in self._greeting_parts)
-            + len(event["delta"].encode("utf-8"))
-            <= 4096
-        ):
-            self._greeting_parts.append(event["delta"])
-        self._transcripts = candidate
+        # One entry per caller turn or assistant response: deltas merge until the speaker changes.
+        if self._open_speech is not None and self._open_speech[0] != speaker:
+            self.flush_speech()
+        if self._open_speech is None:
+            self._open_speech = (speaker, float(event["start_ms"]), [])
+        self._open_speech[2].append(event["delta"])
+        if speaker == "caller":
+            self._caller_end_ms = max(self._caller_end_ms, float(event["end_ms"]))
+            self._caller_heard.set()
 
-    def _close_greeting(self) -> None:
-        """Keep the spoken greeting as the first assistant history entry (FR-039)."""
-        if self._greeting_parts is None:
+    async def _await_transcript(self, item: WorkItem) -> None:
+        """Wait up to the transcription wait for the caller's transcript to reach the delegation
+        (FR-024), then record the caller's speech up to it, `partial` if it did not catch up."""
+        if item.offset_ms is None:
             return
-        greeting = "".join(self._greeting_parts).strip()
-        self._greeting_parts = None
-        if greeting and not self._history:
-            self._history.append({"role": "assistant", "content": greeting})
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + self.transcription_wait_seconds
+        while self._caller_end_ms < item.offset_ms:
+            remaining = min(deadline - loop.time(), item.receipt.work.remaining(self.utc_now()))
+            if remaining <= 0:
+                item.untranscribed = True
+                break
+            self._caller_heard.clear()
+            try:
+                async with asyncio.timeout(remaining):
+                    await self._caller_heard.wait()
+            except TimeoutError:
+                item.untranscribed = self._caller_end_ms < item.offset_ms
+                break
+        if self._telemetry is not None:
+            self._telemetry.event(
+                "test.latency",
+                "success",
+                mode="speech",
+                reason="ready",
+                measurement="transcription_wait_seconds",
+                value=max(0.0, loop.time() - started),
+            )
+        if self._open_speech is not None and self._open_speech[1] <= item.offset_ms:
+            # Speech up to the delegation is recorded; later speech is still in progress.
+            unheard = self._open_speech[0] == "caller" and item.untranscribed
+            self.flush_speech(delivery="partial" if unheard else "transcribed")
+
+    def flush_speech(self, *, delivery: Literal["transcribed", "partial"] = "transcribed") -> None:
+        """Record the transcript of the turn or response in progress as one entry (FR-003)."""
+        if self._open_speech is None:
+            return
+        speaker, at_ms, parts = self._open_speech
+        self._open_speech = None
+        content = "".join(parts).strip()
+        if not content:
+            return
+        if speaker == "caller":
+            self.history.record_caller_speech(content, at_ms=at_ms, delivery=delivery)
+        else:
+            self.history.record_assistant_speech(content, at_ms=at_ms)
+
+    def record_greeting(self, text: str, *, at_ms: float = 0.0) -> None:
+        """Keep the greeting text given to the voice assistant before its transcript (FR-002)."""
+        if self.policy.slot.mode == "speech" and text.strip() and not self._failed:
+            self.history.record_delegation_result(
+                text, at_ms=at_ms, agent_id=self.policy.active_agent_id
+            )
 
     async def _gate(self, item: WorkItem, *, initial: bool = False) -> TestSlot:
         if self._failed:
@@ -494,11 +716,21 @@ class ConversationExecutor:
                     raise
         else:
             raise PermissionError("stale_generation")
+        if (
+            initial
+            and current.mode == "speech"
+            and item.receipt.generation == current.generation == item.generation
+            and item.receipt.owner_epoch == current.owner_epoch
+            and item.agent_epoch < current.agent_epoch
+        ):
+            # A delegation accepted before an agent change has produced nothing yet: it is the
+            # caller's request and runs on the active agent with the whole history (FR-007).
+            item.agent_epoch = current.agent_epoch
         if item.generation != current.generation or item.agent_epoch != current.agent_epoch:
             raise PermissionError("stale_generation")
         if initial and (
             item.receipt.generation != current.generation
-            or item.receipt.agent_epoch != current.agent_epoch
+            or item.agent_epoch != current.agent_epoch
             or item.receipt.owner_epoch != current.owner_epoch
         ):
             raise PermissionError("stale_generation")
@@ -510,24 +742,22 @@ class ConversationExecutor:
         properties: dict[str, Any],
         item: WorkItem,
         source: TestSlot,
-        called: list[bool],
+        actions: StepActions,
         *,
-        tool_id: str | None = None,
-        action_id: str | None = None,
+        tool_id: str,
+        action_id: str,
     ) -> FunctionTool:
         schema = {
             "type": "object",
             "properties": properties,
-            "required": [
-                key for key in properties if key not in {"request_summary", "transfer_reason"}
-            ],
+            "required": list(properties),
             "additionalProperties": False,
         }
 
         async def invoke(context: RunContextWrapper[Any], arguments: str) -> str:
             await self._gate(item)
             if (
-                called[0]
+                actions.called
                 or self.policy.agent_epoch != source.agent_epoch
                 or self.policy.active_agent_id != source.active_agent_id
             ):
@@ -537,53 +767,30 @@ class ConversationExecutor:
             values = json.loads(arguments, object_pairs_hook=unique_object)
             if not isinstance(values, dict) or not Draft202012Validator(schema).is_valid(values):
                 raise PermissionError("invalid_work_input")
-            called[0] = True
+            actions.called = True
             item.step(self.utc_now())
-            binding: SourceBinding = {
-                "source_agent_id": source.active_agent_id,
-                "source_agent_epoch": source.agent_epoch,
-            }
-            transfer_context = {
-                key: values[key] for key in ("request_summary", "transfer_reason") if key in values
-            }
-            if tool_id is not None and action_id is not None:
-                if self.capability_client is None:
-                    raise PermissionError("capability_unavailable")
+            if self.capability_client is None:
+                raise PermissionError("capability_unavailable")
+            call_id = getattr(context, "tool_call_id", None) or "call_" + uuid4().hex
+            try:
                 result = await self.policy.capability(
                     self.capability_client,
                     tool_id,
                     action_id,
                     values["inputs"],
                     item.receipt.work,
-                    **binding,
+                    source_agent_id=source.active_agent_id,
+                    source_agent_epoch=source.agent_epoch,
                 )
-            elif name == "enter_routing":
-                await self.policy.enter_routing(item.receipt.work, **binding)
-                result = {"status": "routed"}
-            elif name == "route_community":
-                await self.policy.route(values["community_id"], item.receipt.work, **binding)
-                result = {"status": "routed"}
-            elif name == "handover_agent":
-                await self.policy.route_to_peer(
-                    values["agent_id"], item.receipt.work, context=transfer_context, **binding
-                )
-                result = {"status": "handed_over"}
-            elif name == "transfer_community":
-                await self.policy.transfer_community(
-                    values["community_id"], item.receipt.work, context=transfer_context, **binding
-                )
-                result = {"status": "routed"}
-            elif name == "goodbye":
-                await self.policy.goodbye(item.receipt.work, **binding)
-                result = {"status": "ending"}
-            else:
-                view = self.policy.visibility.view_for(source.active_agent_id)
-                result = {"peers": view["peers"], "communities": view["communities"]}
-            if self.policy.agent_epoch != source.agent_epoch:
-                item.generation = self.policy.slot.generation
-                item.agent_epoch = self.policy.agent_epoch
+            except Exception as error:
+                # A failed call is kept too, so later agents do not repeat it blindly (FR-002).
+                code = error.args[0] if error.args and isinstance(error.args[0], str) else "error"
+                self._record_tool(item, name, call_id, arguments, "failed: " + code)
+                raise
+            output = json.dumps(result, allow_nan=False, separators=(",", ":"))
+            self._record_tool(item, name, call_id, arguments, output)
             await self._gate(item)
-            return json.dumps(result, allow_nan=False, separators=(",", ":"))
+            return output
 
         return FunctionTool(
             name=name,
@@ -593,16 +800,39 @@ class ConversationExecutor:
             strict_json_schema=False,
         )
 
+    def _entry_fields(self, item: WorkItem) -> dict[str, Any]:
+        """Where a work item's entry belongs: its agent, community and session time."""
+        return {
+            "agent_id": self.policy.active_agent_id,
+            "community_id": self.policy.active_community_id,
+            "at_ms": item.offset_ms if self.history.timeline else None,
+        }
+
+    def _record_item(self, item: WorkItem, kind: str, content: str, **fields: Any) -> None:
+        if item is not self._current_item:
+            return
+        self._item_entries.append(
+            HistoryEntry.model_validate(
+                {"kind": kind, "content": bounded(content)} | self._entry_fields(item) | fields
+            )
+        )
+
+    def _record_tool(
+        self, item: WorkItem, name: str, call_id: str, arguments: str, output: str
+    ) -> None:
+        """Record one function tool call and its output, paired by `call_id`."""
+        self._record_item(item, "tool_call", arguments, name=name, call_id=call_id)
+        self._record_item(item, "tool_result", output, name=name, call_id=call_id)
+
     def _tools(
         self,
         configured: dict[str, Any],
         item: WorkItem,
         source: TestSlot,
-        called: list[bool],
+        actions: StepActions,
         *,
         capabilities: bool,
         emit: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
-        reported: list[bool] | None = None,
     ) -> list[FunctionTool]:
         if configured["agentId"] != source.active_agent_id:
             return []
@@ -617,71 +847,108 @@ class ConversationExecutor:
                     {"inputs": {"type": "object"}},
                     item,
                     source,
-                    called,
+                    actions,
                     tool_id=grant["toolId"],
                     action_id=action,
                 )
                 for grant in configured["capabilityAssignments"]
                 for action in grant["permittedActionNames"]
             ]
-        progress = (
-            [self._progress_tool(item, called, reported, emit)]
-            if emit is not None and reported is not None
-            else []
-        )
-        if role == "goodbye":
-            return progress
-        result = [self._tool("goodbye", {}, item, source, called)]
-        if role == "welcome":
-            result.append(self._tool("enter_routing", {}, item, source, called))
-        elif role == "routing":
-            result.append(
-                self._tool(
-                    "route_community",
-                    {"community_id": {"type": "string", "maxLength": 128}},
-                    item,
-                    source,
-                    called,
-                )
+        return [self._progress_tool(item, actions, emit)] if emit is not None else []
+
+    def _handoffs(
+        self,
+        configured: dict[str, Any],
+        agents: dict[str, Agent[Any]],
+        *,
+        item: WorkItem,
+        source: TestSlot,
+        actions: StepActions,
+    ) -> list[Handoff[Any, Any]]:
+        """The active agent's SDK handoffs, one per permitted destination (FR-008, FR-028)."""
+        if configured["agentId"] != source.active_agent_id:
+            return []
+        return [
+            destination_handoff(
+                destination,
+                agents[destination.agent_id],
+                enabled=self.policy.enabled(destination),
+                invoke=partial(self._apply_handoff, destination, item, source, actions),
             )
-        else:
-            fields = {
-                "request_summary": {"type": "string", "maxLength": 1024},
-                "transfer_reason": {"type": "string", "maxLength": 1024},
-            }
-            result.extend(
-                [
-                    self._tool("discover_peers", {}, item, source, called),
-                    self._tool(
-                        "handover_agent",
-                        {"agent_id": {"type": "string", "maxLength": 128}, **fields},
-                        item,
-                        source,
-                        called,
-                    ),
-                    self._tool(
-                        "transfer_community",
-                        {"community_id": {"type": "string", "maxLength": 128}, **fields},
-                        item,
-                        source,
-                        called,
-                    ),
-                ]
+            for destination in self.policy.offered()
+        ]
+
+    async def _apply_handoff(
+        self,
+        destination: Destination,
+        item: WorkItem,
+        source: TestSlot,
+        actions: StepActions,
+        arguments: str | None,
+    ) -> None:
+        """Apply a handoff the model requested; a refusal raises `HandoverRefused` (FR-008)."""
+        text = arguments or "{}"
+        community_id: str | None = None
+        try:
+            values = (
+                json.loads(text, object_pairs_hook=unique_object)
+                if len(text.encode("utf-8")) <= 8192
+                else None
             )
-        return result + progress
+        except ValueError:
+            values = None
+        try:
+            if not isinstance(values, dict) or not Draft202012Validator(
+                handoff_schema(destination)
+            ).is_valid(values):
+                raise PermissionError("handover_not_allowed")
+            community_id = values.get("community_id")
+            await self._gate(item)
+            if (
+                actions.called
+                or self.policy.agent_epoch != source.agent_epoch
+                or self.policy.active_agent_id != source.active_agent_id
+            ):
+                raise PermissionError("stale_agent_epoch")
+            actions.called = True
+            item.step(self.utc_now())
+            record = await self.policy.handover(
+                destination.agent_id,
+                destination.path,
+                item.receipt.work,
+                community_id=community_id,
+                source_agent_id=source.active_agent_id,
+                source_agent_epoch=source.agent_epoch,
+            )
+        except (PermissionError, AdmissionError) as error:
+            code = error.args[0] if error.args else None
+            reason = REFUSALS.get(code) if isinstance(code, str) else None
+            if reason is None:
+                raise
+            refused = self.policy.record(
+                destination.agent_id, destination.path, community_id=community_id, reason=reason
+            )
+            self._handover_event(refused)
+            raise HandoverRefused(destination, refused, text) from None
+        item.generation = self.policy.slot.generation
+        item.agent_epoch = self.policy.agent_epoch
+        actions.applied = (destination, record, text)
+        self._handed_on = True
+        self._handover_started = (self.utc_now(), destination.path)
+        self._handover_event(record)
 
     def _progress_tool(
         self,
         item: WorkItem,
-        called: list[bool],
-        reported: list[bool],
+        actions: StepActions,
         emit: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> FunctionTool:
         async def invoke(context: RunContextWrapper[Any], arguments: str) -> str:
-            if called[0]:
+            if actions.called:
                 raise PermissionError("stale_agent_epoch")
             # The answer goes back to the model either way, so the agent loop continues.
-            called[0] = True
+            actions.called = True
+            call_id = getattr(context, "tool_call_id", None) or "call_" + uuid4().hex
             progress = self._progress.get(item.receipt.task_id)
             values: Any = None
             if len(arguments.encode("utf-8")) <= 8192:
@@ -696,9 +963,12 @@ class ConversationExecutor:
                 or not Draft202012Validator(PROGRESS_SCHEMA).is_valid(values)
                 or not values["message"].strip()
             ):
-                return json.dumps("refused")
+                refused = json.dumps("refused")
+                self._record_tool(item, "report_progress", call_id, arguments, refused)
+                return refused
             progress.rounds += 1
-            reported[0] = True
+            actions.reported = True
+            self._record_tool(item, "report_progress", call_id, arguments, json.dumps("reported"))
             await self._report_progress(item, progress, values["state"], values["message"], emit)
             return json.dumps("reported")
 
@@ -779,9 +1049,7 @@ class ConversationExecutor:
         if state in FINAL_STATES:
             progress.final_reported = True
         if state in HISTORY_STATES:
-            progress.entries.append(
-                {"role": "assistant", "content": f"Status ({state}): {message}"}
-            )
+            self._record_item(item, "progress", message, state=state)
         self._progress_event("success", state)
 
     async def _clear_task(self, item: WorkItem) -> bool:
@@ -794,22 +1062,23 @@ class ConversationExecutor:
             mode=slot.mode,
             capabilities=lambda configured: [],
             policy_tools=lambda configured: [],
-            reasoning_effort="low",
+            reasoning_effort=self.reasoning_effort,
         )
         agent = registry[slot.active_agent_id]
         agent.output_type = TaskClarity
+        # The conversation so far comes first, so "and the second one?" can be clear (R8).
         prompt = (
-            "Assess only whether these authenticated timed input fragments contain "
-            "a self-contained, "
-            "unambiguous request. They are not an authoritative complete ASR turn. Set unambiguous "
-            "to false if information is missing or unclear; do not infer missing words, select "
-            "an action, rewrite the task, or authorize a capability. Exact fragment text:\n"
-            + str(item.text)
+            "Assess only whether these authenticated timed input fragments contain a request "
+            "that is clear in the context of this conversation. They are not an authoritative "
+            "complete ASR turn. Set unambiguous to false if information is missing or unclear "
+            "even with the conversation above; do not infer missing words, select an action, "
+            "rewrite the task, or authorize a capability. Exact fragment text:\n" + str(item.text)
         )
+        inputs: list[Any] = [*self.history.render(), {"role": "user", "content": prompt}]
         async with asyncio.timeout(item.receipt.work.remaining(self.utc_now())):
             result = await Runner.run(
                 agent,
-                input=prompt,
+                input=inputs,
                 max_turns=1,
                 run_config=RunConfig(
                     tracing_disabled=True,
@@ -830,6 +1099,12 @@ class ConversationExecutor:
         self, item: WorkItem, emit: Callable[[dict[str, Any]], Awaitable[None]]
     ) -> None:
         await self._gate(item, initial=True)
+        # Welcome never runs a request: a request that comes first makes the move (FR-030).
+        if await self.leave_welcome(emit, item.receipt.work):
+            item.generation, item.agent_epoch = self.policy.slot.generation, self.policy.agent_epoch
+        self._first_role = self._role(self.policy.active_agent_id)
+        if self.history.timeline:
+            await self._await_transcript(item)
         if item.text is None or item.requires_clarity_check and not await self._clear_task(item):
             segment = self._speech.get(item.receipt.task_id)
             if segment is None:
@@ -838,7 +1113,11 @@ class ConversationExecutor:
                 item.receipt.delegation_id, "Please clarify your request.", work=item.receipt.work
             )
             return
-        inputs = self._history + [{"role": "user", "content": item.text}]
+        if not self.history.timeline:
+            # Text records the request at once; voice has it as the caller's transcript.
+            self._record_item(item, "user_text", item.text, agent_id=None)
+        # This work item's own SDK items, kept natively between its steps (shared-history.md).
+        own: list[Any] = []
         reply_bytes = 0
         first_text = False
         progress_round = False
@@ -851,32 +1130,45 @@ class ConversationExecutor:
                 else:
                     item.step(self.utc_now())
                 model = self.text_adapter.model_for(slot, item.receipt.work)
-                called, reported = [False], [False]
+                actions = StepActions()
+                # The running item's own model input, beyond the shared history (R11).
+                pending = [*self._rendered_item_entries(), *own]
+                own_bytes = (
+                    len(json.dumps(pending, ensure_ascii=False).encode("utf-8")) if pending else 0
+                )
+                if condensing.needed(
+                    self.history, extra_bytes=own_bytes, extra_entries=len(self._item_entries)
+                ):
+                    await self.condense(
+                        emit,
+                        work=item.receipt.work,
+                        extra_bytes=own_bytes,
+                        extra_entries=len(self._item_entries),
+                    )
+                    slot = await self._gate(item)
                 registry = build_agents(
                     self.policy.snapshot,
                     model=model,
                     mode=slot.mode,
                     capabilities=partial(
-                        self._tools, item=item, source=slot, called=called, capabilities=True
+                        self._tools, item=item, source=slot, actions=actions, capabilities=True
                     ),
                     policy_tools=partial(
                         self._tools,
                         item=item,
                         source=slot,
-                        called=called,
+                        actions=actions,
                         capabilities=False,
                         emit=emit,
-                        reported=reported,
                     ),
-                    # A caller waits in silence on speech; text keeps the deployment default.
-                    reasoning_effort="low" if slot.mode == "speech" else None,
+                    reasoning_effort=self.reasoning_effort,
+                    handoffs=partial(self._handoffs, item=item, source=slot, actions=actions),
                 )
                 agent = registry[slot.active_agent_id]
                 agent.tool_use_behavior = "stop_on_first_tool"
-                directory = self.policy.routing_directory()
-                if directory is not None:
-                    agent.instructions = f"{agent.instructions}\n\n{directory}"
-                if self._context_bytes(inputs) > 256 * 1024:
+                base = [*self.history.render(), *self._rendered_item_entries()]
+                inputs = [*base, *own]
+                if self._context_bytes(inputs) > HISTORY_LIMIT:
                     raise PermissionError("conversation_context_limit")
                 run = Runner.run_streamed(
                     agent,
@@ -889,100 +1181,147 @@ class ConversationExecutor:
                     ),
                 )
                 reply = []
+                # The function calls this step produced, by name: they pair entries by call id.
+                calls: dict[str, str] = {}
                 self._runs.append(run)
                 self._sdk_drained = False
                 run_completed = False
                 try:
-                    async for event in run.stream_events():
-                        await self._gate(item)
-                        if (
-                            event.type != "raw_response_event"
-                            or event.data.type != "response.output_text.delta"
-                        ):
-                            continue
-                        delta = event.data.delta
-                        if delta and not first_text and self._telemetry is not None:
-                            self._telemetry.event(
-                                "test.latency",
-                                "success",
-                                mode=slot.mode,
-                                reason="ready",
-                                measurement="backend_first_text_seconds",
-                                value=(
-                                    self.utc_now() - item.receipt.work.work_accepted_at
-                                ).total_seconds(),
-                            )
-                            first_text = True
-                        reply_bytes += len(delta.encode("utf-8"))
-                        if reply_bytes > 64 * 1024:
-                            raise PermissionError("text_reply_limit")
-                        if self._context_bytes(inputs) + reply_bytes + 256 > 256 * 1024:
-                            raise PermissionError("conversation_context_limit")
-                        reply.append(delta)
-                        if slot.mode == "speech":
-                            continue
-                        for offset in range(0, len(delta), 512):
-                            await emit(
-                                {
-                                    "type": "text.delta",
-                                    "messageId": item.receipt.task_id,
-                                    "text": delta[offset : offset + 512],
-                                    "generation": slot.generation,
-                                }
-                            )
-                    run_completed = True
-                    await self._gate(item)
-                    progress_round = reported[0]
-                    if called[0]:
-                        if self.policy.agent_epoch != slot.agent_epoch:
-                            inputs = [
-                                {
-                                    "role": "user",
-                                    "content": "Authorized transfer context: "
-                                    + json.dumps(self.policy.transfer_context, allow_nan=False),
-                                }
-                            ]
-                            if slot.active_community_id is None:
-                                inputs = [{"role": "user", "content": item.text}]
-                            self._history = []
-                            if slot.mode == "text":
-                                # Speech announces the change when its new segment starts.
+                    try:
+                        async for event in run.stream_events():
+                            await self._gate(item)
+                            if event.type == "agent_updated_stream_event":
+                                # After an applied handoff the next step is rebuilt for the
+                                # destination at its new agent epoch, so this run ends here.
+                                if event.new_agent is not agent:
+                                    run.cancel(mode="after_turn")
+                                continue
+                            if event.type != "raw_response_event":
+                                continue
+                            data = event.data
+                            if self._handover_started is not None and (
+                                (data.type == "response.output_text.delta" and data.delta)
+                                or (
+                                    data.type == "response.output_item.done"
+                                    and getattr(getattr(data, "item", None), "type", "")
+                                    == "function_call"
+                                )
+                            ):
+                                # The destination's first output after the handoff (SC-005).
+                                started, path = self._handover_started
+                                self._handover_started = None
+                                self._event(
+                                    "test.latency",
+                                    "success",
+                                    reason="ready",
+                                    measurement="handover_seconds",
+                                    value=min(
+                                        600.0, max(0.0, (self.utc_now() - started).total_seconds())
+                                    ),
+                                    fields={"path": path},
+                                )
+                            if data.type == "response.output_item.done":
+                                done = getattr(data, "item", None)
+                                if (
+                                    done is not None
+                                    and getattr(done, "type", "") == "function_call"
+                                ):
+                                    calls[str(done.name)] = str(done.call_id)
+                                continue
+                            if data.type != "response.output_text.delta":
+                                continue
+                            delta = data.delta
+                            if delta and not first_text and self._telemetry is not None:
+                                self._telemetry.event(
+                                    "test.latency",
+                                    "success",
+                                    mode=slot.mode,
+                                    reason="ready",
+                                    measurement="backend_first_text_seconds",
+                                    value=(
+                                        self.utc_now() - item.receipt.work.work_accepted_at
+                                    ).total_seconds(),
+                                )
+                                first_text = True
+                            reply_bytes += len(delta.encode("utf-8"))
+                            if reply_bytes > 64 * 1024:
+                                raise PermissionError("text_reply_limit")
+                            if self._context_bytes(inputs) + reply_bytes + 256 > HISTORY_LIMIT:
+                                raise PermissionError("conversation_context_limit")
+                            reply.append(delta)
+                            if slot.mode == "speech":
+                                continue
+                            for offset in range(0, len(delta), 512):
                                 await emit(
                                     {
-                                        "type": "agent.changed",
-                                        "agentId": self.policy.active_agent_id,
-                                        "communityId": self.policy.active_community_id,
-                                        "generation": self.policy.slot.generation,
+                                        "type": "text.delta",
+                                        "messageId": item.receipt.task_id,
+                                        "text": delta[offset : offset + 512],
+                                        "generation": slot.generation,
                                     }
                                 )
-                        else:
-                            inputs = run.to_input_list()
+                    except HandoverRefused as refusal:
+                        # The requesting agent stays active and hears why (FR-008).
+                        run_completed = True
+                        destination = refusal.destination
+                        call_id = calls.get(destination.name) or "call_" + uuid4().hex
+                        self._record_item(
+                            item,
+                            "handover",
+                            refusal.arguments,
+                            name=destination.name,
+                            call_id=call_id,
+                            handover=refusal.record,
+                        )
+                        own = [*own, *self._item_entries[-1].items()]
+                        progress_round = False
                         continue
-                    # Final and waiting progress states stay in history before the answer.
-                    progress = self._progress.get(item.receipt.task_id)
-                    entries = progress.entries if progress is not None else []
-                    self._history = [
-                        *inputs,
-                        *entries,
-                        {"role": "assistant", "content": "".join(reply)},
-                    ]
-                    entries.clear()
-                    if self._context_bytes(self._history) > 256 * 1024:
-                        raise PermissionError("conversation_context_limit")
+                    run_completed = True
+                    await self._gate(item)
+                    progress_round = actions.reported
+                    if actions.applied is not None:
+                        destination, record, arguments = actions.applied
+                        call_id = calls.get(destination.name) or "call_" + uuid4().hex
+                        self._record_item(
+                            item,
+                            "handover",
+                            arguments,
+                            name=destination.name,
+                            call_id=call_id,
+                            handover=record,
+                            agent_id=record.source_agent_id,
+                            community_id=slot.active_community_id,
+                        )
+                        # The destination continues with the full input list (FR-007).
+                        own = [
+                            {**entry, "output": "applied"}
+                            if isinstance(entry, dict)
+                            and entry.get("type") == "function_call_output"
+                            and entry.get("call_id") == call_id
+                            else entry
+                            for entry in model_items(run.to_input_list())[len(base) :]
+                        ]
+                        await self._agent_changed(emit)
+                        continue
+                    if actions.called:
+                        own = model_items(run.to_input_list())[len(base) :]
+                        continue
+                    answer = "".join(reply)
                     if slot.mode == "speech":
                         segment = self._speech.get(item.receipt.task_id)
                         if segment is None:
                             raise PermissionError("stale_generation")
-                        delegation_id = item.receipt.delegation_id
-                        if segment.intent.generation != slot.generation:
-                            if self.speech_segments is None:
-                                raise PermissionError("speech_transition_unavailable")
-                            segment = self.speech_segments.current
-                            if segment.intent.generation != slot.generation:
-                                raise PermissionError("stale_generation")
-                            delegation_id = None
-                        await self._speak(item, segment, delegation_id, "".join(reply))
+                        delivered, dropped = await self._speak(
+                            item, segment, item.receipt.delegation_id, answer
+                        )
+                        if delivered.strip():
+                            self._record_item(item, "delegation_result", delivered)
+                        if dropped.strip():
+                            self._record_item(
+                                item, "delegation_result", dropped, delivery="not_delivered"
+                            )
                     else:
+                        self._record_item(item, "agent_answer", answer)
                         await emit(
                             {
                                 "type": "text.completed",
@@ -998,12 +1337,28 @@ class ConversationExecutor:
                         self._runs.remove(run)
                         self._sdk_drained = not self._runs
 
+    def _rendered_item_entries(self) -> list[dict[str, Any]]:
+        """Entries the running item recorded outside any SDK step (its request text)."""
+        return [
+            rendered
+            for entry in self._item_entries
+            if entry.kind == "user_text"
+            for rendered in entry.items()
+        ]
+
+    def _commit_item_entries(self) -> None:
+        """The ended work item's entries join the shared history, in their order."""
+        entries, self._item_entries = self._item_entries, []
+        for entry in entries:
+            self.history.record(entry)
+
     async def _work_error(
         self,
         emit: Callable[[dict[str, Any]], Awaitable[None]],
         task_id: str | None = None,
         *,
         active: bool = False,
+        code: str = "work_unavailable",
     ) -> None:
         if self._telemetry is not None:
             self._telemetry.event(
@@ -1011,7 +1366,7 @@ class ConversationExecutor:
             )
         message: dict[str, Any] = {
             "type": "error",
-            "code": "work_unavailable",
+            "code": code,
             "generation": self.policy.slot.generation,
         }
         if task_id is not None:
@@ -1032,9 +1387,10 @@ class ConversationExecutor:
 
     async def _speak(
         self, item: WorkItem, segment: GptLiveSession, delegation_id: str | None, reply: str
-    ) -> None:
+    ) -> tuple[str, str]:
         """Send a spoken reply in parts of at most 500 bytes, each after the previous one's
-        acknowledgement or 2 s; an interruption drops the rest into one quiet note."""
+        acknowledgement or 2 s; an interruption drops the rest into one quiet note. Returns the
+        parts sent and the parts dropped."""
         # A blank reply goes to the adapter unchanged, which refuses it as before.
         parts = [part for part in split_reply(reply) if part.strip()] or [reply]
         work = item.receipt.work
@@ -1093,6 +1449,57 @@ class ConversationExecutor:
                     measurement=measurement,
                     value=value,
                 )
+        return "".join(parts[:sent]), "".join(parts[sent:])
+
+    def _delegation_event(self, item: WorkItem) -> None:
+        """`test.delegation` when a voice delegation's work item ends (FR-019, R9)."""
+        ready = self._delegation_ready.pop(item.receipt.task_id, False)
+        handled = self._role(self.policy.active_agent_id)
+        self._event(
+            "test.delegation",
+            "success" if ready else "failure",
+            reason="ready" if ready else "invalid_input",
+            fields={
+                "first_role": self._first_role or handled,
+                "handled_role": handled,
+                "handed_on": self._handed_on,
+                "untranscribed": item.untranscribed,
+            },
+        )
+
+    async def condense(
+        self,
+        emit: Callable[[dict[str, Any]], Awaitable[None]],
+        *,
+        work: WorkBudget | None = None,
+        extra_bytes: int = 0,
+        extra_entries: int = 0,
+    ) -> None:
+        """Replace the oldest entries with a condensed account and say so (R11, FR-016).
+
+        Any failure ends the conversation with `conversation_context_limit`.
+        """
+        slot = self.policy.slot
+        size = {"history_kib": condensing.kib_range(self.history.rendered_bytes + extra_bytes)}
+        chosen = condensing.plan(
+            self.history.entries, extra_bytes=extra_bytes, extra_entries=extra_entries
+        )
+        try:
+            if chosen is None:
+                raise PermissionError("conversation_context_limit")
+            account = await self.text_adapter.condense(
+                slot,
+                work or self._budget(),
+                instructions=condensing.INSTRUCTIONS,
+                inputs=cast(Any, condensing.request(chosen.condensed)),
+            )
+            history = condensing.condensed(self.history, chosen, account)
+        except Exception:
+            self._event("test.history", "failure", reason="limit", fields=size)
+            raise PermissionError("conversation_context_limit") from None
+        self.history = history
+        self._event("test.history", "success", reason="condensed", fields=size)
+        await emit({"type": "history.condensed", "generation": slot.generation})
 
     async def _tell_live(self, item: WorkItem, content: str) -> None:
         """Best effort: give the Live model a fixed line for this delegation."""
@@ -1154,12 +1561,16 @@ class ConversationExecutor:
                         error=type(error).__name__,
                         code=code,
                     )
-                await self._work_error(emit, item.receipt.task_id, active=not ending)
+                await self._work_error(
+                    emit,
+                    item.receipt.task_id,
+                    active=not ending,
+                    code=code if code == "conversation_context_limit" else "work_unavailable",
+                )
+                if code == "conversation_context_limit" and item.receipt.delegation_id:
+                    # The caller hears why the call ends (R11).
+                    await self._tell_live(item, condensing.LIMIT_MESSAGE)
                 if not ending:
-                    if progress.entries and (
-                        self._context_bytes([*self._history, *progress.entries]) <= 256 * 1024
-                    ):
-                        self._history.extend(progress.entries)
                     # The fixed line only stands in when the agent reported no final state.
                     if not progress.final_reported and item.receipt.delegation_id is not None:
                         self._progress_event("failure", "fallback_line")
@@ -1168,6 +1579,14 @@ class ConversationExecutor:
                 self.queue.finish(item.receipt)
                 self._speech.pop(item.receipt.task_id, None)
                 self._progress.pop(item.receipt.task_id, None)
+                if item.receipt.delegation_id is not None:
+                    self._delegation_event(item)
+                self._first_role, self._handed_on, self._handover_started = None, False, None
+                if self._failed:
+                    self._item_entries.clear()
+                else:
+                    # What the item did stays in history, a failed one included (FR-002).
+                    self._commit_item_entries()
                 self._current_item = None
                 self._processing_task = None
             if self._telemetry is not None:
@@ -1185,39 +1604,27 @@ class ConversationExecutor:
 
     @property
     def retained_bytes(self) -> int:
-        return self._context_bytes(self._history)
+        return self._context_bytes(
+            [*self.history.render(), *(item for e in self._item_entries for item in e.items())]
+        )
 
     @property
     def ended(self) -> bool:
         return self._failed
 
     def _context_bytes(self, values: list[Any]) -> int:
-        history = (
+        """The bytes of a model input plus everything else this conversation holds in memory."""
+        rendered = (
             len(json.dumps(values, ensure_ascii=False, allow_nan=False).encode("utf-8"))
             if values
             else 0
         )
-        transcripts = (
-            len(json.dumps(self._transcripts, ensure_ascii=False, allow_nan=False).encode("utf-8"))
-            if self._transcripts
+        speech = (
+            sum(len(part.encode("utf-8")) for part in self._open_speech[2])
+            if self._open_speech is not None
             else 0
         )
-        context = (
-            len(
-                json.dumps(
-                    self.policy.transfer_context, ensure_ascii=False, allow_nan=False
-                ).encode("utf-8")
-            )
-            if self.policy.transfer_context
-            else 0
-        )
-        return (
-            history
-            + transcripts
-            + context
-            + self.queue.retained_bytes
-            + self.speech_fragments.retained_bytes
-        )
+        return rendered + speech + self.queue.retained_bytes + self.speech_fragments.retained_bytes
 
     async def _disposal_ready(self) -> bool:
         return (
@@ -1231,11 +1638,12 @@ class ConversationExecutor:
 
     def _purge(self) -> None:
         self.queue.close()
-        self._history.clear()
-        self._transcripts.clear()
-        self._greeting_parts = None
+        for task in self._update_watches:
+            task.cancel()
+        self.history.clear()
+        self._item_entries.clear()
+        self._open_speech = None
         self.speech_fragments.clear()
-        self.policy.transfer_context.clear()
         self._speech.clear()
         for run in self._runs:
             run.input = ""

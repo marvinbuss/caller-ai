@@ -6,10 +6,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from azure.core import MatchConditions
 
-from caller_runtime.adapters.text_history_repository import TextHistoryRepository
+from caller_runtime.adapters.text_history_repository import (
+    ClosedConversation,
+    TextHistoryRepository,
+)
+from caller_runtime.domain.shared_history import HistoryEntry
 from caller_runtime.domain.text_history import (
     MAX_HISTORY_BYTES,
-    StoredTurn,
     TextConversation,
     new_conversation_id,
 )
@@ -30,13 +33,36 @@ def anyio_backend() -> str:
 pytestmark = pytest.mark.anyio
 
 
+def entries(text: str = PRIVATE) -> list[HistoryEntry]:
+    return [
+        HistoryEntry(kind="user_text", content=text),
+        HistoryEntry(
+            kind="tool_call",
+            content="{}",
+            name="public_lookup",
+            call_id="call_1",
+            agent_id="agent-billing",
+        ),
+        HistoryEntry(
+            kind="tool_result",
+            content='{"status":"shipped"}',
+            name="public_lookup",
+            call_id="call_1",
+            agent_id="agent-billing",
+        ),
+        HistoryEntry(kind="agent_answer", content="ok", agent_id="agent-billing"),
+    ]
+
+
 def conversation(owner: str = OWNER, text: str = PRIVATE, identifier: str | None = None):
     return TextConversation(
         id=identifier or new_conversation_id(),
         ownerKey=owner,
-        turns=[StoredTurn(role="user", content=text), StoredTurn(role="assistant", content="ok")],
+        historyVersion=2,
+        entries=entries(text),
         activeAgentId="agent-welcome",
         activeCommunityId=None,
+        pendingDestination=None,
         createdAt=NOW,
         updatedAt=NOW,
     )
@@ -113,19 +139,83 @@ async def test_foreign_unknown_and_expired_conversations_are_indistinguishable(
 
 async def test_stored_size_is_bounded_by_the_context_limit():
     big = "x" * (60 * 1024)
-    turns = [StoredTurn(role="user", content=big) for _ in range(5)]
+    stored = [HistoryEntry(kind="user_text", content=big) for _ in range(5)]
 
     with pytest.raises(ValueError, match="conversation_context_limit"):
         TextConversation(
             id=new_conversation_id(),
             ownerKey=OWNER,
-            turns=turns,
+            historyVersion=2,
+            entries=stored,
             activeAgentId="agent-welcome",
             activeCommunityId=None,
             createdAt=NOW,
             updatedAt=NOW,
         )
     assert MAX_HISTORY_BYTES == 256 * 1024
+
+
+async def test_version_2_stores_all_entries_and_the_pending_destination(repository, container):
+    item = conversation().model_copy(update={"pending_destination": "community-billing"})
+    await repository.create(item, deadline=deadline())
+    body = container.records[item.id]
+    assert body["historyVersion"] == 2 and "turns" not in body
+    assert [entry["kind"] for entry in body["entries"]] == [
+        "user_text",
+        "tool_call",
+        "tool_result",
+        "agent_answer",
+    ]
+    assert body["entries"][2]["callId"] == "call_1"
+    assert body["pendingDestination"] == "community-billing"
+    loaded = await repository.load(OWNER, item.id, deadline=deadline())
+    assert not isinstance(loaded, ClosedConversation) and loaded is not None
+    assert loaded.conversation == item
+
+
+async def test_a_history_holds_at_most_2048_entries():
+    too_many = [HistoryEntry(kind="user_text", content="x") for _ in range(2049)]
+    with pytest.raises(ValueError):
+        TextConversation(
+            id=new_conversation_id(),
+            ownerKey=OWNER,
+            historyVersion=2,
+            entries=too_many,
+            activeAgentId="agent-welcome",
+            activeCommunityId=None,
+            createdAt=NOW,
+            updatedAt=NOW,
+        )
+
+
+async def test_a_document_without_history_version_loads_as_closed(repository, container):
+    identifier = new_conversation_id()
+    container.records[identifier] = {
+        "id": identifier,
+        "ownerKey": OWNER,
+        "turns": [{"role": "user", "content": PRIVATE}],
+        "activeAgentId": "agent-welcome",
+        "activeCommunityId": None,
+        "createdAt": NOW.isoformat(),
+        "updatedAt": NOW.isoformat(),
+        "ttl": TTL,
+        "_etag": '"cosmos-old"',
+    }
+    loaded = await repository.load(OWNER, identifier, deadline=deadline())
+    # Closed at the upgrade (FR-025): never resumed, and left to its expiry.
+    assert isinstance(loaded, ClosedConversation) and loaded.conversation_id == identifier
+    assert PRIVATE not in repr(loaded)
+    assert identifier in container.records
+    assert await repository.load(OTHER, identifier, deadline=deadline()) is None
+
+
+async def test_a_document_above_512_kib_is_refused(repository, container):
+    identifier = new_conversation_id()
+    container.records[identifier] = conversation(identifier=identifier).model_dump(
+        mode="json", by_alias=True
+    ) | {"_etag": '"cosmos-big"', "padding": "x" * (512 * 1024)}
+    with pytest.raises(PermissionError, match="history_unavailable"):
+        await repository.load(OWNER, identifier, deadline=deadline())
 
 
 @pytest.mark.parametrize("operation", ["load", "create", "replace"])

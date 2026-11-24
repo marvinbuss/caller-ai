@@ -144,6 +144,12 @@ variable "app_environment" {
       voice                   = string
       live_region             = string
       text_history_ttl        = optional(number, 86400)
+      # Optional runtime tuning of feature 007; an unset value keeps the runtime default.
+      tuning = optional(object({
+        transcription_wait_seconds = optional(number)
+        reasoning_effort           = optional(string)
+        voice_delegation_updates   = optional(bool)
+      }), {})
     })
 
     monitoring = object({
@@ -172,6 +178,25 @@ variable "app_environment" {
       (app.image.tag == null) != (app.image.digest == null)
     ])
     error_message = "app_environment.container_apps image must set exactly one of tag and digest."
+  }
+
+  validation {
+    condition = (
+      var.app_environment.application.tuning.transcription_wait_seconds == null ? true : (
+        var.app_environment.application.tuning.transcription_wait_seconds >= 0 &&
+        var.app_environment.application.tuning.transcription_wait_seconds <= 2 &&
+        can(regex("^[0-9](\\.[0-9]{1,3})?$", tostring(var.app_environment.application.tuning.transcription_wait_seconds)))
+      )
+    )
+    error_message = "app_environment.application.tuning.transcription_wait_seconds must be 0 to 2 with at most 3 decimals."
+  }
+
+  validation {
+    condition = (
+      var.app_environment.application.tuning.reasoning_effort == null ? true :
+      contains(["minimal", "low", "medium"], var.app_environment.application.tuning.reasoning_effort)
+    )
+    error_message = "app_environment.application.tuning.reasoning_effort must be minimal, low or medium."
   }
 
   validation {

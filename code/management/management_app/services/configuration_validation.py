@@ -16,7 +16,7 @@ from jsonschema import Draft202012Validator, SchemaError
 from pydantic import ValidationError
 
 from management_app.models.capabilities import ApprovedCapabilities, ConfigurationModel
-from management_app.models.configuration import ConfigurationGraph
+from management_app.models.configuration import DESCRIPTION_LIMIT, ConfigurationGraph
 from management_app.services import default_prompts
 from management_app.services.secret_detection import Issue, SecretDetector, field_path
 
@@ -225,6 +225,12 @@ class ConfigurationValidator:
                     and len(value.encode("utf-8")) > default_prompts.ADDITION_LIMIT
                 ):
                     reject(f"agents[{index}].{key}", "configuration_text_too_large", "text_limit")
+            # Schema 2.3.0: the description offered to agents that may hand over (feature 007).
+            if (
+                agent.description is not None
+                and len(agent.description.encode("utf-8")) > DESCRIPTION_LIMIT
+            ):
+                reject(f"agents[{index}].description", "configuration_text_too_large", "text_limit")
             document = agent.model_dump(by_alias=True)
             if any(
                 len(default_prompts.compose(stored_settings, document, mode).encode("utf-8"))

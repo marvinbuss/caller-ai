@@ -148,6 +148,58 @@ def test_an_invalid_tree_keeps_the_plain_text_row(page: Page):
     assert page.locator("#test-messages > p").inner_text() == "Agent: ## Options"
 
 
+@pytest.mark.parametrize("mode", ["text", "speech"])
+def test_an_agent_change_updates_the_metadata_and_adds_no_conversation_row(page: Page, mode):
+    # Feature 007, FR-026: handovers are quiet; only the metadata shows the active agent.
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    page.set_content(
+        '<div id="test-messages" role="log" aria-label="Conversation" aria-live="polite"></div>'
+        '<span id="test-agent"></span><span id="test-community"></span>'
+    )
+    page.add_script_tag(content=BUDGET_CODE + ENGINE_CODE)
+    page.evaluate(
+        """mode => {
+        const engine = new CallerTestEngine({begin: () => {}, control: () => {}});
+        engine.terminal = false; engine.mode = mode; engine.epoch = 1;
+        engine.snapshot = {status: 'ready', mode, sessionId: 'fixture', generation: 1};
+        engine.socket = {readyState: 1, bufferedAmount: 0, send: () => {}, close: () => {}};
+        engine.message(JSON.stringify({type: 'agent.changed', sequence: 2, generation: 1,
+            sessionId: 'fixture', agentId: 'agent-billing', communityId: 'community-billing'}), 1);
+    }""",
+        mode,
+    )
+    assert page.locator("#test-messages > *").count() == 0
+    assert page.locator("#test-agent").inner_text() == "agent-billing"
+    assert page.locator("#test-community").inner_text() == "community-billing"
+
+
+@pytest.mark.parametrize("mode", ["text", "speech"])
+def test_history_condensed_shows_one_polite_status_row(page: Page, mode):
+    # Feature 007, FR-016: the notice is a status row in both modalities.
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    page.set_content(
+        '<div id="test-messages" role="log" aria-label="Conversation" aria-live="polite"></div>'
+    )
+    page.add_script_tag(content=BUDGET_CODE + ENGINE_CODE)
+    page.evaluate(
+        """mode => {
+        const engine = new CallerTestEngine({begin: () => {}, control: () => {}});
+        engine.terminal = false; engine.mode = mode; engine.epoch = 1;
+        engine.snapshot = {status: 'ready', mode, sessionId: 'fixture', generation: 1};
+        engine.socket = {readyState: 1, bufferedAmount: 0, send: () => {}, close: () => {}};
+        engine.message(JSON.stringify({type: 'history.condensed', sequence: 2, generation: 1,
+            sessionId: 'fixture'}), 1);
+    }""",
+        mode,
+    )
+    rows = page.locator("#test-messages > [data-kind='status']")
+    assert rows.count() == 1
+    assert rows.inner_text() == "Older parts of this conversation were condensed."
+    assert page.locator("#test-messages").get_attribute("aria-live") == "polite"
+
+
 def test_status_rows_look_distinct_stay_in_history_and_use_the_polite_log(page: Page):
     from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
     from management_app.pages.test_console import STATUS_STYLE

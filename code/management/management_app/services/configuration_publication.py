@@ -14,11 +14,13 @@ from uuid import uuid4
 
 from management_app.models.configuration import (
     EMPTY_LAYOUT,
+    HANDOVER_SCHEMA_VERSION,
     MODALITY_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ConfigurationGraph,
     ConfigurationRevision,
     PublicationRecord,
+    uses_handover_fields,
     uses_modality_fields,
 )
 from management_app.models.permissions import AUTHORITY_LIMIT, PermissionAuthority
@@ -107,8 +109,14 @@ def publication(
         raise ConfigurationRejected(errors)
     graph = ConfigurationGraph.model_validate(payload).model_dump(mode="json", by_alias=True)
     # Positions live in the browser now; a revision keeps only the empty layout. Only a revision
-    # that carries a 2.2.0 field is written as 2.2.0, so earlier releases can still read the rest.
-    version = MODALITY_SCHEMA_VERSION if uses_modality_fields(graph) else SCHEMA_VERSION
+    # that carries a 2.2.0 field is written as 2.2.0, and only one with a 2.3.0 field as 2.3.0,
+    # so earlier releases can still read the rest.
+    if uses_handover_fields(graph):
+        version = HANDOVER_SCHEMA_VERSION
+    elif uses_modality_fields(graph):
+        version = MODALITY_SCHEMA_VERSION
+    else:
+        version = SCHEMA_VERSION
     graph |= {"schemaVersion": version, "layout": copy.deepcopy(EMPTY_LAYOUT)}
     now = datetime.now(UTC)
     number = previous["revisionNumber"] + 1 if previous else 1

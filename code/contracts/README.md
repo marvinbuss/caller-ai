@@ -32,8 +32,13 @@ modality texts in `conversationSettings` (`voiceInstructions`, `voicePlatformRul
 flag and the optional per-agent `voiceAddition` and `textAddition`. An absent field means the
 shipped default: management never writes a default into a stored revision, and it writes
 `2.2.0` only when a revision carries at least one of these fields. The runtime projection always
-carries all six settings and both additions, resolved before `policyHash` is computed. Both
-services accept `2.0.0`, `2.1.0` and `2.2.0`; unknown fields are refused. Changing platform
+carries all six settings and both additions, resolved before `policyHash` is computed. Schema
+`2.3.0` (feature 007) adds the optional agent `description` (at most 1 KiB of UTF-8, refused with
+`configuration_text_too_large` at `agents[N].description`) and the optional
+`conversationSettings.announceAgentChanges` flag; management writes `2.3.0` only when one of them
+is present, and tester projections carry neither. `allowedContextFields` stays in relationships
+and community connections as stored but filters nothing. Both services accept `2.0.0`, `2.1.0`,
+`2.2.0` and `2.3.0`; unknown fields are refused. Changing platform
 rules or voice instructions needs the `X-Caller-Confirm-Platform-Rules: confirmed` header
 (`platform_rules_unconfirmed` otherwise), and a text over its limit is refused with
 `configuration_text_too_large` and the field's `path`.

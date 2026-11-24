@@ -31,9 +31,9 @@ sequenceDiagram
     M->>R: POST /v1/conversations/text (Authorization, permit in body)
     R->>R: verify workload and permit, take one slot
     R->>H: load owner's conversation when conversationId is set
-    R->>P: stream model turn
-    R-->>M: event conversation, text.delta, text.completed
-    R->>H: append turn (etag-conditioned, item expiry)
+    R->>P: stream model steps (agents hand over within the turn)
+    R-->>M: event conversation, agent.changed*, progress*, text.delta, text.completed
+    R->>H: save the shared history (etag-conditioned, item expiry)
     R->>R: verified cleanup, release slot
     M-->>B: streamed reply
 
@@ -43,8 +43,8 @@ sequenceDiagram
     M->>R: authenticate (signed permit, optional empty settings)
     R->>R: verify, take one slot
     R-->>M: ready, audio.credit
-    M->>R: audio frames, input.mute, output.interrupt
-    R->>P: live audio session
+    M->>R: audio frames
+    R->>P: one live audio session for the whole call
     R-->>M: audio frames, transcript.delta
     M->>R: stop
     R->>R: closure confirmed, release slot
@@ -166,6 +166,11 @@ work that is no longer current is dropped. The final and waiting states are stor
 `Status (<state>): <message>`. Progress never replaces `text.completed`: a turn still ends with
 `text.completed` or `error`, and clients that do not know `progress` must ignore it.
 
+The stream may also carry `event: agent.changed` (`agentId`, `communityId`) when an agent hands
+the request over, and `event: history.condensed` (no fields) when older parts of the conversation
+were condensed before the answer. Neither adds a reply; the Test page shows the agent in its
+metadata and "Older parts of this conversation were condensed." as a status row.
+
 The management relay also sends the browser a `text.formatted` message after `text.completed`
 when the reply contains Markdown structure: an allowlisted node tree (paragraphs, headings,
 lists, quotes, code, tables, emphasis, line breaks, links and images) that the Test page renders
@@ -180,17 +185,132 @@ its id is the first event; with it the turn continues from the stored conversati
 
 - An unknown, expired or another manager's `conversationId` fails identically with
   `invalid_request` and reason `conversation_not_found`.
-- Only user and assistant text is stored. A completed turn appends both messages with an
-  etag-conditioned update; a failed turn leaves the stored conversation unchanged. A concurrent
-  update fails with `capacity_unavailable` and reason `work_busy`.
+- The stored document holds the conversation's shared history (`historyVersion: 2`, see
+  [Shared history](#shared-history)): its entries, the active agent and community, and a pending
+  Routing destination. A completed turn writes it with an etag-conditioned update; a failed turn
+  leaves it unchanged. A concurrent update fails with `capacity_unavailable` and reason
+  `work_busy`.
+- A conversation stored before history version 2 is not read again: the request starts a new
+  conversation, whose first event carries the new `conversationId`, with the greeting and then
+  the answer.
+- The resumed position is checked against the current revision; an agent that is no longer
+  allowed starts over at Welcome, which hands over to Routing, with every entry kept.
 - If the stored conversation or the new text would exceed the 256 KiB context limit, the request
-  fails with `limit_exceeded` and reason `conversation_context_limit`.
+  fails with `limit_exceeded` and reason `conversation_context_limit`. A document that would
+  exceed 512 KiB is condensed before it is saved.
 - If the history store cannot be read, the request fails closed with `upstream_unavailable` and
   reason `history_unavailable` and no reply is generated. If it cannot be written after the reply
   streamed, nothing is stored and the stream ends with the same error as its final event.
 - Each stored conversation expires 30 days after its last turn; expiry is the only deletion path.
 - `/readyz` reports `not_ready` with the reason `history_store_unavailable` when the background
   check of the store (about every 10 seconds) is failing or older than 30 seconds.
+
+## Shared history
+
+Every agent of a conversation continues from the same history (feature 007). It holds what
+happened, in both modalities, as typed entries, and every model step is built from it; no model
+state is stored with the provider. Each entry's content is untrusted and is rendered as
+conversation, never as instructions:
+
+| Entry | Model input |
+|-------|-------------|
+| User text | user message |
+| Caller speech | user message `[Caller, spoken] ...` (`[rest not transcribed]` when the transcription wait ended first) |
+| Voice assistant speech | assistant message `[Voice assistant, spoken] ...` |
+| Agent answer | assistant message |
+| Voice delegation result | assistant message `[Result given to the voice assistant] ...`, or `[Not delivered] ...` for parts never passed on |
+| Tool call and result | function call and its output |
+| Handover | the handoff call and its output, `applied` or `refused: <reason>` |
+| Progress (final or waiting) | assistant message `Status (<state>): ...` |
+| Condensed account | user message `[Condensed earlier conversation, untrusted]` and the account |
+
+The history never holds agent instructions, platform rules, global prompts, additions, voice
+conversation instructions, delegation updates, tool definitions, credentials or configuration.
+In voice it lives for the session and is ordered by session time; in text it is stored as
+described above.
+
+**Condensing.** Before each model step, a history above 192 KiB, or one a step could take past
+2,048 entries, is condensed: one bounded, tool-free request (at most 2,048 output tokens)
+replaces the oldest entries with an account until the history is below 128 KiB. Every handover,
+every progress entry and the user's reply to a question or to a waiting update stay verbatim.
+The client gets `history.condensed`. If condensing fails or cannot get below the limits, the
+conversation ends with `limit_exceeded` and reason `conversation_context_limit`; in voice the
+caller first hears "This conversation became too long. Please start a new one."
+
+## Handovers
+
+Agents hand a request over to each other with SDK handoffs, inside the same work item. The
+active agent is offered one handoff per destination the published graph allows, named
+`handover_<n>` in the order of the destination names:
+
+| Path | From | To | Handoff description |
+|------|------|----|---------------------|
+| `peer` | An ordinary agent | A colleague it links to in its community | The colleague's description, or its name |
+| `direct` | An ordinary agent | The entry agent of a community its community connects to | That community's routing description |
+| `routing` | An ordinary agent | Routing, naming a routable community that is neither its own nor connected (`community_id`) | `Routing can reach: <names>` |
+| `routing` | Routing | The entry agent of an enabled, routable community | That community's routing description |
+| `lifecycle` | Every ordinary agent and Routing | Goodbye | `Published-policy goodbye` |
+
+Welcome runs no request: it hands over to Routing after the greeting, or as soon as a request
+comes first (`lifecycle`). Every handoff the model chooses is checked again when it is applied:
+the graph, the agent epoch, the work budget and the step limit. A refused handoff is recorded
+with its reason (`refused_graph`, `refused_stale`, `refused_budget`, `refused_step_limit`) and
+the requesting agent continues with the output `refused: <reason>`. An applied one ends the
+step; the destination runs the next step with the whole history. A chain counts against the
+work budget (20 s text, 30 s speech) and the 8-step limit. During a transfer through Routing,
+Routing may hand over only to the named community's entry agent; in text this pending
+destination is stored between requests. Handovers are quiet unless "Announce agent changes" is
+on; the client gets `agent.changed` only.
+
+A handover within a community:
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant R as Runtime
+    participant A as First agent
+    participant C as Colleague
+    B->>R: message
+    R->>A: model step (history, A's tools and handoffs)
+    A-->>R: handover_0 (colleague)
+    R->>R: check graph, epoch, budget and steps, record the handover
+    R-->>B: agent.changed
+    R->>C: model step (same history, C's tools and handoffs)
+    C-->>R: answer
+    R-->>B: text.delta, text.completed
+```
+
+A direct handover to a connected community:
+
+```mermaid
+sequenceDiagram
+    participant R as Runtime
+    participant A as Billing agent
+    participant E as Technical Support entry agent
+    R->>A: model step
+    A-->>R: handoff to the entry agent (path direct)
+    R->>R: check and record
+    R->>E: model step with the whole history
+    E-->>R: answer, or a handover to a colleague without a reply
+```
+
+A transfer through Routing:
+
+```mermaid
+sequenceDiagram
+    participant R as Runtime
+    participant T as Technical Support agent
+    participant G as Routing
+    participant E as Billing entry agent
+    R->>T: model step
+    T-->>R: handoff to Routing, community_id billing
+    R->>R: check, record, store the pending destination
+    R->>G: model step: only Billing's entry agent is enabled
+    G-->>R: handoff to Billing's entry agent
+    R->>R: check, record, clear the pending destination
+    R->>E: model step with the whole history
+    E-->>R: answer
+```
 
 ## Voice endpoint
 
@@ -207,20 +327,18 @@ bounds and the audio format `pcm16le`, 24 kHz, mono) and starts sending `audio.c
 
 | Direction | Messages |
 |-----------|----------|
-| Client to server (text frames, each with `sequence` and `sessionId`) | `input.mute`, `output.interrupt`, `audio.played`, `ping`, `pong`, `stop` |
+| Client to server (text frames, each with `sequence` and `sessionId`) | `audio.played`, `ping`, `pong`, `stop` |
 | Client to server (binary frames) | 9-byte header (version, generation, sequence) plus up to 1,920 bytes of PCM |
-| Server to client (text frames) | `ready`, `audio.credit`, `transcript.delta`, `generation.changed`, `agent.changed`, `progress`, `command.ack`, `ping`, `pong`, `error`, `ended` |
+| Server to client (text frames) | `ready`, `audio.credit`, `transcript.delta`, `agent.changed`, `history.condensed`, `progress`, `command.ack`, `ping`, `pong`, `error`, `ended` |
 | Server to client (binary frames) | the same 9-byte header plus up to 960 bytes of PCM |
 
-Each output segment has a generation. Retiring a segment sends `generation.changed`; an agent
-change sends `agent.changed` with the new segment's generation before any credit, audio or
-transcript of that generation. No `audio.credit` is sent while a new segment starts. Capture
-frames, `audio.played` and `output.interrupt` of an older generation that were still on the wire
-are dropped or ignored (an interrupt is still acknowledged); a newer generation than the
-server's is refused as `stale_generation`. The management relay applies the same rule. Control
-messages keep working during an agent change: `pong` and `command.ack` carry the client's current
-generation, and a mute or interrupt sent while the new segment starts is acknowledged without
-touching the retiring segment.
+A call has one GPT-Live session from `ready` to `ended`. An agent change keeps it and its
+generation: the runtime sends `agent.changed` with the current generation, and nothing on the
+audio path resets. Capture frames and `audio.played` of an older generation that were still on
+the wire are dropped; a newer generation than the server's is refused as `stale_generation`.
+The management relay applies the same rule. The browser's "Mute input" stops sending capture and
+"Mute output" silences playback locally; neither sends a message. There is no interrupt message:
+the caller interrupts the voice assistant by speaking.
 
 Text submission is not part of the voice protocol. Any failure sends one `error` message
 (`{"type": "error", "code": "...", "reason": "..."}`) and closes with the matching 4xxx code. A
@@ -240,15 +358,25 @@ working agents get those (see [configuration guide](configuration-guide.md#setti
   `delegation_id: null`, in parts of at most 500 bytes. If no text arrives within 5 seconds the
   request is cancelled and nothing is spoken late; `session.input` stays empty. If the caller
   speaks or a delegation arrives first, the greeting is skipped.
-- **Context note.** After every `session.started` (session start and every agent change) the
-  runtime sends a quiet `session.thinking.append` with `delegation_id: null`: the active agent as
-  `<name> (<role>)` and `Communities you can route to:` with one `<name>: <description>` line per
-  reachable community (descriptions cut to 160 characters). The note is at most 2,000 bytes, in
-  parts of at most 500 bytes, and ends with `…and N more communities` when it runs over.
-- **Quiet handover.** On each `session.delegation.created` the runtime sends
+- **Delegation scope.** The speaking model only decides whether to delegate. It is told what the
+  backend can do: one line per community it may delegate for (the routing description, or the
+  name when it is empty, cut to 160 characters). With `CALLER_VOICE_DELEGATION_UPDATES=false`
+  (the default) this list (at most 4 KiB, headed `Delegation scope for this call:`) follows the
+  voice instructions in `session.start`, within the 16 KiB the start allows. With `true`, a
+  `Delegation update. This replaces all earlier delegation updates.` text of at most 2,000 bytes
+  is sent as `session.instructions.append` (parts of at most 500 bytes) right after
+  `session.started` and again after a handover that changes the reachable communities. A list
+  that does not fit ends with `- …and more capabilities`, and the model is told to delegate
+  other requests too. No agent prompt or user content is included.
+- **Quiet update on delegation.** On each `session.delegation.created` the runtime sends
   `Request received; the application is working on it.` as `session.thinking.append` with that
   delegation id, before backend work starts. `conversationSettings.quietHandover: false`
   switches it off; a missing value means on.
+- **Transcription wait.** A delegation can arrive before the caller's transcript has caught up.
+  Before its work starts, the runtime waits up to `CALLER_TRANSCRIPTION_WAIT_SECONDS` (default
+  0.5 s, 0 to 2) for the transcript to reach the delegation's offset. If it does not, the work
+  starts with what is there; the caller's turn is marked `[rest not transcribed]` and the
+  delegation as untranscribed.
 - **Spoken parts.** A spoken reply is sent in parts of at most 500 bytes, each after the
   previous part's `.appended` acknowledgement or 2 seconds. When the caller speaks or a new
   delegation arrives, the parts not yet sent are dropped and summarized in one quiet note (at
@@ -264,17 +392,26 @@ sequenceDiagram
     participant R as Runtime
     participant L as GPT-Live
     participant W as Welcome agent (text model)
+    participant A as Working agents (text model)
     B->>R: authenticate
-    R->>L: session.start (voice instructions, session.input [])
+    R->>L: session.start (voice instructions, delegation scope unless updates are on)
     L-->>R: session.started
-    R->>L: session.thinking.append (context note parts)
+    R->>L: session.instructions.append (delegation update, when updates are on)
     R-->>B: ready
     R->>W: greeting request (5 s)
     W-->>R: greeting text
     R->>L: session.commentary.append (delegation_id null, greeting parts)
     L-->>B: greeting audio (via runtime)
-    L-->>R: session.delegation.created
-    R->>L: session.thinking.append (quiet handover)
+    R-->>B: agent.changed (Welcome hands over to Routing)
+    L-->>R: input transcript, session.delegation.created
+    R->>L: session.thinking.append (quiet update)
+    R->>R: transcription wait (up to 0.5 s)
+    R->>A: Routing step with the shared history
+    A-->>R: handoff to an entry agent
+    R-->>B: agent.changed
+    R->>L: session.instructions.append (when the reachable communities changed)
+    R->>A: entry agent step with the shared history
+    A-->>R: answer
     R->>L: session.commentary.append (progress, reply parts)
 ```
 
@@ -310,15 +447,18 @@ Both endpoints emit the same event names with a `kind` attribute (`text` or `voi
 outcome, fixed reason and bounded measurements only: never content, credentials or provider
 bodies. The history store emits `history.store` with outcome and `store_seconds`. Each model call
 logs `test.usage` with `input_tokens`, `output_tokens` and `reasoning_tokens`, and each work item
-logs `test.latency` with `backend_first_text_seconds` and `work_seconds`.
+logs `test.latency` with `backend_first_text_seconds` and `work_seconds`. Handovers, voice
+delegations and the history size are reported by `test.handover`, `test.delegation`,
+`test.history` and `test.latency` (`handover_seconds`, `transcription_wait_seconds`); see
+[monitoring](runbooks/monitoring.md#handover-delegation-and-history-events).
 
 ## Model settings
 
-Speech delegations and the clarity check of speech fragments ask the text deployment for low
-reasoning effort, because the caller waits in silence; text turns keep the deployment default. A
-speech delegation has 30 seconds of work budget, a text turn 20 seconds for all its model rounds
-(agent changes and progress updates included), and admission 10 seconds. The management relay
-waits at most 35 seconds for a whole text turn.
+Working agents in both modalities, the clarity check of speech fragments, the greeting and
+condensing ask the text deployment for the reasoning effort `CALLER_REASONING_EFFORT` (default
+`low`; `minimal`, `low` or `medium`). A speech delegation has 30 seconds of work budget, a text
+turn 20 seconds for all its model rounds (handovers and progress updates included), and
+admission 10 seconds. The management relay waits at most 35 seconds for a whole text turn.
 
 ## Provider constraints
 

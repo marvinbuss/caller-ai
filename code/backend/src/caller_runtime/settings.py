@@ -37,6 +37,13 @@ DEPLOYMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 DATABASE = re.compile(r"[A-Za-z0-9_-]{1,255}")
 KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 PUBLIC_KEY = re.compile(r"-----BEGIN PUBLIC KEY-----\s+[A-Za-z0-9+/=\s]+-----END PUBLIC KEY-----")
+# Optional tuning defaults, set by the int probes of feature 007 (research R15).
+ReasoningEffort = Literal["minimal", "low", "medium"]
+TRANSCRIPTION_WAIT_SECONDS = 0.5
+REASONING_EFFORT: ReasoningEffort = "low"
+VOICE_DELEGATION_UPDATES = False
+REASONING_EFFORTS: tuple[ReasoningEffort, ...] = ("minimal", "low", "medium")
+SECONDS = re.compile(r"[0-9](\.[0-9]{1,3})?")
 
 
 class StartupError(RuntimeError):
@@ -73,6 +80,41 @@ class LiveSettings:
     workload_audience: str
     workload_role: str
     workload_principal_id: str
+    transcription_wait_seconds: float = TRANSCRIPTION_WAIT_SECONDS
+    reasoning_effort: ReasoningEffort = REASONING_EFFORT
+    voice_delegation_updates: bool = VOICE_DELEGATION_UPDATES
+
+
+def _optional(value: str | None) -> str | None:
+    return None if value is None or not value.strip() else value.strip()
+
+
+def _wait(value: str | None) -> float:
+    text = _optional(value)
+    if text is None:
+        return TRANSCRIPTION_WAIT_SECONDS
+    if SECONDS.fullmatch(text) is None or not 0 <= float(text) <= 2:
+        raise StartupError("settings_invalid")
+    return float(text)
+
+
+def _effort(value: str | None) -> ReasoningEffort:
+    text = _optional(value)
+    if text is None:
+        return REASONING_EFFORT
+    for effort in REASONING_EFFORTS:
+        if text == effort:
+            return effort
+    raise StartupError("settings_invalid")
+
+
+def _switch(value: str | None) -> bool:
+    text = _optional(value)
+    if text is None:
+        return VOICE_DELEGATION_UPDATES
+    if text not in {"true", "false"}:
+        raise StartupError("settings_invalid")
+    return text == "true"
 
 
 def _text(value: str | None) -> str:
@@ -158,6 +200,9 @@ class Settings(BaseSettings):
     workload_audience: str | None = None
     workload_role: str | None = None
     workload_principal_id: str | None = None
+    transcription_wait_seconds: str | None = None
+    reasoning_effort: str | None = None
+    voice_delegation_updates: str | None = None
 
     @model_validator(mode="after")
     def validate_privacy(self) -> Self:
@@ -206,6 +251,9 @@ class Settings(BaseSettings):
             workload_audience=_match(GUID, self.workload_audience),
             workload_role=_match(NAME, self.workload_role),
             workload_principal_id=_match(GUID, self.workload_principal_id),
+            transcription_wait_seconds=_wait(self.transcription_wait_seconds),
+            reasoning_effort=_effort(self.reasoning_effort),
+            voice_delegation_updates=_switch(self.voice_delegation_updates),
         )
 
     def validate_startup(self) -> None:

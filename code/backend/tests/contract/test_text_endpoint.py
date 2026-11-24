@@ -150,13 +150,14 @@ def test_turn_streams_conversation_then_deltas_then_completion(endpoint):
     events = parse_sse(response.text)
     kinds = [kind for kind, _ in events]
     assert kinds[0] == "conversation" and kinds[-1] == "text.completed"
-    assert set(kinds) <= {"conversation", "text.delta", "text.completed"}
+    assert set(kinds) <= {"conversation", "agent.changed", "text.delta", "text.completed"}
     assert events[0][1]["conversationId"]
     assert "".join(data["text"] for kind, data in events if kind == "text.delta") == REPLY
     assert events[-1][1]["text"] == ""
     from caller_runtime.services.modality_defaults import TEXT_PLATFORM_RULES
 
-    expected = TEXT_PLATFORM_RULES + "\n\nSynthetic welcome prompt"
+    # Welcome never runs a request: it hands over to Routing first (FR-030).
+    expected = TEXT_PLATFORM_RULES + "\n\nSynthetic routing prompt"
     assert endpoint.requests[0]["instructions"] == expected
 
 
@@ -182,9 +183,13 @@ def test_new_conversation_is_stored_for_its_owner_only_with_item_expiry(endpoint
     identifier = parse_sse(endpoint.post(1).text)[0][1]["conversationId"]
     record = endpoint.history.records[identifier]
     assert record["id"] == identifier and len(record["ownerKey"]) == 64
-    assert record["ttl"] == 2_592_000
-    assert [turn["role"] for turn in record["turns"]] == ["user", "assistant"]
-    assert record["turns"][0]["content"] == "Synthetic question"
+    assert record["ttl"] == 2_592_000 and record["historyVersion"] == 2
+    assert kinds(record) == ["user_text", "agent_answer"]
+    assert record["entries"][0]["content"] == "Synthetic question"
+
+
+def kinds(record):
+    return [entry["kind"] for entry in record["entries"]]
 
 
 def test_follow_up_continues_from_the_stored_history(endpoint):
@@ -198,8 +203,85 @@ def test_follow_up_continues_from_the_stored_history(endpoint):
     assert "Synthetic first question" in sent and REPLY in sent
     assert "Synthetic second question" in sent
     record = endpoint.history.records[identifier]
-    assert len(endpoint.history.records) == 1 and len(record["turns"]) == 4
+    assert len(endpoint.history.records) == 1 and len(record["entries"]) == 4
     assert record["ttl"] == 2_592_000
+
+
+def test_a_later_request_resumes_with_the_tool_and_handover_entries(endpoint):
+    # Routing (after Welcome's move) hands off to beta's entry, which reports progress.
+    endpoint.controls["wire_actions"] = [
+        ("handover_1", {}),
+        ("report_progress", {"state": "completed", "message": "The order was found."}),
+    ]
+    identifier = parse_sse(endpoint.post(1, text="Synthetic order question").text)[0][1][
+        "conversationId"
+    ]
+    record = endpoint.history.records[identifier]
+    assert kinds(record) == [
+        "user_text",
+        "handover",
+        "tool_call",
+        "tool_result",
+        "progress",
+        "agent_answer",
+    ]
+    assert record["activeAgentId"] == "b-entry" and record["activeCommunityId"] == "beta"
+    second = endpoint.post(2, conversationId=identifier, text="Synthetic follow-up")
+    assert second.status_code == 200
+    # The resumed agent sees the earlier handover, tool call and result (US1 AC4).
+    sent = endpoint.requests[-1]["input"]
+    calls = [item["name"] for item in sent if item.get("type") == "function_call"]
+    outputs = [item["output"] for item in sent if item.get("type") == "function_call_output"]
+    assert calls == ["handover_1", "report_progress"]
+    assert outputs == ["applied", '"reported"']
+    assert "Status (completed): The order was found." in json.dumps(sent)
+    expected = endpoint.requests[-1]["instructions"]
+    assert expected.endswith("Synthetic prompt for b-entry")
+
+
+def test_a_conversation_stored_before_version_2_starts_a_new_one_with_the_greeting(endpoint):
+    old = parse_sse(endpoint.post(1, text="Synthetic old question").text)[0][1]["conversationId"]
+    record = endpoint.history.records[old]
+    for key in ("historyVersion", "entries", "pendingDestination"):
+        record.pop(key)
+    record["turns"] = [{"role": "user", "content": "Synthetic old question"}]
+    before = json.dumps(record, sort_keys=True)
+    endpoint.controls["greeting"] = "Hello and welcome again."
+    response = endpoint.post(2, conversationId=old, text="Synthetic new question")
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    # The stream's first event carries the new conversation id (FR-025).
+    assert events[0][0] == "conversation" and events[0][1]["conversationId"] != old
+    identifier = events[0][1]["conversationId"]
+    texts = [data["text"] for kind, data in events if kind == "text.delta"]
+    assert texts[0] == "Hello and welcome again." and "".join(texts[1:]) == REPLY
+    assert "Synthetic old question" not in json.dumps(endpoint.requests[-1]["input"])
+    assert kinds(endpoint.history.records[identifier]) == [
+        "agent_answer",
+        "user_text",
+        "agent_answer",
+    ]
+    # The old document is left to its expiry.
+    assert json.dumps(endpoint.history.records[old], sort_keys=True) == before
+
+
+def test_a_stored_agent_that_was_removed_restarts_at_welcome_with_all_entries(endpoint):
+    identifier = parse_sse(endpoint.post(1, text="Synthetic earlier fact").text)[0][1][
+        "conversationId"
+    ]
+    endpoint.history.records[identifier]["activeAgentId"] = "a-disabled"
+    endpoint.history.records[identifier]["activeCommunityId"] = "alpha"
+    endpoint.controls["greeting"] = "Unused greeting"
+    response = endpoint.post(2, conversationId=identifier, text="Synthetic next question")
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    # Welcome moves straight to Routing without a new greeting (FR-030), entries kept.
+    assert not endpoint.controls.get("greeting_requests")
+    assert [data["agentId"] for kind, data in events if kind == "agent.changed"] == ["routing"]
+    sent = json.dumps(endpoint.requests[-1]["input"])
+    assert "Synthetic earlier fact" in sent and "Synthetic next question" in sent
+    assert endpoint.requests[-1]["instructions"].endswith("Synthetic routing prompt")
+    assert len(endpoint.history.records[identifier]["entries"]) == 4
 
 
 def test_unknown_expired_and_foreign_ids_fail_identically(endpoint):
@@ -366,15 +448,85 @@ def test_store_failing_after_the_reply_writes_nothing_and_ends_with_an_error_eve
 def test_conversation_beyond_the_context_limit_is_limit_exceeded(endpoint):
     identifier = parse_sse(endpoint.post(1).text)[0][1]["conversationId"]
     record = endpoint.history.records[identifier]
-    record["turns"] = [
-        {"role": "user" if index % 2 == 0 else "assistant", "content": "x" * 65000}
+    record["entries"] = [
+        {"kind": "user_text" if index % 2 == 0 else "agent_answer", "content": "x" * 65000}
         for index in range(4)
     ]
     response = endpoint.post(2, conversationId=identifier, text="y" * 4000)
     assert response.status_code == 413
     assert error_of(response) == {"code": "limit_exceeded", "reason": "conversation_context_limit"}
     assert len(endpoint.requests) == 1
-    assert len(endpoint.history.records[identifier]["turns"]) == 4
+    assert len(endpoint.history.records[identifier]["entries"]) == 4
+
+
+@pytest.fixture
+def small_limits(endpoint, monkeypatch):
+    """The fixture model takes 64 KiB of input, so the condensing thresholds shrink with it."""
+    from caller_runtime.services import condensing
+
+    options = endpoint.runtime.options.model_copy(update={"max_input_tokens": 65536})
+    monkeypatch.setattr(endpoint.runtime, "options", options)
+    monkeypatch.setattr(condensing, "CONDENSE_ABOVE", 48 * 1024)
+    monkeypatch.setattr(condensing, "CONDENSE_BELOW", 32 * 1024)
+
+
+def grown(endpoint, identifier, turns):
+    endpoint.history.records[identifier]["entries"] = [
+        {"kind": kind, "content": f"{label} {turn} " + "x" * 4000}
+        for turn in range(turns)
+        for kind, label in (("user_text", "Request"), ("agent_answer", "Answer"))
+    ]
+
+
+def test_history_condensed_comes_before_the_answer_and_is_stored(endpoint, small_limits):
+    # Feature 007, R11 and FR-016: older parts are condensed with a visible event.
+    identifier = parse_sse(endpoint.post(1).text)[0][1]["conversationId"]
+    grown(endpoint, identifier, 8)
+    response = endpoint.post(2, conversationId=identifier, text="And the next question?")
+    events = parse_sse(response.text)
+    kinds = [kind for kind, _ in events]
+    assert kinds.index("history.condensed") < kinds.index("text.delta")
+    assert events[kinds.index("history.condensed")][1] == {}
+    assert kinds[-1] == "text.completed"
+    (condense,) = endpoint.controls["condense_requests"]
+    assert "Request 0 " in json.dumps(condense["input"]) and not condense.get("tools")
+    record = endpoint.history.records[identifier]
+    assert record["entries"][0]["kind"] == "condensed"
+    assert record["entries"][0]["content"] == "Synthetic condensed account"
+    assert "Request 0 " not in json.dumps(record)
+    assert record["entries"][-1]["kind"] == "agent_answer"
+
+
+def test_when_condensing_fails_the_conversation_ends_with_the_limit(endpoint, small_limits):
+    identifier = parse_sse(endpoint.post(1).text)[0][1]["conversationId"]
+    grown(endpoint, identifier, 8)
+    before = json.dumps(endpoint.history.records[identifier], sort_keys=True)
+    endpoint.controls["condense_status"] = 400
+    response = endpoint.post(2, conversationId=identifier, text="And the next question?")
+    events = parse_sse(response.text)
+    assert events[-1] == (
+        "error",
+        {"code": "limit_exceeded", "reason": "conversation_context_limit"},
+    )
+    assert "text.delta" not in [kind for kind, _ in events]
+    assert json.dumps(endpoint.history.records[identifier], sort_keys=True) == before
+
+
+def test_a_document_over_its_limit_is_condensed_before_it_is_saved(
+    endpoint, small_limits, monkeypatch
+):
+    from caller_runtime.services import text_conversation
+
+    identifier = parse_sse(endpoint.post(1).text)[0][1]["conversationId"]
+    grown(endpoint, identifier, 4)
+    # Below the condensing threshold for the model, but above the document limit.
+    monkeypatch.setattr(text_conversation, "MAX_DOCUMENT_BYTES", 30 * 1024)
+    response = endpoint.post(2, conversationId=identifier, text="And the next question?")
+    kinds = [kind for kind, _ in parse_sse(response.text)]
+    assert kinds.index("text.completed") < kinds.index("history.condensed")
+    record = endpoint.history.records[identifier]
+    assert record["entries"][0]["kind"] == "condensed"
+    assert len(json.dumps(record).encode("utf-8")) < 32 * 1024
 
 
 def test_update_conflict_is_capacity_unavailable_and_keeps_the_stored_conversation(endpoint):
@@ -412,7 +564,14 @@ def test_open_request_streams_the_welcome_greeting_and_stores_it_first(endpoint)
     response = open_conversation(endpoint, 1)
     assert response.status_code == 200
     events = parse_sse(response.text)
-    assert [kind for kind, _ in events] == ["conversation", "text.delta", "text.completed"]
+    # The greeting, then Welcome hands over to Routing without a conversation row (FR-030).
+    assert [kind for kind, _ in events] == [
+        "conversation",
+        "text.delta",
+        "text.completed",
+        "agent.changed",
+    ]
+    assert events[3][1]["agentId"] == "routing"
     identifier = events[0][1]["conversationId"]
     assert events[1][1]["text"] == greeting and events[1][1]["messageId"]
     assert events[2][1] == {"messageId": events[1][1]["messageId"], "text": ""}
@@ -420,7 +579,11 @@ def test_open_request_streams_the_welcome_greeting_and_stores_it_first(endpoint)
     assert len(asked) == 1 and asked[0]["input"] == TEXT_GREETING_INPUT
     assert not endpoint.requests
     record = endpoint.history.records[identifier]
-    assert record["turns"] == [{"role": "assistant", "content": greeting}]
+    # The greeting is the first entry, an answer of the Welcome agent (FR-002).
+    assert [(e["kind"], e["content"], e["agentId"]) for e in record["entries"]] == [
+        ("agent_answer", greeting, "welcome")
+    ]
+    assert record["activeAgentId"] == "routing"
     events = greeting_events(endpoint)
     assert [(e["outcome"], e["reason_code"], e["kind"]) for e in events] == [
         ("success", "ready", "text")
@@ -431,10 +594,10 @@ def test_open_request_streams_the_welcome_greeting_and_stores_it_first(endpoint)
     assert follow_up.status_code == 200
     sent = endpoint.requests[0]["input"]
     assert sent[0]["role"] == "assistant" and greeting in json.dumps(sent[0])
-    assert [turn["role"] for turn in endpoint.history.records[identifier]["turns"]] == [
-        "assistant",
-        "user",
-        "assistant",
+    assert kinds(endpoint.history.records[identifier]) == [
+        "agent_answer",
+        "user_text",
+        "agent_answer",
     ]
 
 
@@ -445,12 +608,18 @@ def test_slow_greeting_falls_back_to_the_fixed_greeting(endpoint, monkeypatch):
     endpoint.controls["greeting"], endpoint.controls["greeting_block"] = "Too late", True
     response = open_conversation(endpoint, 1)
     events = parse_sse(response.text)
-    assert [kind for kind, _ in events] == ["conversation", "text.delta", "text.completed"]
+    assert [kind for kind, _ in events] == [
+        "conversation",
+        "text.delta",
+        "text.completed",
+        "agent.changed",
+    ]
     assert events[1][1]["text"] == "Hello and welcome! How can I help you today?"
     identifier = events[0][1]["conversationId"]
-    assert endpoint.history.records[identifier]["turns"] == [
-        {"role": "assistant", "content": "Hello and welcome! How can I help you today?"}
-    ]
+    assert [
+        (entry["kind"], entry["content"])
+        for entry in endpoint.history.records[identifier]["entries"]
+    ] == [("agent_answer", "Hello and welcome! How can I help you today?")]
     assert [(e["outcome"], e["reason_code"]) for e in greeting_events(endpoint)] == [
         ("success", "fallback")
     ]
@@ -478,4 +647,4 @@ def test_a_conversation_id_without_text_is_invalid(endpoint):
     response = open_conversation(endpoint, 2, conversationId=identifier)
     assert response.status_code == 400
     assert error_of(response)["code"] == "invalid_request"
-    assert len(endpoint.history.records[identifier]["turns"]) == 2
+    assert len(endpoint.history.records[identifier]["entries"]) == 2

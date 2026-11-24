@@ -145,6 +145,25 @@ class GptLiveProtocol:
             event["event_id"] = event_id
         return event
 
+    def instructions_event(self, content: str, *, event_id: str) -> dict[str, Any]:
+        """A delegation update (feature 007): application text that extends the instructions."""
+        if (
+            self.provider_session_id is None
+            or self.closed
+            or not isinstance(content, str)
+            or not content.strip()
+            or len(content.encode("utf-8")) > 500
+            or not isinstance(event_id, str)
+            or not IDENTIFIER.fullmatch(event_id)
+        ):
+            raise ValueError("invalid_live_instructions")
+        return {
+            "type": "session.instructions.append",
+            "delegation_id": None,
+            "content": content,
+            "event_id": event_id,
+        }
+
     def accept(self, raw: str | bytes) -> dict[str, Any]:
         try:
             if not isinstance(raw, (str, bytes)):
@@ -280,9 +299,6 @@ class GptLiveProtocol:
                         raise ValueError("invalid_live_close_reason")
                     self.closed = True
                     event["provider_session_id"] = self.provider_session_id
-                return event
-            if kind in {"session.input_audio.muted", "session.input_audio.unmuted"}:
-                keys(event, {"type"})
                 return event
             if kind in {
                 "session.instructions.appended",
@@ -530,7 +546,6 @@ class GptLiveSession:
         self._disposed = False
         self._transport_disposed = False
         self._retired = False
-        self._muted = False
         # Context appends waiting for their `.appended` event, keyed by client event id.
         self._acks: dict[str, asyncio.Event] = {}
 
@@ -559,7 +574,11 @@ class GptLiveSession:
                     raise PermissionError("live_closure_unverified")
                 return {"type": "session.closed"}
             event = self.protocol.accept(await self._socket.recv())
-            if event["type"] in {"session.thinking.appended", "session.commentary.appended"}:
+            if event["type"] in {
+                "session.instructions.appended",
+                "session.thinking.appended",
+                "session.commentary.appended",
+            }:
                 waiter = self._acks.get(str(event.get("client_event_id", "")))
                 if waiter is not None:
                     waiter.set()
@@ -618,8 +637,6 @@ class GptLiveSession:
 
     async def send_audio(self, pcm: bytes) -> None:
         try:
-            if self._muted:
-                raise PermissionError("input_muted")
             event = self.protocol.audio_event(pcm)
             await self.adapter.admission.check_media(
                 self.intent.session_id, self.intent.owner_epoch, generation=self.intent.generation
@@ -632,20 +649,6 @@ class GptLiveSession:
                 self.adapter._telemetry.event(
                     "test.session", "failure", mode="speech", reason="unavailable"
                 )
-            raise PermissionError("live_unavailable") from None
-
-    async def set_muted(self, muted: bool) -> None:
-        if type(muted) is not bool:
-            raise PermissionError("invalid_mute_state")
-        try:
-            await self.adapter.admission.check_media(
-                self.intent.session_id, self.intent.owner_epoch, generation=self.intent.generation
-            )
-            self._muted = muted
-            await self._send(
-                {"type": "session.input_audio.mute" if muted else "session.input_audio.unmute"}
-            )
-        except Exception:
             raise PermissionError("live_unavailable") from None
 
     async def append_context(
@@ -674,6 +677,25 @@ class GptLiveSession:
         except Exception:
             if event_id is not None:
                 self._acks.pop(event_id, None)
+            raise PermissionError("live_context_unavailable") from None
+
+    async def append_instructions(self, content: str, *, work: WorkBudget | None = None) -> str:
+        """Send one part of a delegation update; returns the id its acknowledgement carries."""
+        event_id = "update_" + uuid4().hex
+        try:
+            if work is not None:
+                work.require(utc(self.adapter.utc_now()))
+            event = self.protocol.instructions_event(content, event_id=event_id)
+            await self.adapter.admission.check_output(
+                self.intent.session_id, self.intent.owner_epoch, generation=self.intent.generation
+            )
+            if len(self._acks) >= 16:
+                raise PermissionError("live_context_busy")
+            self._acks[event_id] = asyncio.Event()
+            await self._send(event)
+            return event_id
+        except Exception:
+            self._acks.pop(event_id, None)
             raise PermissionError("live_context_unavailable") from None
 
     async def acknowledged(self, event_id: str, *, within: float = 2.0) -> bool:

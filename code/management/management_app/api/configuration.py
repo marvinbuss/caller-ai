@@ -24,7 +24,12 @@ from management_app.adapters.configuration_repository import (
     verified_revision,
 )
 from management_app.api.problems import problem_response
-from management_app.models.configuration import AGENT_ADDITIONS, MODALITY_SETTINGS
+from management_app.models.configuration import (
+    AGENT_ADDITIONS,
+    AGENT_HANDOVER_FIELDS,
+    HANDOVER_SETTINGS,
+    MODALITY_SETTINGS,
+)
 from management_app.observability import sanitize_correlation_id
 from management_app.services.audit import AuditRecord
 from management_app.services.configuration_validation import SNAPSHOT_LIMIT, encoded
@@ -133,13 +138,13 @@ def revision_response(
     revision = verified_revision(snapshot)
     if not editor:
         revision.pop("publication", None)
-        # Tester-only users never receive the modality texts (FR-036).
+        # Tester-only users never receive the modality texts (FR-036) or the 2.3.0 fields.
         settings = revision.get("conversationSettings")
         if isinstance(settings, dict):
-            for key in MODALITY_SETTINGS:
+            for key in MODALITY_SETTINGS + HANDOVER_SETTINGS:
                 settings.pop(key, None)
         for agent in revision.get("agents", []):
-            for key in AGENT_ADDITIONS:
+            for key in AGENT_ADDITIONS + AGENT_HANDOVER_FIELDS:
                 agent.pop(key, None)
     # Advisory only: an unreachable community never blocks publication.
     revision["warnings"] = [

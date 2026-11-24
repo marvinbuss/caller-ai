@@ -15,6 +15,14 @@ locals {
   model_account_name = var.app_environment.model.account_name
   text_endpoint      = "https://${local.model_account_name}.openai.azure.com"
   live_endpoint      = "https://${local.model_account_name}.services.ai.azure.com"
+
+  # An empty tuning value means unset: the runtime then keeps its own default.
+  tuning = var.app_environment.application.tuning
+  runtime_tuning = {
+    transcription_wait_seconds = local.tuning.transcription_wait_seconds == null ? "" : tostring(local.tuning.transcription_wait_seconds)
+    reasoning_effort           = local.tuning.reasoning_effort == null ? "" : local.tuning.reasoning_effort
+    voice_delegation_updates   = local.tuning.voice_delegation_updates == null ? "" : tostring(local.tuning.voice_delegation_updates)
+  }
 }
 
 # The network comes only from the bootstrap outputs, so bootstrap can be replaced later (FR-045).

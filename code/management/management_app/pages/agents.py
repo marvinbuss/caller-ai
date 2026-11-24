@@ -48,7 +48,8 @@ def field_control(label: str, control: rx.Component, identifier: Any, path: Any)
 def addition_control(
     agent: ObjectVar[dict[str, Any]], field: str, label: str, prefix: Any
 ) -> rx.Component:
-    """A per-modality addition, appended after the prompt in that modality only (FR-027)."""
+    """A per-agent text with a byte counter: a per-modality addition, appended after the prompt
+    in that modality only (FR-027), or the handover description (feature 007)."""
     identifier = agent["agentId"].to(str) + "-" + field
     return cast(
         rx.Component,
@@ -209,6 +210,9 @@ def agent_row(agent: ObjectVar[dict[str, Any]]) -> rx.Component:
             ),
             addition_control(agent, "voiceAddition", "Voice addition", prefix),
             addition_control(agent, "textAddition", "Text addition", prefix),
+            addition_control(
+                agent, "description", "Description (used to choose handover destinations)", prefix
+            ),
             rx.cond(
                 agent["protected"].to(bool),
                 rx.flex(

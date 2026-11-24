@@ -86,7 +86,7 @@ def live_case(admission_case):
     return service, repository, clock, socket, opened
 
 
-def test_live_pcm_mute_and_delegation_context_use_only_documented_session_events(live_case):
+def test_live_pcm_and_delegation_context_use_only_documented_session_events(live_case):
     import base64
 
     service, repository, clock, socket, opened = live_case
@@ -99,10 +99,8 @@ def test_live_pcm_mute_and_delegation_context_use_only_documented_session_events
             "type": "session.input_audio.append",
             "audio": base64.b64encode(pcm).decode(),
         }
-        await session.set_muted(True)
-        assert (await session.next_event())["type"] == "session.input_audio.muted"
-        await session.set_muted(False)
-        assert (await session.next_event())["type"] == "session.input_audio.unmuted"
+        # The GPT-Live input mute is gone: the browser stops its own capture (T047).
+        assert not hasattr(session, "set_muted")
         await socket.events.put(
             json.dumps(
                 {
@@ -136,10 +134,6 @@ def test_live_context_ack_and_invalid_input_never_mean_task_or_playback_success(
         with pytest.raises(PermissionError):
             await session.append_context("unknown-delegation", "Synthetic facts")
         assert len(socket.sent) == before
-        await session.set_muted(True)
-        await session.next_event()
-        with pytest.raises(PermissionError, match="input_muted"):
-            await session.send_audio(b"\0\0" * 480)
         await socket.events.put(
             json.dumps(
                 {
@@ -189,6 +183,78 @@ def test_live_late_generation_audio_is_fenced_without_relabelling(live_case):
             await session.next_event()
         assert session.intent.generation == 1
         await session.close()
+
+    asyncio.run(scenario())
+
+
+def test_speech_transition_keeps_generation_and_open_live_and_raises_the_agent_epoch(live_case):
+    from caller_runtime.domain.conversation import WorkBudget
+    from caller_runtime.services.admission import AdmissionError
+
+    service, repository, clock, socket, opened = live_case
+
+    async def scenario():
+        slot, session = await opened()
+        slot = await service.check_output(slot.session_id, slot.owner_epoch, generation=1)
+        work = WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10))
+        # The Live attempt is still open: no `live_segment_not_closed` any more (feature 007).
+        moved = await service.transition(
+            slot.session_id,
+            slot.owner_epoch,
+            source_agent_id=slot.active_agent_id,
+            source_agent_epoch=slot.agent_epoch,
+            target_agent_id="routing",
+            target_community_id=None,
+            work=work,
+        )
+        assert moved.generation == slot.generation
+        assert moved.agent_epoch == slot.agent_epoch + 1
+        assert moved.resources["live"].attempted == 1 and moved.resources["live"].settled == 0
+        with pytest.raises(AdmissionError, match="stale_agent_epoch"):
+            await service.transition(
+                slot.session_id,
+                slot.owner_epoch,
+                source_agent_id="routing",
+                source_agent_epoch=slot.agent_epoch,
+                target_agent_id="goodbye",
+                target_community_id=None,
+                work=work,
+            )
+        # Retiring a generation is unchanged for the cases that still need it.
+        retired = await service.retire_generation(
+            slot.session_id, slot.owner_epoch, generation=moved.generation, work=work
+        )
+        assert retired.generation == moved.generation + 1
+        assert retired.agent_epoch == moved.agent_epoch
+        await session.close()
+
+    asyncio.run(scenario())
+
+
+def test_text_transition_still_raises_the_generation(admission_case):
+    from caller_runtime.domain.conversation import WorkBudget
+
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        slot = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        moved = await service.transition(
+            slot.session_id,
+            slot.owner_epoch,
+            source_agent_id=slot.active_agent_id,
+            source_agent_epoch=slot.agent_epoch,
+            target_agent_id="routing",
+            target_community_id=None,
+            work=WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10)),
+        )
+        assert (moved.generation, moved.agent_epoch) == (
+            slot.generation + 1,
+            slot.agent_epoch + 1,
+        )
 
     asyncio.run(scenario())
 

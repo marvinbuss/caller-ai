@@ -38,6 +38,11 @@ locals {
       query     = "ContainerAppConsoleLogs_CL | where Log_s has 'latency_ms' | extend latency = todouble(extract('\"latency_ms\":([0-9.]+)', 1, Log_s)) | where latency > ${var.alerts.latency_ms} | summarize Count = count()"
       threshold = 5
     }
+    # More than 20 % of at least 10 handovers refused (feature 007, FR-019).
+    handover-failures = {
+      query     = "ContainerAppConsoleLogs_CL | where Log_s has 'test.handover' | extend entry = parse_json(Log_s) | where tostring(entry['event']) == 'test.handover' | summarize total = count(), failed = countif(tostring(entry['outcome']) == 'failure') | where total >= 10 and todouble(failed) / total > 0.2 | summarize Count = count()"
+      threshold = 0
+    }
   }
 }
 

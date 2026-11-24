@@ -139,7 +139,13 @@ def test_five_text_conversations_stream_their_greeting_within_five_seconds(endpo
     for response, elapsed in results:
         assert response.status_code == 200
         events = parse_sse(response.text)
-        assert [kind for kind, _ in events] == ["conversation", "text.delta", "text.completed"]
+        # The greeting, then Welcome hands over to Routing as metadata only (FR-030).
+        assert [kind for kind, _ in events] == [
+            "conversation",
+            "text.delta",
+            "text.completed",
+            "agent.changed",
+        ]
         assert events[1][1]["text"] == endpoint.controls["greeting"]
         assert elapsed <= TARGET_SECONDS
     events = greeting_events(endpoint, "text")
@@ -171,7 +177,7 @@ def test_slow_welcome_agent_cancels_every_voice_greeting_and_keeps_sessions_list
                 {"type": "ping", "sequence": 1, "sessionId": ready["sessionId"], "nonce": "alive"}
             )
             while (event := socket.receive_json())["type"] != "pong":
-                assert event["type"] in {"audio.credit", "transcript.delta"}
+                assert event["type"] in {"audio.credit", "transcript.delta", "agent.changed"}
             assert event["nonce"] == "alive"
             socket.send_bytes(struct.pack(">BII", 1, ready["generation"], 1) + b"\x05\0" * 480)
         for socket, ready in sessions:

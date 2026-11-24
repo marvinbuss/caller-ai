@@ -268,7 +268,7 @@ def test_conversation_settings_out_of_bounds_are_refused(cache, runtime_revision
         cache.install(schema_two_one(runtime_revision_v2(), **settings), etag='"bounds"')
 
 
-@pytest.mark.parametrize("version", ["1.0.0", "2.3.0", "3.0.0"])
+@pytest.mark.parametrize("version", ["1.0.0", "2.4.0", "3.0.0"])
 def test_other_schema_versions_are_still_refused(cache, runtime_revision_v2, version):
     document = runtime_revision_v2()
     document["schemaVersion"] = version
@@ -336,6 +336,59 @@ def test_composed_instructions_over_36_kib_are_refused_on_load(cache, runtime_re
         cache.install(rehashed(document), etag='"composed"')
     document["agents"][0]["textAddition"] = "a" * (4 * 1024 - 8)
     assert cache.install(rehashed(document), etag='"composed-fits"')
+
+
+@pytest.mark.parametrize("version", ["2.0.0", "2.1.0", "2.2.0", "2.3.0"])
+def test_schema_2_3_0_loads_and_older_revisions_still_load(cache, runtime_revision_v2, version):
+    document = schema_two_one(runtime_revision_v2(), **RESOLVED_SETTINGS)
+    document["schemaVersion"] = version
+    assert document["relationships"] and document["relationships"][0]["allowedContextFields"]
+    snapshot = cache.install(rehashed(document), etag='"schema-2-3"')
+    assert snapshot.schema_version == version
+    assert snapshot.for_runtime()["relationships"] == document["relationships"]
+
+
+def test_agent_description_and_announce_agent_changes_are_optional(cache, runtime_revision_v2):
+    document = schema_two_one(runtime_revision_v2(), **RESOLVED_SETTINGS)
+    document["schemaVersion"] = "2.3.0"
+    snapshot = cache.install(rehashed(document), etag='"absent"')
+    runtime = snapshot.for_runtime()
+    assert all("description" not in agent for agent in runtime["agents"])
+    assert "announceAgentChanges" not in snapshot.conversation_settings()
+    document = schema_two_one(runtime_revision_v2(2), **RESOLVED_SETTINGS)
+    document["schemaVersion"] = "2.3.0"
+    document["agents"][0]["description"] = "é" * 512
+    document["conversationSettings"]["announceAgentChanges"] = True
+    snapshot = cache.install(rehashed(document), etag='"present"')
+    assert snapshot.for_runtime()["agents"][0]["description"] == "é" * 512
+    assert snapshot.conversation_settings()["announceAgentChanges"] is True
+
+
+@pytest.mark.parametrize(
+    ("place", "value"),
+    [("description", "x" * 1025), ("description", 1), ("announceAgentChanges", "true")],
+)
+def test_agent_description_above_1_kib_or_wrong_types_are_refused(
+    cache, runtime_revision_v2, place, value
+):
+    document = schema_two_one(runtime_revision_v2(), **RESOLVED_SETTINGS)
+    document["schemaVersion"] = "2.3.0"
+    if place == "description":
+        document["agents"][0]["description"] = value
+    else:
+        document["conversationSettings"][place] = value
+    with pytest.raises(ValueError, match="invalid_configuration_snapshot"):
+        cache.install(rehashed(document), etag='"refused"')
+
+
+def test_agent_description_above_1_kib_names_configuration_text_too_large(runtime_revision_v2):
+    from pydantic import ValidationError
+
+    from caller_runtime.domain.configuration import _Agent
+
+    agent = runtime_revision_v2()["agents"][0] | {"description": "x" * 1025}
+    with pytest.raises(ValidationError, match="configuration_text_too_large"):
+        _Agent.model_validate(agent)
 
 
 def test_conversation_setup_clock_advances_utc_and_monotonic_without_sleep(conversation_clock):

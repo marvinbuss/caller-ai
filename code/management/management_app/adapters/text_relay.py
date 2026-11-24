@@ -303,6 +303,11 @@ class TextRelay:
                             }:
                                 raise PermissionError("invalid_test_control")
                             await send(kind, **data)
+                        elif kind == "history.condensed":
+                            # Older parts were condensed before this answer (feature 007).
+                            if data != {}:
+                                raise PermissionError("invalid_test_control")
+                            await send(kind)
                         elif kind == "progress":
                             if (
                                 not isinstance(data, dict)

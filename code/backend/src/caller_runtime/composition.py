@@ -13,7 +13,6 @@ import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime
-from functools import partial
 from typing import Final, Literal, Self
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -56,12 +55,15 @@ from caller_runtime.services import modality_defaults
 from caller_runtime.services.admission import AdmissionError, TestAdmissionService
 from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
 from caller_runtime.services.conversation import ConversationExecutor
-from caller_runtime.services.conversation_policy import (
-    ConversationPolicy,
-    SpeechSegments,
-    context_note,
-)
+from caller_runtime.services.conversation_policy import ConversationPolicy, SpeechSegments
+from caller_runtime.services.delegation_update import static_delegation_block
 from caller_runtime.services.text_conversation import TextConversationService
+from caller_runtime.settings import (
+    REASONING_EFFORT,
+    TRANSCRIPTION_WAIT_SECONDS,
+    VOICE_DELEGATION_UPDATES,
+    ReasoningEffort,
+)
 
 AUTHORITY_CONTAINER: Final = "call-sessions"
 HISTORY_PROBE_SECONDS: Final = 10
@@ -74,17 +76,22 @@ LIVE_DELEGATION_SUFFIX: Final = (
 )
 
 
-def live_instructions(snapshot: RevisionSnapshot) -> str:
-    """GPT-Live instructions: the voice conversation instructions and the delegation suffix.
+def live_instructions(snapshot: RevisionSnapshot, *, delegation_updates: bool = False) -> str:
+    """GPT-Live instructions: the voice conversation instructions and the delegation suffix,
+    plus the static delegation block when delegation updates are off (feature 007, R5).
 
-    The speaking model never gets an agent prompt, layer or addition; the active agent reaches
-    it only through the context note. A slice 1 projection has no `voiceInstructions`, so the
-    shipped text stands in (FR-014, FR-037).
+    The speaking model never gets an agent prompt, layer or addition. A slice 1 projection has no
+    `voiceInstructions`, so the shipped text stands in (FR-014, FR-037). The total stays within
+    the 16 KiB the start event allows.
     """
     voice = snapshot.conversation_settings().get(
         "voiceInstructions", modality_defaults.VOICE_INSTRUCTIONS
     )
-    return str(voice) + LIVE_DELEGATION_SUFFIX
+    instructions = str(voice) + LIVE_DELEGATION_SUFFIX
+    if delegation_updates:
+        return instructions
+    room = 16 * 1024 - len(instructions.encode("utf-8")) - 2
+    return instructions + "\n\n" + static_delegation_block(snapshot, limit=room)
 
 
 class RuntimeOptions(Metadata):
@@ -119,6 +126,11 @@ class RuntimeOptions(Metadata):
     speech_work_seconds: int = Field(
         default=SPEECH_WORK_SECONDS, ge=WORK_SECONDS, le=MAX_WORK_SECONDS
     )
+    transcription_wait_seconds: float = Field(
+        default=TRANSCRIPTION_WAIT_SECONDS, ge=0, le=2, allow_inf_nan=False
+    )
+    reasoning_effort: ReasoningEffort = REASONING_EFFORT
+    voice_delegation_updates: bool = VOICE_DELEGATION_UPDATES
 
     @model_validator(mode="after")
     def reviewed_bindings(self) -> Self:
@@ -441,6 +453,7 @@ class ConversationRuntime:
                     settlement_observer=observations,
                     telemetry=telemetry,
                     call_observer=lambda ok: self.status.record_call("text", ok),
+                    reasoning_effort=self.options.reasoning_effort,
                 )
                 capabilities = ConversationCapabilityClient(
                     endpoint=self.options.management_endpoint,
@@ -461,6 +474,9 @@ class ConversationRuntime:
                     cleanup_observations=observations,
                     telemetry=telemetry,
                     speech_work_seconds=self.options.speech_work_seconds,
+                    reasoning_effort=self.options.reasoning_effort,
+                    transcription_wait_seconds=self.options.transcription_wait_seconds,
+                    delegation_updates=self.options.voice_delegation_updates,
                 )
                 self._sessions[slot.session_id] = controller
                 if slot.mode == "speech":
@@ -479,27 +495,18 @@ class ConversationRuntime:
                         call_observer=lambda ok: self.status.record_call("voice", ok),
                     )
 
-                    def instructions(current: TestSlot) -> str:
-                        return live_instructions(snapshot)
-
-                    segment = await live.start(slot, instructions=instructions(slot))
-                    segments = SpeechSegments(
-                        current=segment,
-                        instructions_for=instructions,
-                        emit=emit,
-                        context_for=partial(context_note, snapshot),
+                    segment = await live.start(
+                        slot,
+                        instructions=live_instructions(
+                            snapshot, delegation_updates=self.options.voice_delegation_updates
+                        ),
                     )
-                    controller.speech_segments = segments
-                    policy._retire_speech, policy._continue_speech = (
-                        segments.retire,
-                        segments.continue_with,
-                    )
+                    controller.speech_segments = SpeechSegments(current=segment)
                 policy.slot = await admission.mark_ready(slot.session_id, slot.owner_epoch)
                 if controller.speech_segments is not None:
-                    # Output checks need a ready slot, so the first note follows `mark_ready`.
-                    await controller.speech_segments.send_context(
-                        controller.speech_segments.current, policy.slot
-                    )
+                    # Output checks need a ready slot, so the first update follows `mark_ready`
+                    # and comes before the greeting text, so it cannot cut the greeting (R5).
+                    await controller.send_delegation_update()
                 telemetry.event("test.admission", "success", mode=slot.mode, reason="ready")
                 return controller
         except BaseException as error:

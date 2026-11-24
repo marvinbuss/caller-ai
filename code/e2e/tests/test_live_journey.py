@@ -435,11 +435,17 @@ def test_a_tester_gets_a_model_reply_through_both_apps_and_one_correlation_id(
     greeting_requests = [request for request in world.model_requests if not request.get("stream")]
     work_requests = [request for request in world.model_requests if request.get("stream")]
     assert len(greeting_requests) == 1 and len(work_requests) == 1
-    assert PUBLISHED_PROMPT in json.dumps(work_requests[0]["instructions"])
+    # The published Welcome prompt writes the greeting; Welcome then hands over to Routing,
+    # which answers the request (feature 007, FR-030).
+    assert PUBLISHED_PROMPT in json.dumps(greeting_requests[0]["instructions"])
+    assert PUBLISHED_PROMPT not in json.dumps(work_requests[0]["instructions"])
     stored = world.runtime_stores["text-conversations"].records
-    assert len(stored) == 1 and [t["role"] for t in next(iter(stored.values()))["turns"]] == [
-        "assistant",
-        "user",
-        "assistant",
+    assert len(stored) == 1
+    conversation = next(iter(stored.values()))
+    assert conversation["historyVersion"] == 2
+    assert [entry["kind"] for entry in conversation["entries"]] == [
+        "agent_answer",
+        "user_text",
+        "agent_answer",
     ]
     assert "synthetic-sign-in-credential" not in json.dumps(world.audit.records)

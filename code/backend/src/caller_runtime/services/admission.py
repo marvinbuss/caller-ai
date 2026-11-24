@@ -484,20 +484,17 @@ class TestAdmissionService:
             self._business(slot, now, work)
             if slot.active_agent_id != source_agent_id or slot.agent_epoch != source_agent_epoch:
                 raise AdmissionError("stale_agent_epoch")
-            if (
-                slot.mode == "speech"
-                and slot.resources["live"].attempted != slot.resources["live"].settled
-            ):
-                # The old Live socket must be confirmed closed before a new generation may start.
-                raise AdmissionError("live_segment_not_closed")
-            if slot.generation >= 2**32 - 1:
+            # Speech keeps one Live session and one generation for the whole test (feature 007);
+            # the agent epoch alone fences work of the agent before the change.
+            speech = slot.mode == "speech"
+            if not speech and slot.generation >= 2**32 - 1:
                 raise AdmissionError("generation_exhausted")
             document = slot.model_dump(mode="json", by_alias=True)
             document.update(
                 activeAgentId=target_agent_id,
                 activeCommunityId=target_community_id,
                 agentEpoch=slot.agent_epoch + 1,
-                generation=slot.generation + 1,
+                generation=slot.generation if speech else slot.generation + 1,
             )
             return TestSlot.model_validate_json(encoded(document))
 

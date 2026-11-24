@@ -106,6 +106,28 @@ def test_client_delegation_is_metadata_only_and_append_keeps_exact_id(protocol):
         protocol.context_event("item-fixture", "\u00e9" * 251)
 
 
+def test_instructions_append_carries_no_delegation_and_at_most_500_bytes(protocol):
+    with pytest.raises(ValueError):
+        protocol.instructions_event("Delegation update.", event_id="update_1")
+    protocol.accept(json.dumps(started(protocol)))
+    assert protocol.instructions_event("Delegation update.", event_id="update_1") == {
+        "type": "session.instructions.append",
+        "delegation_id": None,
+        "content": "Delegation update.",
+        "event_id": "update_1",
+    }
+    assert len(protocol.instructions_event("\u00e9" * 250, event_id="update_2")["content"]) == 250
+    for content, event_id in (("\u00e9" * 251, "update_3"), (" ", "update_4"), ("x", "bad id")):
+        with pytest.raises(ValueError):
+            protocol.instructions_event(content, event_id=event_id)
+    acknowledged = protocol.accept(
+        json.dumps({"type": "session.instructions.appended", "client_event_id": "update_1"})
+    )
+    assert acknowledged["client_event_id"] == "update_1"
+    # The start event still sends no conversation input (`session.input` stays `[]`).
+    assert "input" not in protocol.start_event()["session"]
+
+
 @pytest.mark.parametrize(
     "event",
     [

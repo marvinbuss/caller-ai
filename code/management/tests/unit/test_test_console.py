@@ -545,11 +545,7 @@ def test_relay_binary_credit_and_played_accounting_is_generation_bound_and_conte
     assert not frames.from_browser(struct.pack(">BII", 1, 1, 7) + b"\0" * 960)
     late = json.loads(played) | {"sequence": 2, "audioSequence": 30}
     assert frames.from_browser(json.dumps(late)) and frames.played_sequence == 0
-    interrupt = {"type": "output.interrupt", "sessionId": "runtime-fixture", "sequence": 3}
-    assert frames.from_browser(json.dumps(interrupt | {"generation": 1}))
     assert not frames._output_blocked
-    with pytest.raises(PermissionError, match="stale_generation"):
-        frames.from_browser(json.dumps(interrupt | {"sequence": 4, "generation": 3}))
     # A speech handover announces its own, newer generation with the agent change.
     agent = {
         "type": "agent.changed",
@@ -560,6 +556,59 @@ def test_relay_binary_credit_and_played_accounting_is_generation_bound_and_conte
         "communityId": None,
     }
     assert frames.from_runtime(json.dumps(agent)) and frames.generation == 3
+    frames.clear()
+
+
+def test_relay_same_generation_agent_change_resets_no_audio_state():
+    import struct
+
+    from management_app.adapters.test_session_client import RelayFrames
+
+    frames = RelayFrames(mode="speech", session_id="runtime-fixture", generation=1)
+    frames.from_runtime(
+        json.dumps(
+            {
+                "type": "audio.credit",
+                "sessionId": "runtime-fixture",
+                "sequence": 2,
+                "generation": 1,
+                "availableSamples": 6000,
+                "acceptedAudioSequence": 0,
+            }
+        )
+    )
+    assert frames.from_browser(struct.pack(">BII", 1, 1, 1) + b"\0" * 1920)
+    for sequence in range(1, 4):
+        assert frames.from_runtime(struct.pack(">BII", 1, 1, sequence) + b"\0" * 960)
+    before = (frames.capture_bytes, frames.playback_bytes, frames.output_sequence)
+    agent = {
+        "type": "agent.changed",
+        "sessionId": "runtime-fixture",
+        "sequence": 3,
+        "generation": 1,
+        "agentId": "agent-billing",
+        "communityId": "community-billing",
+    }
+    # One Live session per test (feature 007): the agent changes, the audio state does not.
+    assert frames.from_runtime(json.dumps(agent))
+    assert frames.generation == 1
+    assert (frames.capture_bytes, frames.playback_bytes, frames.output_sequence) == before
+    assert frames.from_runtime(struct.pack(">BII", 1, 1, 4) + b"\0" * 960)
+    # A runtime from before the feature that still sends `generation.changed` with a higher
+    # generation still resets as before (rollout); a lower generation is still refused.
+    changed = {
+        "type": "generation.changed",
+        "sessionId": "runtime-fixture",
+        "sequence": 4,
+        "generation": 2,
+        "reason": "agent_changed",
+    }
+    assert frames.from_runtime(json.dumps(changed)) and frames.generation == 2
+    assert frames.playback_bytes == 0
+    with pytest.raises(PermissionError, match="invalid_test_generation"):
+        frames.from_runtime(json.dumps(changed | {"sequence": 5}))
+    with pytest.raises(PermissionError, match="invalid_test_generation"):
+        frames.from_runtime(json.dumps(agent | {"sequence": 6, "generation": 1}))
     frames.clear()
 
 
@@ -721,7 +770,14 @@ def test_relay_speech_binary_uses_same_bounded_writers_and_played_ack():
     )
 
 
-def test_relay_control_mute_and_interrupt_fence_old_audio_without_inventing_task_success():
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"type": "input.mute", "muted": True},
+        {"type": "output.interrupt", "generation": 1},
+    ],
+)
+def test_relay_refuses_the_removed_mute_and_interrupt_messages(message):
     import struct
 
     from management_app.adapters.test_session_client import RelayFrames
@@ -739,36 +795,11 @@ def test_relay_control_mute_and_interrupt_fence_old_audio_without_inventing_task
             }
         )
     )
-    muted = json.dumps(
-        {"type": "input.mute", "sessionId": "runtime-fixture", "sequence": 1, "muted": True}
-    )
-    assert frames.from_browser(muted)
-    with pytest.raises(PermissionError, match="test_input_muted"):
-        frames.from_browser(struct.pack(">BII", 1, 1, 1) + b"\0" * 960)
-    assert frames.from_browser(
-        json.dumps(
-            {"type": "input.mute", "sessionId": "runtime-fixture", "sequence": 2, "muted": False}
-        )
-    )
+    # Mute input and Mute output act only in the browser and send nothing (feature 007).
+    with pytest.raises(PermissionError, match="invalid_test_control"):
+        frames.from_browser(json.dumps(message | {"sessionId": "runtime-fixture", "sequence": 1}))
     assert frames.from_browser(struct.pack(">BII", 1, 1, 1) + b"\0" * 960)
-    interrupt = json.dumps(
-        {"type": "output.interrupt", "sessionId": "runtime-fixture", "sequence": 3, "generation": 1}
-    )
-    assert frames.from_browser(interrupt)
-    assert not frames.from_runtime(struct.pack(">BII", 1, 1, 1) + b"\0" * 960)
-    assert frames.from_runtime(
-        json.dumps(
-            {
-                "type": "generation.changed",
-                "sessionId": "runtime-fixture",
-                "sequence": 3,
-                "generation": 2,
-                "reason": "segment_retired",
-            }
-        )
-    )
-    assert frames.from_browser(interrupt)
-    assert frames.from_runtime(struct.pack(">BII", 1, 2, 1) + b"\0" * 960)
+    assert frames.from_runtime(struct.pack(">BII", 1, 1, 1) + b"\0" * 960)
     assert frames.playback_bytes == 960
     frames.clear()
 
@@ -814,6 +845,50 @@ def test_voice_relay_forwards_valid_progress_and_refuses_invalid_progress(active
     shown = [value for value in displayed if value["type"] == "progress"]
     if valid:
         assert shown == [progress]
+    else:
+        assert not shown and browser.close.await_args.kwargs["code"] == 1008
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_voice_relay_forwards_history_condensed_without_fields(active_relay_case, valid):
+    # Feature 007, FR-016.
+    client, browser, runtime, permit, credentials, sent, displayed, clock, ticks, envelope = (
+        active_relay_case
+    )
+    recv = runtime.recv
+    notice = {
+        "type": "history.condensed",
+        "sessionId": envelope["sessionId"],
+        "sequence": 2,
+        "generation": 1,
+    } | ({} if valid else {"text": "synthetic-private-summary"})
+
+    async def altered():
+        raw = await recv()
+        return json.dumps(notice) if json.loads(raw)["type"] == "audio.credit" else raw
+
+    runtime.recv = altered
+
+    async def scenario():
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(
+                client.run(
+                    browser,
+                    permit=permit,
+                    signed_permit="synthetic-signed-permit",
+                    validate_current=lambda: SimpleNamespace(
+                        expires_at=permit.auth_expires_at.timestamp()
+                    ),
+                    deadline=asyncio.get_running_loop().time() + 8,
+                ),
+                1,
+            )
+        await client.close()
+
+    asyncio.run(scenario())
+    shown = [value for value in displayed if value["type"] == "history.condensed"]
+    if valid:
+        assert shown == [notice]
     else:
         assert not shown and browser.close.await_args.kwargs["code"] == 1008
 
@@ -1162,6 +1237,116 @@ console.log('status-pass');
     assert result.stdout.strip() == "status-pass", result.stderr
 
 
+@pytest.mark.parametrize("mode", ["text", "speech"])
+def test_browser_agent_change_updates_the_metadata_without_a_conversation_row(mode):
+    # Feature 007, FR-026: handovers are quiet; the Test page shows the agent in its metadata.
+    import shutil
+    import subprocess
+
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    scenario = f"""
+const messages = {{children: [], append(row) {{ this.children.push(row); }},
+    replaceChildren() {{ this.children = []; }}, scrollHeight: 0}};
+const fields = {{agent: {{textContent: ''}}, community: {{textContent: ''}}}};
+const document = {{getElementById: name => name === 'test-messages' ? messages :
+    fields[name.replace('test-', '')] || null,
+    createElement: tag => ({{tag, textContent: '', dataset: {{}}, style: {{}}}})}};
+const window = {{}};
+class WebSocket {{ static OPEN = 1; }}
+const engine = new CallerTestEngine({{begin: () => {{}}, control: () => {{}}}});
+engine.terminal = false; engine.mode = '{mode}'; engine.epoch = 1;
+engine.snapshot = {{status: 'ready', mode: '{mode}', sessionId: 'fixture-session', generation: 1}};
+engine.socket = {{readyState: 1, bufferedAmount: 0, send: () => {{}}, close: () => {{}}}};
+engine.message(JSON.stringify({{type: 'agent.changed', sequence: 2, generation: 1,
+    sessionId: 'fixture-session', agentId: 'agent-billing', communityId: 'community-billing'}}), 1);
+if (messages.children.length !== 0) throw Error('conversation_row_added');
+if (fields.agent.textContent !== 'agent-billing' ||
+    fields.community.textContent !== 'community-billing') throw Error('metadata_missing');
+if (engine.snapshot.agentId !== 'agent-billing') throw Error('snapshot_missing');
+console.log('agent-pass');
+"""
+    result = subprocess.run(
+        [node],
+        input=BUDGET_CODE + ENGINE_CODE + scenario,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.stdout.strip() == "agent-pass", result.stderr
+
+
+@pytest.mark.parametrize("mode", ["text", "speech"])
+def test_browser_history_condensed_adds_one_status_row(mode):
+    # Feature 007, FR-016: a visible notice in both modalities, never spoken.
+    import shutil
+    import subprocess
+
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    node = shutil.which("node")
+    assert node is not None, "prepared_node_required"
+    scenario = f"""
+const messages = {{children: [], append(row) {{ this.children.push(row); }},
+    replaceChildren() {{ this.children = []; }}, scrollHeight: 0}};
+const document = {{getElementById: name => name === 'test-messages' ? messages : null,
+    createElement: tag => ({{tag, textContent: '', dataset: {{}}, style: {{}}}})}};
+class WebSocket {{ static OPEN = 1; }}
+const engine = new CallerTestEngine({{begin: () => {{}}, control: () => {{}}}});
+engine.terminal = false; engine.mode = '{mode}'; engine.epoch = 1;
+engine.snapshot = {{status: 'ready', mode: '{mode}', sessionId: 'fixture-session', generation: 1}};
+const sent = [];
+engine.socket = {{readyState: 1, bufferedAmount: 0, send: value => sent.push(value),
+    close: () => {{}}}};
+engine.message(JSON.stringify({{type: 'history.condensed', sequence: 2, generation: 1,
+    sessionId: 'fixture-session'}}), 1);
+const rows = messages.children;
+if (rows.length !== 1 || rows[0].dataset.kind !== 'status' ||
+    rows[0].textContent !== 'Older parts of this conversation were condensed.')
+    throw Error('notice_missing ' + JSON.stringify(rows));
+if (sent.length) throw Error('notice_sent');
+let refused = false;
+try {{
+    engine.message(JSON.stringify({{type: 'history.condensed', sequence: 3, generation: 1,
+        sessionId: 'fixture-session', text: 'x'}}), 1);
+}} catch {{ refused = true; }}
+if (!refused) throw Error('extra_field_accepted');
+console.log('condensed-pass');
+"""
+    result = subprocess.run(
+        [node],
+        input=BUDGET_CODE + ENGINE_CODE + scenario,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.stdout.strip() == "condensed-pass", result.stderr
+
+
+def test_custom_platform_rules_without_handover_rules_raise_one_notice():
+    from management_app.services.default_prompts import TEXT_PLATFORM_RULES, VOICE_PLATFORM_RULES
+    from management_app.state.test_console import HANDOVER_RULES_NOTICE, handover_rule_notices
+
+    assert HANDOVER_RULES_NOTICE == (
+        "Custom platform rules have no handover rules. Handovers may be less accurate."
+    )
+    # Absent rules are the shipped ones, which carry the handover rules.
+    assert handover_rule_notices({}) == []
+    shipped = {"voicePlatformRules": VOICE_PLATFORM_RULES, "textPlatformRules": TEXT_PLATFORM_RULES}
+    assert handover_rule_notices(shipped) == []
+    assert handover_rule_notices({"textPlatformRules": "Synthetic custom rules"}) == [
+        HANDOVER_RULES_NOTICE
+    ]
+    both = {"voicePlatformRules": "Custom voice", "textPlatformRules": "Custom text"}
+    assert handover_rule_notices(both) == [HANDOVER_RULES_NOTICE]
+    # Empty rules have their own notice.
+    assert handover_rule_notices({"voicePlatformRules": " "}) == []
+
+
 def test_browser_formatted_reply_builds_only_safe_nodes_and_keeps_https_urls():
     import re
     import shutil
@@ -1315,10 +1500,11 @@ def test_console_page_has_accessible_native_controls_and_no_content_state_bindin
         "test-text",
         "test-send",
         "test-mute",
-        "test-interrupt",
+        "test-mute-output",
         "test-messages",
     ):
         assert identifier in tree
+    assert "Mute input" in tree and "Mute output" in tree and "Interrupt" not in tree
     assert "Start published test" in tree and "Stop test" in tree and "Send text" in tree
     assert "update_control" in tree and "test_console_state" in tree
     assert "local_storage" not in tree and "set_text" not in tree
