@@ -416,7 +416,9 @@ def test_console_published_text_uses_owned_runtime_without_microphone(
             print({"owned_runtime_counts": counts, "wire": wire})
             raise
         expect(page.locator("#test-revision")).to_contain_text(current["id"])
-        expect(page.locator("#test-agent")).to_have_text("agent-welcome")
+        # The greeting comes first; Welcome then hands over to Routing (feature 007, FR-030).
+        page.wait_for_function("window.callerTestCompleted === 1", timeout=EXPECT_TIMEOUT_MS)
+        expect(page.locator("#test-agent")).to_have_text("agent-routing")
         page.get_by_label("Message", exact=True).fill("Synthetic published question")
         page.get_by_role("button", name="Send text", exact=True).click()
         expect(page.get_by_role("log", name="Conversation")).to_contain_text(

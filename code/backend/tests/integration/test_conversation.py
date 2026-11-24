@@ -94,19 +94,18 @@ def run_owned_browser_runtime(fixture_path):
                 return httpx2.Response(503, json={"error": {"message": "Synthetic unknown result"}})
             body = json.loads(request.content)
             assert body["store"] is False and not body.get("parallel_tool_calls")
-            # Welcome hands over without a model step (FR-030); Routing hands off to the first
-            # community it offers, and that community's agent answers.
+            # Welcome hands over without a model step (FR-030). The first step after the
+            # user's message (Routing's) hands off to the first community it offers, and that
+            # community's agent answers.
             routes = [
                 tool["name"]
                 for tool in body.get("tools", [])
                 if tool["name"].startswith("handover_")
                 and tool.get("description") != "Published-policy goodbye"
+                and not str(tool.get("description", "")).startswith("Routing can reach")
             ]
-            action = (
-                (routes[0], {})
-                if routes and "Routing agent" in str(body.get("instructions", ""))
-                else None
-            )
+            last = (body.get("input") or [{}])[-1]
+            action = (routes[0], {}) if routes and last.get("role") == "user" else None
             if not body.get("stream"):
                 return httpx2.Response(200, json=model_capped())
 
