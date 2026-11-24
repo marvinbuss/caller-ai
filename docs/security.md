@@ -43,6 +43,11 @@ has no 10.x fix (affected 7.0.0 to <11.0.1). The override was not committed. The
 exception for a new seven-day window ending **2026-11-17T09:25:22Z**, with the reason updated. It is to
 be removed once `@react-router/fs-routes` accepts minimatch 11.
 
+On 2026-11-24 the window had expired again and CI failed closed. Revalidation again reported the fixed
+11.0.1 on the approved mirror (`gap_confirmed=false`). The latest `@react-router/fs-routes` on the
+mirror is still 8.5.1 and still requires `^10.2.5`; the newest 10.x release is still the affected 10.2.6.
+The owner renewed the exception for a new seven-day window ending **2026-12-01T15:54:19Z**.
+
 Each entry must bind the exact ecosystem (`npm` or `PyPI`), package, installed version,
 advisory, fixed version, accountable owner, reason and UTC verification/expiry. No wildcard
 or version range is supported. Maximum approval duration is seven days; expired/future,
