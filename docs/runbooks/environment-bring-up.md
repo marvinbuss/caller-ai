@@ -123,11 +123,15 @@ of the user group signs in to the management app, opens the configuration editor
 entry agent, enables it and publishes. Then rerun `terraform-app-environment`; the plan has no changes, the
 apply step still runs, and the check repeats the journey.
 
-The speech step sends 40 ms of silence on every capture credit, like an open microphone, until the greeting
-is spoken (first output audio or assistant transcript), for at most 6 seconds, and then stops the session.
-GPT-Live speaks the greeting only while caller audio arrives. Stopping while the greeting is still pending
-has left its Live closure unconfirmed on int (`speech-session: stop_not_confirmed`, `cleanup_uncertain`);
-recover such a slot as described in [scaling](scaling.md#instance-loss-and-dependency-failure).
+The speech step behaves like the Test page with an open microphone in a quiet room: it sends 40 ms of
+silence on every capture credit and acknowledges every output frame as played, for 6 seconds from the first
+frame (the runtime's 5-second greeting deadline plus a margin), and then stops the session. GPT-Live speaks
+only while caller audio arrives. A stop while the Welcome greeting is still being written is answered
+`cleanupStatus: pending` until that request finishes; a stop while the greeting is still pending at GPT-Live
+has left its Live closure unconfirmed on int (`speech-session: stop_not_confirmed`, `cleanup_uncertain`).
+Recover such a slot before the next run, as described in
+[scaling](scaling.md#instance-loss-and-dependency-failure); otherwise the journey is refused as
+`manager_busy` and reports `text-conversation: model_error`.
 
 ## 6. Repeatability
 

@@ -549,8 +549,8 @@ def signin_redirect_matches(context: Context) -> Check:
 
 
 JOURNEY_SECONDS = 15
-# The runtime's 5-second greeting deadline plus a margin; the journey then stops either way.
-GREETING_WAIT_SECONDS = 6
+# The runtime's 5-second greeting deadline plus a margin.
+LISTEN_SECONDS = 6
 CONSOLE_PROTOCOL = "caller.console.v1"
 JOURNEY_PROMPT = "Reply with one short greeting."
 
@@ -743,15 +743,17 @@ def silence(generation: int, sequence: int, samples: int) -> bytes:
     return struct.pack(">BII", 1, generation, sequence) + bytes(2 * samples)
 
 
-def journey_listen(socket: Any, step: str, deadline: float, clock: Callable[[], float]) -> int:
-    """Send silence on every capture credit until the greeting is spoken; return the frames sent.
+def journey_listen(
+    socket: Any, step: str, session: str, deadline: float, clock: Callable[[], float]
+) -> int:
+    """Act as the Test page's open microphone and speaker; return the next control sequence.
 
-    GPT-Live speaks the greeting only while caller audio arrives (R15 in the feature 007
-    research), and a stop while the greeting is still pending can leave its Live closure
-    unconfirmed. The wait ends on the first output audio or assistant transcript, or after
-    `GREETING_WAIT_SECONDS`; the stop result then decides.
+    Sends silence on every capture credit and acknowledges every output frame as played, for
+    `LISTEN_SECONDS` from the first frame. GPT-Live speaks only while caller audio arrives (R15
+    in the feature 007 research), and its output may start before the Welcome greeting is
+    written; a stop while that request still runs is answered `pending`.
     """
-    sent, until = 0, deadline
+    frames, sequence, until = 0, 1, deadline
     while (remaining := until - clock()) > 0:
         try:
             raw = socket.recv(timeout=remaining)
@@ -760,8 +762,21 @@ def journey_listen(socket: Any, step: str, deadline: float, clock: Callable[[], 
         except Exception:
             raise JourneyFailure(step, "connection_closed") from None
         if isinstance(raw, bytes):
-            if sent:
-                break
+            if len(raw) < 9:
+                raise JourneyFailure(step, "invalid_message")
+            _protocol, generation, played = struct.unpack(">BII", raw[:9])
+            socket.send(
+                json.dumps(
+                    {
+                        "type": "audio.played",
+                        "sessionId": session,
+                        "sequence": sequence,
+                        "generation": generation,
+                        "audioSequence": played,
+                    }
+                )
+            )
+            sequence += 1
             continue
         try:
             message = json.loads(raw)
@@ -772,19 +787,17 @@ def journey_listen(socket: Any, step: str, deadline: float, clock: Callable[[], 
         kind, samples = message.get("type"), message.get("availableSamples")
         if kind == "error":
             raise JourneyFailure(step, "session_error")
-        if kind == "transcript.delta" and message.get("speaker") == "assistant" and sent:
-            break
         if kind == "audio.credit" and type(samples) is int and samples > 0:
             generation = message.get("generation")
             if type(generation) is not int:
                 raise JourneyFailure(step, "invalid_message")
-            sent += 1
-            socket.send(silence(generation, sent, min(samples, AUDIO_SAMPLES)))
-            if sent == 1:
-                until = min(deadline, clock() + GREETING_WAIT_SECONDS)
-    if not sent:
+            frames += 1
+            socket.send(silence(generation, frames, min(samples, AUDIO_SAMPLES)))
+            if frames == 1:
+                until = min(deadline, clock() + LISTEN_SECONDS)
+    if not frames:
         raise JourneyFailure(step, "timeout")
-    return sent
+    return sequence
 
 
 def journey_speech(context: Context, token: str) -> None:
@@ -792,8 +805,8 @@ def journey_speech(context: Context, token: str) -> None:
 
     def steps(socket: Any, ready: dict[str, Any], deadline: float) -> None:
         session = str(ready.get("sessionId"))
-        journey_listen(socket, step, deadline, context.clock)
-        journey_stop(context, socket, step, session, 1, deadline)
+        sequence = journey_listen(socket, step, session, deadline, context.clock)
+        journey_stop(context, socket, step, session, sequence, deadline)
 
     journey_session(context, token, "speech", step, steps)
 
