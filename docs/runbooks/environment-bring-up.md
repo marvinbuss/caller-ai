@@ -123,10 +123,11 @@ of the user group signs in to the management app, opens the configuration editor
 entry agent, enables it and publishes. Then rerun `terraform-app-environment`; the plan has no changes, the
 apply step still runs, and the check repeats the journey.
 
-The speech step sends one audio sample and then waits up to 6 seconds for the greeting to be spoken before it
-stops the session. A stop while the greeting is still being written leaves that model request running; the
-runtime then answers `cleanupStatus: pending` and releases the slot once the request finishes, which the check
-would report as `speech-session: stop_not_confirmed`.
+The speech step sends 40 ms of silence on every capture credit, like an open microphone, until the greeting
+is spoken (first output audio or assistant transcript), for at most 6 seconds, and then stops the session.
+GPT-Live speaks the greeting only while caller audio arrives. Stopping while the greeting is still pending
+has left its Live closure unconfirmed on int (`speech-session: stop_not_confirmed`, `cleanup_uncertain`);
+recover such a slot as described in [scaling](scaling.md#instance-loss-and-dependency-failure).
 
 ## 6. Repeatability
 

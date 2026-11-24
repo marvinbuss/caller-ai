@@ -8,7 +8,6 @@ never a secret, a secret reference value or an input value. Exit code 0 only whe
 
 import argparse
 import json
-import math
 import os
 import re
 import shutil
@@ -736,44 +735,56 @@ def journey_text(context: Context, token: str) -> None:
     journey_session(context, token, "text", step, steps)
 
 
-AUDIO_RATE = 24000
-AUDIO_SAMPLES = 480
+AUDIO_SAMPLES = 960
 
 
-def audio_sample(generation: int, samples: int) -> bytes:
-    """One generated audio frame: a quiet 440 Hz tone as 16-bit little-endian PCM."""
-    pcm = b"".join(
-        struct.pack("<h", int(2000 * math.sin(2 * math.pi * 440 * index / AUDIO_RATE)))
-        for index in range(samples)
-    )
-    return struct.pack(">BII", 1, generation, 1) + pcm
+def silence(generation: int, sequence: int, samples: int) -> bytes:
+    """One capture frame of silent 16-bit PCM, as an open microphone in a quiet room sends."""
+    return struct.pack(">BII", 1, generation, sequence) + bytes(2 * samples)
 
 
-def journey_greeting(socket: Any, step: str, deadline: float, clock: Callable[[], float]) -> None:
-    """Wait until the greeting is spoken, so no greeting request is still running at `stop`.
+def journey_listen(socket: Any, step: str, deadline: float, clock: Callable[[], float]) -> int:
+    """Send silence on every capture credit until the greeting is spoken; return the frames sent.
 
-    A stop during the greeting request is answered `pending` until that request finishes.
+    GPT-Live speaks the greeting only while caller audio arrives (R15 in the feature 007
+    research), and a stop while the greeting is still pending can leave its Live closure
+    unconfirmed. The wait ends on the first output audio or assistant transcript, or after
+    `GREETING_WAIT_SECONDS`; the stop result then decides.
     """
-    until = min(deadline, clock() + GREETING_WAIT_SECONDS)
+    sent, until = 0, deadline
     while (remaining := until - clock()) > 0:
         try:
             raw = socket.recv(timeout=remaining)
         except TimeoutError:
-            return
+            break
         except Exception:
             raise JourneyFailure(step, "connection_closed") from None
         if isinstance(raw, bytes):
-            return
+            if sent:
+                break
+            continue
         try:
             message = json.loads(raw)
         except ValueError:
             raise JourneyFailure(step, "invalid_message") from None
         if not isinstance(message, dict):
             raise JourneyFailure(step, "invalid_message")
-        if message.get("type") == "error":
+        kind, samples = message.get("type"), message.get("availableSamples")
+        if kind == "error":
             raise JourneyFailure(step, "session_error")
-        if message.get("type") == "transcript.delta" and message.get("speaker") == "assistant":
-            return
+        if kind == "transcript.delta" and message.get("speaker") == "assistant" and sent:
+            break
+        if kind == "audio.credit" and type(samples) is int and samples > 0:
+            generation = message.get("generation")
+            if type(generation) is not int:
+                raise JourneyFailure(step, "invalid_message")
+            sent += 1
+            socket.send(silence(generation, sent, min(samples, AUDIO_SAMPLES)))
+            if sent == 1:
+                until = min(deadline, clock() + GREETING_WAIT_SECONDS)
+    if not sent:
+        raise JourneyFailure(step, "timeout")
+    return sent
 
 
 def journey_speech(context: Context, token: str) -> None:
@@ -781,18 +792,7 @@ def journey_speech(context: Context, token: str) -> None:
 
     def steps(socket: Any, ready: dict[str, Any], deadline: float) -> None:
         session = str(ready.get("sessionId"))
-        while True:
-            message = journey_receive(socket, step, deadline, context.clock)
-            if message.get("type") == "error":
-                raise JourneyFailure(step, "session_error")
-            samples = message.get("availableSamples")
-            if message.get("type") == "audio.credit" and type(samples) is int and samples > 0:
-                generation = message.get("generation")
-                if type(generation) is not int:
-                    raise JourneyFailure(step, "invalid_message")
-                break
-        socket.send(audio_sample(generation, min(samples, AUDIO_SAMPLES)))
-        journey_greeting(socket, step, deadline, context.clock)
+        journey_listen(socket, step, deadline, context.clock)
         journey_stop(context, socket, step, session, 1, deadline)
 
     journey_session(context, token, "speech", step, steps)
@@ -827,7 +827,7 @@ def functional_journey(context: Context) -> Check:
         "functional-journey",
         "application",
         "probes, sign-in redirect, configuration read, text reply and speech session with "
-        "audio sample confirmed",
+        "caller audio confirmed",
     )
 
 

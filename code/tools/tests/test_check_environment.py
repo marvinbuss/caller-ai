@@ -735,7 +735,7 @@ def test_the_journey_never_prints_the_token_or_the_permit(case):
     assert TESTER_TOKEN not in repr(context) and TESTER_TOKEN not in result.detail
 
 
-def test_the_speech_session_sends_one_generated_sample_after_credit_and_confirms_stop(case):
+def test_the_speech_session_sends_silence_on_credit_and_confirms_stop(case):
     import struct
 
     result, _context, sockets, _seen = journey(case)
@@ -745,7 +745,7 @@ def test_the_speech_session_sends_one_generated_sample_after_credit_and_confirms
     protocol, generation, sequence = struct.unpack(">BII", audio[0][:9])
     assert (protocol, generation, sequence) == (1, 1, 1)
     payload = audio[0][9:]
-    assert 0 < len(payload) <= 1920 and len(payload) % 2 == 0 and any(payload)
+    assert len(payload) == 1920 and not any(payload)
 
 
 def test_a_speech_session_that_never_grants_credit_fails_with_a_fixed_reason(case):
@@ -758,21 +758,25 @@ def test_a_speech_session_that_never_grants_credit_fails_with_a_fixed_reason(cas
     "behaviour,unread",
     [("greeting-transcript", [CREDIT]), ("greeting-audio", [SPOKEN])],
 )
-def test_the_speech_session_stops_only_once_the_greeting_is_spoken(case, behaviour, unread):
-    # A stop while the greeting request still runs is answered `pending` until it finishes.
+def test_the_speech_session_feeds_silence_until_the_greeting_is_spoken(case, behaviour, unread):
+    import struct
+
+    # GPT-Live speaks the greeting only while caller audio arrives, like an open microphone.
     result, _context, sockets, _seen = journey(case, behaviour)
     assert result.status == "pass", result.detail
     assert sockets[1].unread_at_stop == unread
     assert [message["type"] for message in sockets[1].sent] == ["authenticate", "stop"]
+    sequences = [struct.unpack(">BII", frame[:9])[2] for frame in sockets[1].audio]
+    assert sequences == [1, 2]
 
 
 def test_the_speech_session_still_stops_when_no_greeting_arrives(case):
     module, _world, _graph, _build = case
     times = iter([0.0, 0.0, module.GREETING_WAIT_SECONDS + 1])
     socket = Console("speech", "ok")
-    socket.queue.extend([CREDIT, CREDIT])
-    module.journey_greeting(socket, "speech-session", 15.0, lambda: next(times))
-    assert socket.queue == [CREDIT]
+    socket.queue.extend([CREDIT, CREDIT, CREDIT])
+    sent = module.journey_listen(socket, "speech-session", 15.0, lambda: next(times))
+    assert sent == 1 and len(socket.audio) == 1 and socket.queue == [CREDIT, CREDIT]
 
 
 def test_an_error_while_waiting_for_the_greeting_names_the_speech_step(case):
