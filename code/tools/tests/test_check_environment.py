@@ -2,6 +2,7 @@
 
 import copy
 import json
+import struct
 from pathlib import Path
 
 import httpx
@@ -483,10 +484,12 @@ TENANT = "t"
 TESTER_TOKEN = "synthetic-tester-token"
 CREDIT = {"type": "audio.credit", "generation": 1, "availableSamples": 960}
 SPOKEN = {"type": "transcript.delta", "speaker": "assistant", "fragment": "Hello"}
+# Two output frames of generation 1, as the relay forwards Live speech.
+OUTPUT = [struct.pack(">BII", 1, 1, number) + b"\x07\x00" * 480 for number in (1, 2)]
 # What the runtime sends after the first credit while the greeting is being written and spoken.
 GREETINGS = {
     "greeting-transcript": [CREDIT, {"type": "agent.changed"}, SPOKEN, CREDIT],
-    "greeting-audio": [CREDIT, bytes(9) + b"\x01\x00", SPOKEN],
+    "greeting-audio": [CREDIT, OUTPUT[0], SPOKEN, OUTPUT[1], CREDIT],
     "greeting-error": [CREDIT, {"type": "error", "code": "upstream_unavailable"}],
 }
 
@@ -755,28 +758,37 @@ def test_a_speech_session_that_never_grants_credit_fails_with_a_fixed_reason(cas
 
 
 @pytest.mark.parametrize(
-    "behaviour,unread",
-    [("greeting-transcript", [CREDIT]), ("greeting-audio", [SPOKEN])],
+    "behaviour,frames,played",
+    [("greeting-transcript", 3, []), ("greeting-audio", 3, [(1, 1, 1), (2, 1, 2)])],
 )
-def test_the_speech_session_feeds_silence_until_the_greeting_is_spoken(case, behaviour, unread):
+def test_the_speech_session_listens_like_the_test_page_before_it_stops(
+    case, behaviour, frames, played
+):
     import struct
 
-    # GPT-Live speaks the greeting only while caller audio arrives, like an open microphone.
+    # GPT-Live speaks only while caller audio arrives; played audio must be acknowledged.
     result, _context, sockets, _seen = journey(case, behaviour)
     assert result.status == "pass", result.detail
-    assert sockets[1].unread_at_stop == unread
-    assert [message["type"] for message in sockets[1].sent] == ["authenticate", "stop"]
-    sequences = [struct.unpack(">BII", frame[:9])[2] for frame in sockets[1].audio]
-    assert sequences == [1, 2]
+    speech = sockets[1]
+    assert speech.unread_at_stop == []
+    assert [struct.unpack(">BII", frame[:9])[2] for frame in speech.audio] == list(
+        range(1, frames + 1)
+    )
+    acks = [m for m in speech.sent if m["type"] == "audio.played"]
+    assert [(m["sequence"], m["generation"], m["audioSequence"]) for m in acks] == played
+    assert all(m["sessionId"] == "console-1" for m in acks)
+    assert speech.sent[-1] == {"type": "stop", "sessionId": "console-1", "sequence": len(acks) + 1}
 
 
-def test_the_speech_session_still_stops_when_no_greeting_arrives(case):
+def test_the_speech_session_listens_for_a_fixed_window_from_the_first_frame(case):
     module, _world, _graph, _build = case
-    times = iter([0.0, 0.0, module.GREETING_WAIT_SECONDS + 1])
+    times = iter([0.0, 0.0, 1.0, module.LISTEN_SECONDS + 1])
     socket = Console("speech", "ok")
-    socket.queue.extend([CREDIT, CREDIT, CREDIT])
-    sent = module.journey_listen(socket, "speech-session", 15.0, lambda: next(times))
-    assert sent == 1 and len(socket.audio) == 1 and socket.queue == [CREDIT, CREDIT]
+    socket.queue.extend([CREDIT, SPOKEN, CREDIT, CREDIT])
+    sequence = module.journey_listen(
+        socket, "speech-session", "console-1", 15.0, lambda: next(times)
+    )
+    assert sequence == 1 and len(socket.audio) == 1 and socket.queue == [CREDIT, CREDIT]
 
 
 def test_an_error_while_waiting_for_the_greeting_names_the_speech_step(case):
