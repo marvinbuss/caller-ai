@@ -123,6 +123,11 @@ of the user group signs in to the management app, opens the configuration editor
 entry agent, enables it and publishes. Then rerun `terraform-app-environment`; the plan has no changes, the
 apply step still runs, and the check repeats the journey.
 
+The speech step sends one audio sample and then waits up to 6 seconds for the greeting to be spoken before it
+stops the session. A stop while the greeting is still being written leaves that model request running; the
+runtime then answers `cleanupStatus: pending` and releases the slot once the request finishes, which the check
+would report as `speech-session: stop_not_confirmed`.
+
 ## 6. Repeatability
 
 Run `terraform-app-environment` and `terraform-bootstrap` with `expect_no_changes: true`. The plan must show
