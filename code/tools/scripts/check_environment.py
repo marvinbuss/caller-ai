@@ -550,6 +550,8 @@ def signin_redirect_matches(context: Context) -> Check:
 
 
 JOURNEY_SECONDS = 15
+# The runtime's 5-second greeting deadline plus a margin; the journey then stops either way.
+GREETING_WAIT_SECONDS = 6
 CONSOLE_PROTOCOL = "caller.console.v1"
 JOURNEY_PROMPT = "Reply with one short greeting."
 
@@ -747,6 +749,33 @@ def audio_sample(generation: int, samples: int) -> bytes:
     return struct.pack(">BII", 1, generation, 1) + pcm
 
 
+def journey_greeting(socket: Any, step: str, deadline: float, clock: Callable[[], float]) -> None:
+    """Wait until the greeting is spoken, so no greeting request is still running at `stop`.
+
+    A stop during the greeting request is answered `pending` until that request finishes.
+    """
+    until = min(deadline, clock() + GREETING_WAIT_SECONDS)
+    while (remaining := until - clock()) > 0:
+        try:
+            raw = socket.recv(timeout=remaining)
+        except TimeoutError:
+            return
+        except Exception:
+            raise JourneyFailure(step, "connection_closed") from None
+        if isinstance(raw, bytes):
+            return
+        try:
+            message = json.loads(raw)
+        except ValueError:
+            raise JourneyFailure(step, "invalid_message") from None
+        if not isinstance(message, dict):
+            raise JourneyFailure(step, "invalid_message")
+        if message.get("type") == "error":
+            raise JourneyFailure(step, "session_error")
+        if message.get("type") == "transcript.delta" and message.get("speaker") == "assistant":
+            return
+
+
 def journey_speech(context: Context, token: str) -> None:
     step = "speech-session"
 
@@ -763,6 +792,7 @@ def journey_speech(context: Context, token: str) -> None:
                     raise JourneyFailure(step, "invalid_message")
                 break
         socket.send(audio_sample(generation, min(samples, AUDIO_SAMPLES)))
+        journey_greeting(socket, step, deadline, context.clock)
         journey_stop(context, socket, step, session, 1, deadline)
 
     journey_session(context, token, "speech", step, steps)

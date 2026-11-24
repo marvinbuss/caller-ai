@@ -481,6 +481,14 @@ def test_an_open_range_reports_that_no_source_restriction_applies(case):
 
 TENANT = "t"
 TESTER_TOKEN = "synthetic-tester-token"
+CREDIT = {"type": "audio.credit", "generation": 1, "availableSamples": 960}
+SPOKEN = {"type": "transcript.delta", "speaker": "assistant", "fragment": "Hello"}
+# What the runtime sends after the first credit while the greeting is being written and spoken.
+GREETINGS = {
+    "greeting-transcript": [CREDIT, {"type": "agent.changed"}, SPOKEN, CREDIT],
+    "greeting-audio": [CREDIT, bytes(9) + b"\x01\x00", SPOKEN],
+    "greeting-error": [CREDIT, {"type": "error", "code": "upstream_unavailable"}],
+}
 
 
 class Console:
@@ -495,6 +503,7 @@ class Console:
             False,
         )
         self.audio = []
+        self.unread_at_stop = None
 
     def send(self, raw):
         if isinstance(raw, bytes):
@@ -519,6 +528,7 @@ class Console:
                             "acceptedAudioSequence": 0,
                         }
                     )
+                    self.queue.extend(GREETINGS.get(self.behaviour, []))
         elif kind == "text.submit" and self.mode == "text":
             if self.behaviour == "model-error":
                 self.queue.append({"type": "error", "code": "upstream_unavailable"})
@@ -531,13 +541,15 @@ class Console:
                 self.queue.append({"type": "text.delta", "messageId": "m1", "text": "lo"})
                 self.queue.append({"type": "text.completed", "messageId": "m1", "text": ""})
         elif kind == "stop":
+            self.unread_at_stop = list(self.queue)
             status = "pending" if self.behaviour == "stop-pending" else "complete"
             self.queue.append({"type": "ended", "cleanupStatus": status})
 
     def recv(self, timeout=None):
         if not self.queue:
             raise TimeoutError("timed out")
-        return json.dumps(self.queue.pop(0))
+        item = self.queue.pop(0)
+        return item if isinstance(item, bytes) else json.dumps(item)
 
     def close(self):
         self.closed = True
@@ -740,3 +752,30 @@ def test_a_speech_session_that_never_grants_credit_fails_with_a_fixed_reason(cas
     result, _context, sockets, _seen = journey(case, "no-credit")
     assert (result.status, result.detail) == ("fail", "speech-session: timeout")
     assert sockets[1].audio == [] and all(socket.closed for socket in sockets)
+
+
+@pytest.mark.parametrize(
+    "behaviour,unread",
+    [("greeting-transcript", [CREDIT]), ("greeting-audio", [SPOKEN])],
+)
+def test_the_speech_session_stops_only_once_the_greeting_is_spoken(case, behaviour, unread):
+    # A stop while the greeting request still runs is answered `pending` until it finishes.
+    result, _context, sockets, _seen = journey(case, behaviour)
+    assert result.status == "pass", result.detail
+    assert sockets[1].unread_at_stop == unread
+    assert [message["type"] for message in sockets[1].sent] == ["authenticate", "stop"]
+
+
+def test_the_speech_session_still_stops_when_no_greeting_arrives(case):
+    module, _world, _graph, _build = case
+    times = iter([0.0, 0.0, module.GREETING_WAIT_SECONDS + 1])
+    socket = Console("speech", "ok")
+    socket.queue.extend([CREDIT, CREDIT])
+    module.journey_greeting(socket, "speech-session", 15.0, lambda: next(times))
+    assert socket.queue == [CREDIT]
+
+
+def test_an_error_while_waiting_for_the_greeting_names_the_speech_step(case):
+    result, _context, sockets, _seen = journey(case, "greeting-error")
+    assert (result.status, result.detail) == ("fail", "speech-session: session_error")
+    assert all(socket.closed for socket in sockets)
