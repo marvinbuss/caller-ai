@@ -1966,18 +1966,43 @@ def test_speech_fragments_correlate_bounded_verified_input_without_inventing_tur
     assert fragments.consume(offset_ms=150, generation=2) is None
 
 
-@pytest.mark.parametrize("fault", ["overlap", "stale", "oversized"])
-def test_speech_fragments_require_clarification_on_ambiguous_context(fault):
+@pytest.mark.parametrize("fault", ["malformed", "oversized"])
+def test_speech_fragments_require_clarification_on_a_malformed_fragment(fault):
     from caller_runtime.services.delegation import SpeechFragments
 
     fragments = SpeechFragments()
     fragments.append("Synthetic ", start_ms=0, end_ms=100, generation=1, accepted=True)
-    if fault == "overlap":
-        fragments.append("overlap", start_ms=50, end_ms=120, generation=1, accepted=True)
-    elif fault == "oversized":
+    if fault == "malformed":
+        fragments.append("backwards", start_ms=120, end_ms=110, generation=1, accepted=True)
+    else:
         fragments.append("x" * 4097, start_ms=100, end_ms=200, generation=1, accepted=True)
-    assert fragments.consume(offset_ms=2201 if fault == "stale" else 200, generation=1) is None
     assert fragments.retained_bytes == 0
+    assert fragments.consume(offset_ms=200, generation=1) is None
+
+
+def test_speech_fragments_give_a_delegation_what_began_by_its_offset():
+    from caller_runtime.services.delegation import SpeechFragments
+
+    fragments = SpeechFragments()
+    # Live's transcript runs past the delegation's offset and its deltas may overlap.
+    fragments.append("Check my ", start_ms=0, end_ms=400, generation=1, accepted=True)
+    fragments.append("order.", start_ms=380, end_ms=650, generation=1, accepted=True)
+    fragments.append(" And ", start_ms=900, end_ms=950, generation=1, accepted=True)
+    assert fragments.consume(offset_ms=600, generation=1) == "Check my order."
+    fragments.append("my invoice.", start_ms=950, end_ms=1200, generation=1, accepted=True)
+    # Speech long before a delegation still counts; the clarity check judges it in context.
+    assert fragments.consume(offset_ms=9000, generation=1) == " And my invoice."
+    assert fragments.consume(offset_ms=9100, generation=1) is None
+
+
+def test_speech_fragments_keep_the_newest_four_kib():
+    from caller_runtime.services.delegation import SpeechFragments
+
+    fragments = SpeechFragments()
+    fragments.append("o" * 3000, start_ms=0, end_ms=100, generation=1, accepted=True)
+    fragments.append("n" * 2000, start_ms=100, end_ms=200, generation=1, accepted=True)
+    assert fragments.retained_bytes == 2000
+    assert fragments.consume(offset_ms=300, generation=1) == "n" * 2000
 
 
 @pytest.mark.parametrize("clear", [False, True])

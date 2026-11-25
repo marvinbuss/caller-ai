@@ -146,7 +146,8 @@ work deadline, zero retries and confirmed owner/generation-bound allocation inte
 Initial readiness performs a no-tool call through the pinned Welcome Agent; generated
 readiness output is discarded, not fabricated as a browser reply. Speech additionally verifies
 its Live startup. Timed input fragments are not complete ASR turns: only server-verified
-accepted-audio fragments enter a bounded correlator, followed by a no-tool structured clarity
+accepted-audio fragments enter a bounded correlator, which hands a delegation the fragments begun
+by its offset once the transcription wait is over, followed by a no-tool structured clarity
 check through that same configured backend. Ambiguous context asks for clarification; a
 positive result executes the exact unrewritten text under the same accepted work budget.
 Shared model storage is disabled and SDK-hosted trace upload is disabled.

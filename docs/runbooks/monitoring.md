@@ -132,7 +132,7 @@ are closed sets.
 |-------|---------|---------------|--------|--------------|
 | `test.handover` | success | `applied` | `source_role`, `destination_role`, `path` | A handover was applied, the Welcome → Routing move (`path` = `lifecycle`) included |
 | `test.handover` | failure | `refused_graph`, `refused_stale`, `refused_budget`, `refused_step_limit` | `source_role`, `destination_role`, `path` | A handover was refused when it was applied; the active agent stayed |
-| `test.delegation` | success / failure | `ready` / `invalid_input` | `first_role`, `handled_role`, `handed_on` (`true`/`false`), `untranscribed` (`true`/`false`) | A voice delegation's work item ended. `first_role` handled it first, `handled_role` last; `untranscribed` means the caller's speech was still not transcribed when the transcription wait ended |
+| `test.delegation` | success / failure | `ready` / `invalid_input` | `first_role`, `handled_role`, `handed_on` (`true`/`false`), `untranscribed` (`true`/`false`) | A voice delegation's work item ended: `ready` when the caller's words passed the clarity check and the work ran, `invalid_input` when the voice assistant was told to ask the caller to clarify. `first_role` handled it first, `handled_role` last; `untranscribed` means the caller's speech was still not transcribed when the transcription wait ended |
 | `test.history` | success | `ready` | `history_kib` | At every applied handover: the size of the history the destination continues with |
 | `test.history` | success / failure | `condensed` / `limit` | `history_kib` | Condensing ran / the conversation ended at the limit |
 | `test.latency` | success | `ready` | `path`; measurement `handover_seconds` | From the handoff to the destination's first output |

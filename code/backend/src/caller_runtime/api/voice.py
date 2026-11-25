@@ -951,15 +951,13 @@ def create_router(
                     elif kind == "session.delegation.created":
                         skip_greeting()
                         session.interrupt_speech()
-                        correlated = session.speech_fragments.consume(
-                            offset_ms=event["offset_ms"], generation=generation
-                        )
+                        # The caller's words usually arrive after this; the work item takes them.
                         await session.submit_delegation(
                             segments.current,
                             event,
-                            task_text=correlated,
+                            task_text=None,
                             unambiguous=False,
-                            requires_clarity_check=correlated is not None,
+                            requires_clarity_check=True,
                         )
                         work_ready.set()
 
