@@ -274,8 +274,9 @@ CONTROL_CODE = r"""
                 throw Error("invalid_terminal");
             if (value.type === "error" && value.cleanupStatus === "active" && !this.terminal) {
                 this.pending.delete(this.pending.keys().next().value);
-                this.write("error", value.code === "capacity_unavailable" ? "Work busy" :
-                    "Work unavailable");
+                this.write("error", value.reason === "manager_busy" ?
+                    "Another test is active or an earlier test is still being cleaned up" :
+                    value.code === "capacity_unavailable" ? "Work busy" : "Work unavailable");
                 return;
             }
             this.finish(codes[value.code], value.cleanupStatus); return;

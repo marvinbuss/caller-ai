@@ -76,6 +76,7 @@ TEST_MODES = frozenset({"text", "speech"})
 # Warning-level events that name why a test failed: class and fixed code names, bounded timings.
 DIAGNOSTICS = {
     "test.admission.failure": frozenset(),
+    "test.live.failure": frozenset(),
     "test.work.failure": frozenset(),
     "test.session.failure": frozenset(),
     "test.speech.unobserved": frozenset({"end_ms", "since_first_frame_ms", "since_last_frame_ms"}),

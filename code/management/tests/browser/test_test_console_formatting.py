@@ -200,6 +200,37 @@ def test_history_condensed_shows_one_polite_status_row(page: Page, mode):
     assert page.locator("#test-messages").get_attribute("aria-live") == "polite"
 
 
+@pytest.mark.parametrize(
+    "reason,shown",
+    [
+        ("manager_busy", "Another test is active or an earlier test is still being cleaned up"),
+        ("work_busy", "Work busy"),
+    ],
+)
+def test_a_refused_text_turn_says_when_an_earlier_test_still_holds_the_slot(
+    page: Page, reason, shown
+):
+    from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
+
+    page.set_content(
+        '<div id="test-messages" role="log" aria-live="polite"></div><p id="test-error"></p>'
+    )
+    page.add_script_tag(content=BUDGET_CODE + ENGINE_CODE)
+    page.evaluate(
+        """reason => {
+        const engine = new CallerTestEngine({begin: () => {}, control: () => {}});
+        engine.terminal = false; engine.mode = 'text'; engine.epoch = 1;
+        engine.snapshot = {status: 'ready', mode: 'text', sessionId: 'fixture', generation: 1};
+        engine.socket = {readyState: 1, bufferedAmount: 0, send: () => {}, close: () => {}};
+        engine.message(JSON.stringify({type: 'error', sequence: 2, generation: 1,
+            sessionId: 'fixture', code: 'capacity_unavailable', reason,
+            cleanupStatus: 'active', correlationId: 'correlation-fixture'}), 1);
+    }""",
+        reason,
+    )
+    assert page.locator("#test-error").inner_text() == shown
+
+
 def test_status_rows_look_distinct_stay_in_history_and_use_the_polite_log(page: Page):
     from management_app.components.live_audio_js import BUDGET_CODE, ENGINE_CODE
     from management_app.pages.test_console import STATUS_STYLE
