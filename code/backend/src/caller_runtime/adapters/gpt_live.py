@@ -48,6 +48,9 @@ CLOSE_REASONS = frozenset(
     {"close_requested", "expired", "content", "remote_hangup", "connection_lost"}
 )
 PCM_FORMAT = {"type": "audio/pcm", "rate": 24000}
+# Fixed codes only: a rejection reason or a provider error code, never provider text.
+REJECTION = re.compile(r"[a-z][a-z0-9_]{0,63}")
+PROVIDER_CODE = re.compile(r"[a-z][a-z0-9_]{0,40}")
 
 
 def keys(document: dict[str, Any], required: set[str], optional: set[str] | None = None) -> None:
@@ -85,6 +88,7 @@ class GptLiveProtocol:
         self.provider_session_id: str | None = None
         self.voice_seconds = 0.0
         self.closed = False
+        self.rejection: str | None = None
         self._delegations: set[str] = set()
 
     def start_event(self) -> dict[str, Any]:
@@ -182,6 +186,10 @@ class GptLiveProtocol:
                 raise ValueError("invalid_live_shape")
             kind = event["type"]
             if kind == "error":
+                detail = event.get("error")
+                code = detail.get("code") if isinstance(detail, dict) else None
+                if isinstance(code, str) and PROVIDER_CODE.fullmatch(code):
+                    raise ValueError("provider_" + code)
                 raise ValueError("live_provider_error")
             if kind == "session.started":
                 keys(event, {"type", "session"})
@@ -312,7 +320,16 @@ class GptLiveProtocol:
                     timeline(event)
                 return event
             raise ValueError("unsupported_live_event")
-        except (ValueError, TypeError, KeyError, RecursionError, UnicodeError, binascii.Error):
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            RecursionError,
+            UnicodeError,
+            binascii.Error,
+        ) as error:
+            reason = str(error) if type(error) is ValueError else ""
+            self.rejection = reason if REJECTION.fullmatch(reason) else "invalid_live_event"
             raise ValueError("invalid_live_event") from None
 
 
@@ -436,6 +453,7 @@ class GptLiveAdapter:
         if remaining <= 0:
             raise PermissionError("live_deadline_exceeded")
         socket: LiveSocket | None = None
+        stage = "identity"
         try:
             async with asyncio.timeout(remaining):
                 token = await self._credential.get_token("https://ai.azure.com/.default")
@@ -454,9 +472,10 @@ class GptLiveAdapter:
                     generation=slot.generation,
                     work=work,
                 )
+                stage = "connect"
 
                 async def begin() -> LiveSocket:
-                    nonlocal socket
+                    nonlocal socket, stage
                     socket = await self._factory(
                         self._url,
                         token=token.token,
@@ -473,13 +492,16 @@ class GptLiveAdapter:
                         ping_timeout=5,
                         logger=self._logger,
                     )
+                    stage = "send_start"
                     await socket.send(json.dumps(protocol.start_event(), allow_nan=False))
+                    stage = "await_started"
                     event = protocol.accept(await socket.recv())
                     if event["type"] != "session.started":
                         raise ValueError("live_not_started")
                     return socket
 
                 connected = await self.admission.perform(intent, begin, work=work)
+                stage = "bind"
                 self._observe_call(True)
                 provider_id = protocol.provider_session_id
                 if provider_id is None:
@@ -496,8 +518,9 @@ class GptLiveAdapter:
             raise PermissionError(error.code) from None
         except PermissionError:
             raise
-        except Exception:
+        except Exception as error:
             self._observe_call(False)
+            self._start_failed(error, stage, protocol.rejection)
             raise PermissionError("live_unavailable") from None
         finally:
             if socket is not None and slot.session_id not in self._sessions:
@@ -507,6 +530,26 @@ class GptLiveAdapter:
                         await socket.close()
                 except Exception:
                     pass
+
+    def _start_failed(self, error: Exception, stage: str, rejection: str | None) -> None:
+        """Name why a Live start failed: exception class and one fixed code, no provider text."""
+        if self._telemetry is None:
+            return
+        status = getattr(getattr(error, "response", None), "status_code", None)
+        if stage == "await_started" and rejection is not None:
+            code = rejection
+        elif stage == "connect" and type(status) is int:
+            code = f"connect_http_{status}"
+        elif type(error) is ValueError and REJECTION.fullmatch(str(error)):
+            code = str(error)
+        else:
+            code = stage
+        try:
+            self._telemetry.diagnostic(
+                "test.live.failure", mode="speech", error=type(error).__name__, code=code
+            )
+        except Exception:
+            pass
 
     def _observe_call(self, success: bool) -> None:
         if self._call_observer is not None:

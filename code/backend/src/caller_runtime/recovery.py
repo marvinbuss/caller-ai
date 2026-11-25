@@ -7,13 +7,14 @@ Two failures left a slot held for good, so the same manager got `manager_busy`:
   provider never confirmed to this runtime (before the fixes for speech agent changes).
 
 This releases only slots that are fenced, expired at least five minutes ago, whose capability
-attempts are settled and that hold an unsettled model or provider-bound Live attempt. A Live
-socket cannot outlive its session: the runtime closes it when the session ends and the provider
-closes it when the runtime is gone. Such an attempt is settled with a closure receipt marked by a
+attempts are settled and that hold an unsettled model or Live attempt. A Live socket cannot
+outlive its session: the runtime closes it when the session ends and the provider closes it when
+the runtime is gone. A provider-bound attempt is settled with a closure receipt marked by a
 `live-recovered-` settlement reference, so the release keeps the store's evidence rules. An
-unbound Live attempt never reached the provider and is left for review. It never creates or
-deletes the authority item and never touches a slot that is still live. Preview mode, the
-default, lists the candidates and writes nothing.
+unbound Live attempt never got a provider session (its start failed and closed the socket), so
+no receipt can exist: such a slot is removed without one, which the store allows only here. It
+never creates or deletes the authority item and never touches a slot that is still live.
+Preview mode, the default, lists the candidates and writes nothing.
 
 Run inside the runtime container, where the managed identity can reach the private store:
 `python -m caller_runtime.recovery` (preview) or `python -m caller_runtime.recovery --apply`.
@@ -65,13 +66,11 @@ def candidates(authority: TestAuthority, now: datetime) -> list[TestSlot]:
     now = utc(now)
     found = []
     for slot in authority.slots:
-        live = _unsettled(slot, "live")
         if (
             slot.terminal_fence
             and now >= min(slot.expires_at, slot.auth_expires_at, slot.idle_expires_at) + GRACE
             and not any(_unsettled(slot, kind) for kind in SETTLED_KINDS)
-            and (not live or _live_releasable(slot))
-            and (_unsettled(slot, "model") or live or _recovered(slot))
+            and (_unsettled(slot, "model") or _unsettled(slot, "live") or _recovered(slot))
         ):
             found.append(slot)
     return found
@@ -140,6 +139,11 @@ async def release_stuck_slots(
         if not apply or not found:
             return released
         chosen = set(released)
+        unbound = frozenset(
+            slot.session_id
+            for slot in found
+            if _unsettled(slot, "live") and not _live_releasable(slot)
+        )
         document = current.authority.model_dump(mode="json", by_alias=True)
         document["utcHighWater"] = max(current.authority.utc_high_water, now).isoformat()
         document["slots"] = [
@@ -147,23 +151,27 @@ async def release_stuck_slots(
             if slot.session_id in chosen
             else slot.model_dump(mode="json", by_alias=True)
             for slot in current.authority.slots
+            if slot.session_id not in unbound
         ]
         try:
-            # A slot is removable only once it carries settled cleanup evidence.
+            # A slot is removable only once it carries settled cleanup evidence; an unbound Live
+            # attempt can never carry a receipt, so its slot goes in this first write.
             settled: AuthoritySnapshot = await repository.replace(
                 current,
                 TestAuthority.model_validate_json(encoded(document)),
                 deadline=asyncio.get_running_loop().time() + 10,
+                released=unbound,
             )
-            remaining = settled.authority.model_dump(mode="json", by_alias=True)
-            remaining["slots"] = [
-                entry for entry in remaining["slots"] if entry["sessionId"] not in chosen
-            ]
-            await repository.replace(
-                settled,
-                TestAuthority.model_validate_json(encoded(remaining)),
-                deadline=asyncio.get_running_loop().time() + 10,
-            )
+            if chosen - unbound:
+                remaining = settled.authority.model_dump(mode="json", by_alias=True)
+                remaining["slots"] = [
+                    entry for entry in remaining["slots"] if entry["sessionId"] not in chosen
+                ]
+                await repository.replace(
+                    settled,
+                    TestAuthority.model_validate_json(encoded(remaining)),
+                    deadline=asyncio.get_running_loop().time() + 10,
+                )
         except AuthorityConflict:
             continue
         return released

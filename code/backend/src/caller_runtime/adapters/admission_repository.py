@@ -19,7 +19,7 @@ from azure.core import MatchConditions
 from azure.core.exceptions import HttpResponseError
 
 from caller_runtime.domain.configuration import ETAG, encoded
-from caller_runtime.domain.conversation import TestAuthority
+from caller_runtime.domain.conversation import TestAuthority, TestSlot
 from caller_runtime.domain.ports import ContainerPort
 
 AUTHORITY_ID: Final = "browser-test-authority-v1"
@@ -61,7 +61,25 @@ def snapshot(document: Mapping[str, Any]) -> AuthoritySnapshot:
     return AuthoritySnapshot(etag, model.model_dump_json(by_alias=True).encode("utf-8"))
 
 
-def verify_transition(current: TestAuthority, candidate: TestAuthority) -> None:
+def unbound_live_only(slot: TestSlot) -> bool:
+    """A fenced slot held only by a Live attempt that never got a provider session.
+
+    Its start failed before GPT-Live confirmed a session and closed the socket, so no closure
+    receipt can exist. Only recovery may remove such a slot without cleanup evidence.
+    """
+    live, capability = slot.resources["live"], slot.resources["capability"]
+    return (
+        slot.terminal_fence
+        and live.attempted > live.settled
+        and live.attempt is not None
+        and live.attempt.provider_session_id is None
+        and capability.attempted == capability.settled
+    )
+
+
+def verify_transition(
+    current: TestAuthority, candidate: TestAuthority, *, released: frozenset[str] = frozenset()
+) -> None:
     if candidate.utc_high_water < current.utc_high_water:
         raise AuthorityConflict()
     if any(
@@ -86,6 +104,8 @@ def verify_transition(current: TestAuthority, candidate: TestAuthority) -> None:
     for previous in current.slots:
         updated = incoming.get(previous.session_id)
         if updated is None:
+            if previous.session_id in released and unbound_live_only(previous):
+                continue
             if not previous.terminal_fence or previous.cleanup_evidence is None:
                 raise AuthorityConflict()
             continue
@@ -198,12 +218,17 @@ class TestAdmissionRepository:
             raise AuthorityUnavailable() from None
 
     async def replace(
-        self, current: AuthoritySnapshot, candidate: TestAuthority, *, deadline: float
+        self,
+        current: AuthoritySnapshot,
+        candidate: TestAuthority,
+        *,
+        deadline: float,
+        released: frozenset[str] = frozenset(),
     ) -> AuthoritySnapshot:
         try:
             self._budget(deadline)
             checked = TestAuthority.model_validate_json(candidate.model_dump_json(by_alias=True))
-            verify_transition(current.authority, checked)
+            verify_transition(current.authority, checked, released=released)
             async with asyncio.timeout_at(deadline):
                 document = await self._container.replace_item(
                     item=AUTHORITY_ID,

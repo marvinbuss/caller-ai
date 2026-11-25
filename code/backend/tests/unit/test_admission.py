@@ -1807,9 +1807,11 @@ def test_gpt_live_unknown_connect_never_retries_or_claims_zero_allocation(admiss
     from types import SimpleNamespace
 
     from caller_runtime.adapters.gpt_live import GptLiveAdapter
+    from caller_runtime.observability import Telemetry
 
     service, repository, container, clock, permit, cache = admission_case
     attempts = []
+    telemetry = Telemetry("caller-runtime", "local")
 
     class Credentials:
         async def get_token(self, scope):
@@ -1829,6 +1831,7 @@ def test_gpt_live_unknown_connect_never_retries_or_claims_zero_allocation(admiss
         utc_now=clock.utc_now,
         voice="marin",
         socket_factory=unknown,
+        telemetry=telemetry,
     )
 
     async def scenario():
@@ -1845,6 +1848,12 @@ def test_gpt_live_unknown_connect_never_retries_or_claims_zero_allocation(admiss
         ).authority.slots[0]
         assert observed.live_ever_attempted and observed.attempted_through == 1
         assert observed.settled_through == 0 and observed.closure_receipt is None
+        # The diagnostic names the stage, never the provider's text.
+        failures = [e for e in telemetry.events if e["event"] == "test.live.failure"]
+        assert [(e["error_class"], e["error_code"]) for e in failures] == [
+            ("RuntimeError", "connect")
+        ]
+        assert "synthetic-private" not in json.dumps(telemetry.events)
 
     asyncio.run(scenario())
 
@@ -1888,8 +1897,10 @@ def test_gpt_live_wrong_started_configuration_retains_unknown_attempt_without_re
     from types import SimpleNamespace
 
     from caller_runtime.adapters.gpt_live import GptLiveAdapter
+    from caller_runtime.observability import Telemetry
 
     service, repository, container, clock, permit, cache = admission_case
+    telemetry = Telemetry("caller-runtime", "local")
 
     class Credentials:
         async def get_token(self, scope):
@@ -1932,6 +1943,7 @@ def test_gpt_live_wrong_started_configuration_retains_unknown_attempt_without_re
         utc_now=clock.utc_now,
         voice="marin",
         socket_factory=connect,
+        telemetry=telemetry,
     )
 
     async def scenario():
@@ -1947,6 +1959,79 @@ def test_gpt_live_wrong_started_configuration_retains_unknown_attempt_without_re
         assert observed.live_ever_attempted and observed.settled_through == 0
         assert observed.resources["live"].attempt.provider_session_id is None
         assert observed.closure_receipt is None and socket.closed == 1
+        failures = [e for e in telemetry.events if e["event"] == "test.live.failure"]
+        assert [(e["error_class"], e["error_code"]) for e in failures] == [
+            ("ValueError", "changed_live_configuration")
+        ]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "error,code",
+    [
+        (
+            {"code": "rate_limit_exceeded", "message": "Synthetic private detail"},
+            "provider_rate_limit_exceeded",
+        ),
+        ({"code": "Not A Code", "message": "Synthetic private detail"}, "live_provider_error"),
+    ],
+)
+def test_gpt_live_start_refused_by_the_provider_names_only_its_fixed_code(
+    admission_case, error, code
+):
+    from types import SimpleNamespace
+
+    from caller_runtime.adapters.gpt_live import GptLiveAdapter
+    from caller_runtime.observability import Telemetry
+
+    service, repository, container, clock, permit, cache = admission_case
+    telemetry = Telemetry("caller-runtime", "local")
+
+    class Credentials:
+        async def get_token(self, scope):
+            return SimpleNamespace(
+                token="synthetic-live-token", expires_on=clock.utc_now().timestamp() + 900
+            )
+
+    class Socket:
+        closed = 0
+
+        async def send(self, raw):
+            pass
+
+        async def recv(self):
+            return json.dumps({"type": "error", "error": error})
+
+        async def close(self):
+            self.closed += 1
+
+    socket = Socket()
+
+    async def connect(url, **options):
+        return socket
+
+    adapter = GptLiveAdapter(
+        endpoint="https://approved-fixture.openai.azure.com",
+        approved_hosts=frozenset({"approved-fixture.openai.azure.com"}),
+        credential=Credentials(),
+        admission=service,
+        utc_now=clock.utc_now,
+        voice="marin",
+        socket_factory=connect,
+        telemetry=telemetry,
+    )
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1, mode="speech"))
+        with pytest.raises(PermissionError, match="live_unavailable"):
+            await adapter.start(slot, instructions="Synthetic voice instructions")
+        failures = [e for e in telemetry.events if e["event"] == "test.live.failure"]
+        assert [(e["error_class"], e["error_code"]) for e in failures] == [("ValueError", code)]
+        assert "Synthetic private" not in json.dumps(telemetry.events) and socket.closed == 1
 
     asyncio.run(scenario())
 
