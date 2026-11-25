@@ -47,7 +47,7 @@ presence does not complete the actual delivery/recipient/recovery gate.
 
 ## Diagnostic Events
 
-Six warning-level events name why a test session failed. They use the same structured schema as the other
+Seven warning-level events name why a test session failed. They use the same structured schema as the other
 events (UTC timestamp, severity `WARNING`, service, environment, event, outcome `failure`, correlation, trace and
 span ids, mode) and add only a class name, a fixed code or bounded numbers. A class or code outside the closed
 shape `[A-Za-z][A-Za-z0-9_]{0,63}` is dropped rather than logged. They never carry content, and they do not
@@ -57,6 +57,7 @@ feed the `test.alert` classification.
 |-------|---------|--------|--------------|
 | `test.admission.failure` | Runtime | `error_class`, `error_code` | A session start failed: for example `authority_unavailable` names a stalled authority read. A refused start (`manager_busy`, `capacity_unavailable`) also logs `test.admission` with reason `denied`; repeated `manager_busy` for one manager after its test ended points at a held slot (see [scaling](scaling.md)) |
 | `test.live.failure` | Runtime | `error_class`, `error_code` | A voice start failed before GPT-Live confirmed a session (`test.admission.failure` then says `live_unavailable`). `error_code` names the stage (`identity`, `connect`, `send_start`, `await_started`, `bind`), an HTTP status of the connect (`connect_http_429`), a rejected first event (`changed_live_configuration`) or the provider's error code (`provider_rate_limit_exceeded`). Such a start leaves its slot held until [recovery](scaling.md#instance-loss-and-dependency-failure) |
+| `test.model.failure` | Runtime | `error_class`, `error_code` | A model call failed (`test.work.failure` then usually says `model_unavailable`). `error_code` is the provider's HTTP status with its error code when it answered (`http_503`, `http_400_content_filter`), a fixed code of the runtime (`model_response_limit`), or else the stage that failed: `identity` (token), `admission` (recording or dispatching the attempt) or `request` (no answer, for example `APIConnectionError`). Without a provider answer the attempt settles 60 s after the request started (see [scaling](scaling.md)) |
 | `test.work.failure` | Runtime | `error_class`, `error_code` | A text or speech work item failed: for example `model_unavailable` names a failed model call. `model_unavailable`, `work_deadline_exceeded` and `work_busy` end only that item; other codes end the session |
 | `test.speech.unobserved` | Runtime | `end_ms`, `since_first_frame_ms`, `since_last_frame_ms` | Speech did not renew the idle limit: the first rejected transcript of a generation |
 | `test.session.failure` | Runtime | `error_class`, `error_code` | An error ended a running voice session, which the browser shows as "Unavailable": for example `live_unavailable` names a failed Live segment and `speech_transition_unavailable` a failed agent change |

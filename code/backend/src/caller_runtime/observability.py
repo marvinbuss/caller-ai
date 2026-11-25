@@ -77,6 +77,7 @@ TEST_MODES = frozenset({"text", "speech"})
 DIAGNOSTICS = {
     "test.admission.failure": frozenset(),
     "test.live.failure": frozenset(),
+    "test.model.failure": frozenset(),
     "test.work.failure": frozenset(),
     "test.session.failure": frozenset(),
     "test.speech.unobserved": frozenset({"end_ms", "since_first_frame_ms", "since_last_frame_ms"}),

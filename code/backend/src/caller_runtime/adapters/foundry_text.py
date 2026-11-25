@@ -55,6 +55,9 @@ CONDENSE_OUTPUT_TOKENS = 2048
 MODEL_REQUEST_CAP_SECONDS = 60.0
 # Events after which the provider has finished the request.
 FINISHED_EVENTS = frozenset({"response.completed", "response.incomplete", "response.failed"})
+# Codes a model failure diagnostic may carry; anything else is replaced by the failing stage.
+FIXED_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+PROVIDER_CODE = re.compile(r"[a-z][a-z0-9_]{0,40}")
 # Detached request drains, held strongly until they finish.
 _DRAINS: set[asyncio.Task[None]] = set()
 
@@ -241,13 +244,44 @@ class FoundryTextAdapter:
             self._settlement_observer.record(intent, reference)
         await self.admission.settle_attempt(intent, settlement_ref=reference)
 
-    async def _settle_refusal(self, intent: AttemptIntent | None, error: APIStatusError) -> None:
+    async def _settle_refusal(self, intent: AttemptIntent | None, error: APIStatusError) -> bool:
         """A 4xx answer proves the provider finished the request; 5xx and no answer stay open."""
         if intent is not None and 400 <= error.status_code < 500:
             try:
                 await self._settle(intent)
+                return True
             except Exception:
                 pass
+        return False
+
+    async def _settle_unsent(self, intent: AttemptIntent) -> None:
+        """An attempt that was recorded but never dispatched reached no provider."""
+        try:
+            await self._settle(intent, "model-unsent-")
+        except Exception:
+            pass
+
+    def _failed(self, slot: TestSlot, error: Exception, stage: str) -> None:
+        """Name why a model call failed: exception class and one fixed code, no provider text."""
+        if self._telemetry is None:
+            return
+        if isinstance(error, APIStatusError):
+            provider = getattr(error, "code", None)
+            code = f"http_{error.status_code}" + (
+                "_" + provider
+                if isinstance(provider, str) and PROVIDER_CODE.fullmatch(provider)
+                else ""
+            )
+        elif type(error) is ValueError and FIXED_CODE.fullmatch(str(error)):
+            code = str(error)
+        else:
+            code = stage
+        try:
+            self._telemetry.diagnostic(
+                "test.model.failure", mode=slot.mode, error=type(error).__name__, code=code
+            )
+        except Exception:
+            pass
 
     async def _dispose_client(self, client: AsyncOpenAI) -> None:
         try:
@@ -493,6 +527,8 @@ class FoundryTextAdapter:
         client: AsyncOpenAI | None = None
         intent: AttemptIntent | None = None
         dispatched: list[asyncio.Task[Reply]] = []
+        settled = asyncio.Event()
+        stage = "admission"
         cap = asyncio.get_running_loop().time() + self._request_cap
         self._active_operations += 1
         try:
@@ -502,6 +538,7 @@ class FoundryTextAdapter:
             remaining = work.remaining(utc(self.utc_now()))
             work.require(utc(self.utc_now()))
             async with asyncio.timeout(remaining):
+                stage = "identity"
                 token = await self.credential.get_token("https://ai.azure.com/.default")
                 if (
                     not token.token
@@ -511,6 +548,7 @@ class FoundryTextAdapter:
                     raise PermissionError("model_identity_unavailable")
                 client = self._client(token.token)
                 opened = client
+                stage = "admission"
                 intent = await self.admission.begin_attempt(
                     slot.session_id,
                     slot.owner_epoch,
@@ -526,9 +564,11 @@ class FoundryTextAdapter:
                     try:
                         result = await call(opened)
                     except APIStatusError as error:
-                        await self._settle_refusal(recorded, error)
+                        if await self._settle_refusal(recorded, error):
+                            settled.set()
                         raise
                     await self._settle(recorded)
+                    settled.set()
                     return result
 
                 async def dispatch() -> asyncio.Task[Reply]:
@@ -536,6 +576,7 @@ class FoundryTextAdapter:
                     return dispatched[0]
 
                 pending = await self.admission.perform(intent, dispatch, work=work)
+                stage = "request"
                 result = await asyncio.shield(pending)
                 self._observe_call(True)
                 return result
@@ -547,14 +588,21 @@ class FoundryTextAdapter:
             # The work budget ran out; the logs must tell this apart from a failed model call.
             self._observe_call(False)
             raise PermissionError("work_deadline_exceeded") from None
-        except Exception:
+        except Exception as error:
             self._observe_call(False)
+            self._failed(slot, error, stage)
             raise PermissionError("model_unavailable") from None
         finally:
             try:
-                if dispatched and not dispatched[0].done() and client is not None:
+                if intent is not None and not dispatched:
+                    await self._settle_unsent(intent)
+                if (
+                    dispatched
+                    and not (dispatched[0].done() and settled.is_set())
+                    and client is not None
+                ):
                     assert intent is not None
-                    self._detach(dispatched[0], client, intent, cap)
+                    self._detach(dispatched[0], client, intent, cap, settled)
                     client = None
                 if client is not None:
                     await self._dispose_client(client)
@@ -586,28 +634,33 @@ class FoundryTextAdapter:
         client: AsyncOpenAI,
         intent: AttemptIntent,
         cap: float,
+        settled: asyncio.Event,
     ) -> None:
         self._detached.add(client)
         self._active_operations += 1
-        drain = asyncio.create_task(self._drain(pending, client, intent, cap))
+        drain = asyncio.create_task(self._drain(pending, client, intent, cap, settled))
         for tasks in (self._drains, _DRAINS):
             tasks.add(drain)
             drain.add_done_callback(tasks.discard)
 
     async def _drain(
-        self, pending: asyncio.Task[Any], client: AsyncOpenAI, intent: AttemptIntent, cap: float
+        self,
+        pending: asyncio.Task[Any],
+        client: AsyncOpenAI,
+        intent: AttemptIntent,
+        cap: float,
+        settled: asyncio.Event,
     ) -> None:
         """Let a dispatched request finish; it settles itself on a definite provider outcome.
 
         Past the cap the request is cut, and only a confirmed client disposal lets the attempt
-        count as settled, since nothing can still be running for it.
+        count as settled, since nothing can still be running for it. A request that failed
+        without a definite outcome is settled the same way once the cap has passed.
         """
+        loop = asyncio.get_running_loop()
         try:
-            done, _ = await asyncio.wait(
-                {pending}, timeout=max(0.0, cap - asyncio.get_running_loop().time())
-            )
-            abandoned = not done
-            if abandoned:
+            done, _ = await asyncio.wait({pending}, timeout=max(0.0, cap - loop.time()))
+            if not done:
                 pending.cancel()
                 await asyncio.wait({pending}, timeout=1)
             elif not pending.cancelled():
@@ -616,7 +669,9 @@ class FoundryTextAdapter:
                 await self._dispose_client(client)
             except Exception:
                 return
-            if abandoned and pending.done():
+            if pending.done() and not settled.is_set():
+                # The provider may still be working on it, so it counts until the cap.
+                await asyncio.sleep(max(0.0, cap - loop.time()))
                 try:
                     await self._settle(intent, "model-abandoned-")
                 except Exception:
@@ -655,6 +710,8 @@ class FoundryTextAdapter:
         iterator: AsyncGenerator[TResponseStreamEvent, None] | None = None
         intent: AttemptIntent | None = None
         dispatched: list[asyncio.Task[None]] = []
+        settled = asyncio.Event()
+        stage = "admission"
         cap = asyncio.get_running_loop().time() + self._request_cap
         self._active_operations += 1
         try:
@@ -664,11 +721,13 @@ class FoundryTextAdapter:
             remaining = work.remaining(utc(self.utc_now()))
             work.require(utc(self.utc_now()))
             async with asyncio.timeout(remaining):
+                stage = "identity"
                 token = await self.credential.get_token("https://ai.azure.com/.default")
                 if not token.token or token.expires_on <= work.work_deadline_utc.timestamp():
                     raise PermissionError("model_identity_unavailable")
                 client = self._client(token.token)
                 delegate = OpenAIResponsesModel(model=self.deployment, openai_client=client)
+                stage = "admission"
                 intent = await self.admission.begin_attempt(
                     slot.session_id,
                     slot.owner_epoch,
@@ -699,12 +758,14 @@ class FoundryTextAdapter:
                         async for event in source:
                             if event.type in FINISHED_EVENTS:
                                 await self._settle(recorded)
+                                settled.set()
                                 events.put_nowait(event)
                                 return
                             events.put_nowait(event)
                         events.put_nowait(None)
                     except APIStatusError as error:
-                        await self._settle_refusal(recorded, error)
+                        if await self._settle_refusal(recorded, error):
+                            settled.set()
                         events.put_nowait(error)
                     except Exception as error:
                         events.put_nowait(error)
@@ -720,6 +781,7 @@ class FoundryTextAdapter:
                     return dispatched[0]
 
                 await self.admission.perform(intent, dispatch, work=work)
+                stage = "request"
                 output_bytes = 0
                 while True:
                     item = await events.get()
@@ -758,13 +820,20 @@ class FoundryTextAdapter:
             raise
         except TimeoutError:
             raise PermissionError("work_deadline_exceeded") from None
-        except Exception:
+        except Exception as error:
+            self._failed(slot, error, stage)
             raise PermissionError("model_unavailable") from None
         finally:
             try:
-                if dispatched and not dispatched[0].done() and client is not None:
+                if intent is not None and not dispatched:
+                    await self._settle_unsent(intent)
+                if (
+                    dispatched
+                    and not (dispatched[0].done() and settled.is_set())
+                    and client is not None
+                ):
                     assert intent is not None
-                    self._detach(dispatched[0], client, intent, cap)
+                    self._detach(dispatched[0], client, intent, cap, settled)
                     client = None
                 elif not dispatched and iterator is not None:
                     try:
