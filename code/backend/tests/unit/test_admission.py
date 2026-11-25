@@ -1529,6 +1529,179 @@ def test_foundry_text_slow_request_finishes_in_background_and_settles_once(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("failure", ["connect", "http_503"])
+@pytest.mark.parametrize("stream", [False, True])
+def test_foundry_text_failed_request_counts_until_the_cap_then_settles(
+    admission_case, stream, failure
+):
+    from types import SimpleNamespace
+
+    import httpx2
+    from agents import ModelSettings
+    from agents.models.interface import ModelTracing
+
+    from caller_runtime.adapters.foundry_text import FoundryTextAdapter
+    from caller_runtime.domain.conversation import WorkBudget
+    from caller_runtime.observability import Telemetry
+
+    service, repository, container, clock, permit, cache = admission_case
+    telemetry = Telemetry("caller-runtime", "local")
+
+    class Credentials:
+        async def get_token(self, scope):
+            return SimpleNamespace(
+                token="synthetic-foundry-token", expires_on=clock.utc_now().timestamp() + 900
+            )
+
+    async def failing(request):
+        if failure == "connect":
+            raise httpx2.ConnectError("synthetic-private connect detail", request=request)
+        return httpx2.Response(503, json={"error": {"message": "synthetic-private detail"}})
+
+    adapter = FoundryTextAdapter(
+        endpoint="https://approved-fixture.openai.azure.com",
+        deployment="reasoning-fixture",
+        approved_hosts=frozenset({"approved-fixture.openai.azure.com"}),
+        credential=Credentials(),
+        admission=service,
+        utc_now=clock.utc_now,
+        transport=httpx2.MockTransport(failing),
+        max_input_tokens=16384,
+        max_output_tokens=512,
+        request_cap_seconds=1.0,
+        telemetry=telemetry,
+    )
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        slot = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        work = WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10))
+        model = adapter.model_for(slot, work)
+        arguments = dict(
+            system_instructions="Synthetic instructions",
+            input="Synthetic accepted question",
+            model_settings=ModelSettings(),
+            tools=[],
+            output_schema=None,
+            handoffs=[],
+            tracing=ModelTracing.DISABLED,
+        )
+        try:
+            with pytest.raises(PermissionError, match="^model_unavailable$"):
+                if stream:
+                    async for _event in model.stream_response(**arguments):
+                        pass
+                else:
+                    await model.get_response(**arguments)
+            # The provider may still be working on it, so the attempt counts until the cap.
+            assert adapter.draining
+            pending = (
+                await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+            ).authority.slots[0]
+            assert pending.attempted_through == 1 and pending.settled_through == 0
+            await asyncio.wait_for(adapter.drained(), 5)
+            observed = (
+                await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+            ).authority.slots[0]
+            assert observed.attempted_through == observed.settled_through == 1
+            assert observed.resources["model"].settlement_ref.startswith("model-abandoned-")
+            failures = [e for e in telemetry.events if e["event"] == "test.model.failure"]
+            expected = (
+                ("APIConnectionError", "request")
+                if failure == "connect"
+                else ("InternalServerError", "http_503")
+            )
+            assert [(e["error_class"], e["error_code"]) for e in failures] == [expected]
+            assert "synthetic-private" not in json.dumps(telemetry.events)
+        finally:
+            await adapter.close()
+            telemetry.close()
+
+    asyncio.run(scenario())
+
+
+def test_foundry_text_attempt_that_was_never_dispatched_is_settled_at_once(
+    admission_case, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import httpx2
+    from agents import ModelSettings
+    from agents.models.interface import ModelTracing
+
+    from caller_runtime.adapters.foundry_text import FoundryTextAdapter
+    from caller_runtime.domain.conversation import WorkBudget
+    from caller_runtime.observability import Telemetry
+
+    service, repository, container, clock, permit, cache = admission_case
+    telemetry = Telemetry("caller-runtime", "local")
+    requests = []
+
+    class Credentials:
+        async def get_token(self, scope):
+            return SimpleNamespace(
+                token="synthetic-foundry-token", expires_on=clock.utc_now().timestamp() + 900
+            )
+
+    async def unexpected(request):
+        requests.append(request)
+        return httpx2.Response(200, json=model_reply("Unused"))
+
+    async def broken(intent, operation, *, work=None):
+        raise RuntimeError("synthetic store failure")
+
+    monkeypatch.setattr(service, "perform", broken)
+    adapter = FoundryTextAdapter(
+        endpoint="https://approved-fixture.openai.azure.com",
+        deployment="reasoning-fixture",
+        approved_hosts=frozenset({"approved-fixture.openai.azure.com"}),
+        credential=Credentials(),
+        admission=service,
+        utc_now=clock.utc_now,
+        transport=httpx2.MockTransport(unexpected),
+        max_input_tokens=16384,
+        max_output_tokens=512,
+        telemetry=telemetry,
+    )
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1))
+        slot = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        work = WorkBudget(clock.utc_now(), clock.utc_now() + timedelta(seconds=10))
+        try:
+            with pytest.raises(PermissionError, match="^model_unavailable$"):
+                await adapter.model_for(slot, work).get_response(
+                    system_instructions="Synthetic instructions",
+                    input="Synthetic accepted question",
+                    model_settings=ModelSettings(),
+                    tools=[],
+                    output_schema=None,
+                    handoffs=[],
+                    tracing=ModelTracing.DISABLED,
+                )
+            assert not adapter.draining and not requests
+            observed = (
+                await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+            ).authority.slots[0]
+            assert observed.attempted_through == observed.settled_through == 1
+            assert observed.resources["model"].settlement_ref.startswith("model-unsent-")
+            failures = [e for e in telemetry.events if e["event"] == "test.model.failure"]
+            assert [(e["error_class"], e["error_code"]) for e in failures] == [
+                ("RuntimeError", "admission")
+            ]
+        finally:
+            await adapter.close()
+            telemetry.close()
+
+    asyncio.run(scenario())
+
+
 def test_foundry_text_caps_transport_body_before_sdk_json_parse(admission_case):
     from types import SimpleNamespace
 

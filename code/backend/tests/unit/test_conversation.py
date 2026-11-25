@@ -557,6 +557,11 @@ def text_execution_case(admission_case):
         assert body["stream"] is True and body["store"] is False
         if "clarity" in controls:
             controls.setdefault("timeouts", []).append(request.extensions["timeout"])
+        if controls.get("stream_status"):
+            return httpx2.Response(
+                controls["stream_status"],
+                json={"error": {"message": "synthetic-private-provider-response"}},
+            )
         entered.set()
         if controls["blocked"]:
             await release.wait()
@@ -1494,6 +1499,45 @@ def test_text_stop_clears_volatile_context_but_only_definitive_work_releases(
                 await repository.read(deadline=asyncio.get_running_loop().time() + 1)
             ).authority.slots
             assert (await service.reserve(permit(3))).request_id == "request-3"
+
+    asyncio.run(scenario())
+
+
+def test_a_failed_model_call_keeps_the_session_and_its_stop_releases_the_slot_after_the_cap(
+    text_execution_case, admission_case, monkeypatch
+):
+    from caller_runtime.services.admission import AdmissionError
+    from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
+
+    setup, emit, messages, requests, controls, entered, release, adapter = text_execution_case
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        observations = CleanupObservations(owner_id=service.owner_id, utc_now=clock.utc_now)
+        controls["observations"] = observations
+        monkeypatch.setattr(adapter, "_settlement_observer", observations)
+        monkeypatch.setattr(adapter, "_request_cap", 0.5)
+        monkeypatch.setattr(
+            service,
+            "_cleanup_verifier",
+            ResourceCleanupVerifier(observe=observations.observe, utc_now=clock.utc_now),
+        )
+        controller = await setup()
+        controls["stream_status"] = 503
+        await controller.submit_text("text-failed", "Synthetic private question")
+        await controller.process_next(emit=emit)
+        assert not controller.ended
+        assert messages[-1]["code"] == "work_unavailable"
+        assert messages[-1]["cleanupStatus"] == "active"
+        # The provider's outcome is unknown, so the slot stays held until the cap.
+        assert not await controller.close()
+        with pytest.raises(AdmissionError, match="manager_busy"):
+            await service.reserve(permit(2))
+        await asyncio.wait_for(controller._late_cleanup, 5)
+        assert not (
+            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        ).authority.slots
+        assert (await service.reserve(permit(3))).request_id == "request-3"
 
     asyncio.run(scenario())
 
