@@ -860,6 +860,59 @@ def test_progress_is_spoken_with_the_delegation_and_sent_to_the_browser(endpoint
         stop(socket, ready)
 
 
+@pytest.mark.parametrize("order", ["transcript_after", "transcript_past_offset"])
+def test_a_delegation_takes_the_callers_words_after_the_transcription_wait(endpoint, order):
+    # On int the transcript reached the runtime after the delegation or ran past its offset.
+    endpoint.controls["clarity"] = True
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        endpoint.controls["prepare"] = False
+        provider = endpoint.provider_sockets[0]
+        socket.send_bytes(struct.pack(">BII", 1, ready["generation"], 1) + b"\x05\0" * 480)
+        wait_for(lambda: [e for e in provider.sent if e["type"] == "session.input_audio.append"])
+        transcript = {
+            "type": "session.input_transcript.delta",
+            "delta": "Synthetic caller request",
+            "start_ms": 0,
+            "end_ms": 60,
+            "event_id": "event_input",
+        }
+        delegation = {
+            "type": "session.delegation.created",
+            "delegation": {"id": "delegation-late", "type": "delegation", "target": "client"},
+            "offset_ms": 40,
+        }
+        events = [transcript, delegation]
+        for event in events if order == "transcript_past_offset" else reversed(events):
+            provider_event(endpoint, event)
+
+        def spoken():
+            return [
+                e["content"]
+                for e in provider.sent
+                if e["type"] == "session.commentary.append"
+                and e["delegation_id"] == "delegation-late"
+            ]
+
+        wait_for(spoken)
+        assert "Please clarify your request." not in spoken()
+        clarity = [r for r in endpoint.requests if not r.get("stream")]
+        assert clarity[-1]["input"][-1]["content"].endswith("\nSynthetic caller request")
+
+        def delegations():
+            return [
+                e
+                for e in endpoint.client.app.state.telemetry.events
+                if e["event"] == "test.delegation"
+            ]
+
+        wait_for(delegations)
+        assert [(e["outcome"], e["reason_code"]) for e in delegations()] == [("success", "ready")]
+        release_model(endpoint)
+        stop(socket, ready)
+
+
 def next_event_of(socket, kind):
     """Read control events until one of `kind`, skipping audio frames and other controls."""
     while True:

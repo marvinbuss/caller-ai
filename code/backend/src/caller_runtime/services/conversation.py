@@ -1105,6 +1105,11 @@ class ConversationExecutor:
         self._first_role = self._role(self.policy.active_agent_id)
         if self.history.timeline:
             await self._await_transcript(item)
+        if item.offset_ms is not None and item.text is None and item.requires_clarity_check:
+            # After the transcription wait, so a transcript that lagged the delegation counts.
+            item.text = self.speech_fragments.consume(
+                offset_ms=item.offset_ms, generation=self.policy.slot.generation
+            )
         if item.text is None or item.requires_clarity_check and not await self._clear_task(item):
             segment = self._speech.get(item.receipt.task_id)
             if segment is None:
@@ -1113,6 +1118,8 @@ class ConversationExecutor:
                 item.receipt.delegation_id, "Please clarify your request.", work=item.receipt.work
             )
             return
+        if item.receipt.delegation_id is not None:
+            self._delegation_ready[item.receipt.task_id] = True
         if not self.history.timeline:
             # Text records the request at once; voice has it as the caller's transcript.
             self._record_item(item, "user_text", item.text, agent_id=None)

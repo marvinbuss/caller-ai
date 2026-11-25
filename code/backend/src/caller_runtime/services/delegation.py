@@ -1,10 +1,11 @@
 """Accepted-work records and the bounded speech-fragment correlator.
 
 A `WorkItem` carries one accepted request with its immutable budget and a step counter capped at 8.
-`SpeechFragments` joins timed, server-verified input fragments (at most 4 KiB, in order, within 2 s
-of the delegation offset) into one request and marks anything out of order or oversized ambiguous
-so the model is asked to clarify rather than guess. Everything is in memory, bounded and cleared
-with the session; nothing starts work or replays it on construction.
+`SpeechFragments` keeps the timed, server-verified caller fragments since the last delegation (the
+newest 4 KiB) and hands a delegation those begun by its offset, once the transcription wait is
+over; a malformed fragment drops them so the model is asked to clarify rather than guess.
+Everything is in memory, bounded and cleared with the session; nothing starts work or replays it
+on construction.
 """
 
 import hashlib
@@ -71,20 +72,17 @@ class WorkItem:
 
 class SpeechFragments:
     def __init__(self) -> None:
-        self._text = ""
+        # (fragment, start_ms) in arrival order.
+        self._parts: list[tuple[str, float]] = []
         self._generation: int | None = None
-        self._end_ms: float | None = None
-        self._ambiguous = False
 
     @property
     def retained_bytes(self) -> int:
-        return len(self._text.encode("utf-8"))
+        return sum(len(text.encode("utf-8")) for text, _ in self._parts)
 
     def clear(self) -> None:
-        self._text = ""
+        self._parts = []
         self._generation = None
-        self._end_ms = None
-        self._ambiguous = False
 
     def append(
         self, delta: str, *, start_ms: float, end_ms: float, generation: int, accepted: bool
@@ -94,8 +92,6 @@ class SpeechFragments:
         if self._generation != generation:
             self.clear()
             self._generation = generation
-        if self._ambiguous:
-            return
         if (
             not isinstance(delta, str)
             or not delta
@@ -106,31 +102,27 @@ class SpeechFragments:
                 for value in (start_ms, end_ms)
             )
             or not 0 <= start_ms <= end_ms <= 3600000
-            or self._end_ms is not None
-            and start_ms < self._end_ms
-            or self.retained_bytes + len(delta.encode("utf-8")) > 4096
+            or len(delta.encode("utf-8")) > 4096
         ):
-            self._text = ""
-            self._ambiguous = True
+            self._parts = []
             return
-        self._text += delta
-        self._end_ms = end_ms
+        self._parts.append((delta, float(start_ms)))
+        # Older speech gives way; the clarity check also sees the whole history.
+        while self.retained_bytes > 4096:
+            self._parts.pop(0)
 
     def consume(self, *, offset_ms: float, generation: int) -> str | None:
-        try:
-            if (
-                not self._ambiguous
-                and self._text.strip()
-                and generation == self._generation
-                and self._end_ms is not None
-                and type(offset_ms) in (int, float)
-                and math.isfinite(offset_ms)
-                and self._end_ms <= offset_ms <= self._end_ms + 2000
-            ):
-                return self._text
-            return None
-        finally:
+        """The fragments begun by the delegation's offset; later ones stay for the next."""
+        if (
+            generation != self._generation
+            or type(offset_ms) not in (int, float)
+            or not math.isfinite(offset_ms)
+        ):
             self.clear()
+            return None
+        taken = "".join(text for text, start in self._parts if start <= offset_ms)
+        self._parts = [part for part in self._parts if part[1] > offset_ms]
+        return taken if taken.strip() else None
 
 
 class DelegationQueue:
