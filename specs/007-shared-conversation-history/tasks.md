@@ -423,11 +423,19 @@ description: "Task list for feature 007: Shared Conversation History Across Agen
 - [X] T082 [P] Document `CALLER_TRANSCRIPTION_WAIT_SECONDS`, `CALLER_REASONING_EFFORT` and `CALLER_VOICE_DELEGATION_UPDATES`, with defaults and ranges, in `docs/environments.md`.
 - [X] T083 Add a section to `docs/capacity.md` for the handover delay per path and modality (SC-005), input size per turn, cost per conversation, the T078 results and the option A criteria (R1), marked pending until T087.
 - [X] T084 Run the full checks (`ci.py check` and `verify_docs.py`, per [quickstart.md](quickstart.md)) and fix any failure.
-- [ ] T085 With owner approval, deploy to int:
+- [X] T085 With owner approval, deploy to int:
   1. publish the images;
   2. deploy management first, then the runtime (relay compatibility, T030);
   3. pin the tags in `code/infra/environments/int/int.tfvars.json`;
   4. run `terraform-deploy`.
+
+  Done 2026-11-24:
+  - Images: `sha-b2bb1f7aade5205151cd77a7f203f61333e67679` (#52 merge), both tags pinned in one PR (#53). The owner chose this over the management-first order.
+  - Run 45508163173 applied, and every environment check passed, including the functional journey.
+  - Fixes on the way:
+    - The tenant policy `StorageAccount_PublicNetwork_Modify` had disabled public access on the state account; the owner tagged it `SecurityControl=Ignore` and re-enabled access.
+    - The check's speech step now acts as an open microphone and speaker for 6 s before it stops (#54–#56).
+    - One slot held by an earlier check was released with `caller_runtime.recovery`.
 - [ ] T086 After at least 20 voice delegations on int, run the [P4 query](contracts/observability.md#p4-transcription-wait). Record the untranscribed share and the actual wait under R15 in `specs/007-shared-conversation-history/research.md`, and raise `CALLER_TRANSCRIPTION_WAIT_SECONDS` (0–2) if more than 10 % end untranscribed.
 - [ ] T087 With the owner, run the acceptance set A1–A9 by voice and by text (18 runs) per [quickstart.md](quickstart.md#3-acceptance-set-on-int-a1a9-sc-001sc-003). Record destination, context use, pair consistency and quietness in `specs/007-shared-conversation-history/checklists/review.md`. Pass: SC-001, SC-002, SC-003, and SC-011 in at least 16 of 18 runs.
 - [ ] T088 From the T087 runs, check the SC-005 target per [observability.md](contracts/observability.md#sc-005-target-check) (no run ended with `work_deadline_exceeded`, and no handover was refused with `refused_budget`), and record the SC-005 and SC-009 measurements and the option A criteria in `docs/capacity.md`.
