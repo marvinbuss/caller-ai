@@ -443,6 +443,63 @@ def test_playback_that_is_never_acknowledged_still_ends_as_credit_exhausted(endp
     assert errors == [
         {"type": "error", "code": "limit_exceeded", "reason": "audio_credit_exhausted"}
     ]
+    # The diagnostic tells a browser that stopped acknowledging from one that stopped sending:
+    # this client never acknowledged and sent nothing after authenticating.
+    failures = [
+        event
+        for event in endpoint.client.app.state.telemetry.events
+        if event["event"] == "test.session.failure"
+    ]
+    assert [(e["error_class"], e["error_code"]) for e in failures] == [
+        ("WirePressure", "playback_credit_exhausted")
+    ]
+    assert failures[0]["pending_bytes"] == "24000"
+    assert "since_played_ms" not in failures[0] and "since_client_ms" not in failures[0]
+
+
+def test_playback_that_stops_being_acknowledged_names_how_long_it_stalled(endpoint, monkeypatch):
+    from caller_runtime.api import voice
+
+    monkeypatch.setattr(voice, "PLAYBACK_WAIT_SECONDS", 0.3)
+    with endpoint.connect() as socket:
+        socket.send_json(endpoint.message(1))
+        ready = socket.receive_json()
+        provider_greeting(endpoint, 10)
+        acknowledged = 0
+        with pytest.raises(WebSocketDisconnect):
+            while True:
+                frame = socket.receive()
+                if frame.get("bytes") is not None:
+                    _protocol, generation, sequence = struct.unpack(">BII", frame["bytes"][:9])
+                    if sequence <= 10:
+                        acknowledged += 1
+                        socket.send_json(
+                            {
+                                "type": "audio.played",
+                                "sequence": acknowledged,
+                                "sessionId": ready["sessionId"],
+                                "generation": generation,
+                                "audioSequence": sequence,
+                            }
+                        )
+                elif frame.get("text") is None:
+                    raise WebSocketDisconnect(frame.get("code", 1000))
+    failures = [
+        event
+        for event in endpoint.client.app.state.telemetry.events
+        if event["event"] == "test.session.failure"
+    ]
+    assert [e["error_code"] for e in failures] == ["playback_credit_exhausted"]
+    # Acknowledgements stopped for the whole wait while the client had last spoken just as long.
+    assert int(failures[0]["since_played_ms"]) >= 300
+    assert int(failures[0]["since_client_ms"]) >= 300
+    assert failures[0]["pending_bytes"] == "24000"
+
+
+def test_playback_waits_eight_seconds_for_a_paused_browser():
+    from caller_runtime.api import voice
+
+    assert voice.PLAYBACK_WAIT_SECONDS == 8.0
 
 
 def test_live_events_behind_queued_speech_are_read_before_that_speech_plays(endpoint):

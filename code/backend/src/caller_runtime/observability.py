@@ -79,7 +79,7 @@ DIAGNOSTICS = {
     "test.live.failure": frozenset(),
     "test.model.failure": frozenset(),
     "test.work.failure": frozenset(),
-    "test.session.failure": frozenset(),
+    "test.session.failure": frozenset({"since_played_ms", "since_client_ms", "pending_bytes"}),
     "test.speech.unobserved": frozenset({"end_ms", "since_first_frame_ms", "since_last_frame_ms"}),
 }
 DIAGNOSTIC_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")

@@ -43,7 +43,9 @@ from caller_runtime.services.speech_parts import split_reply
 PATH = "/v1/conversations/voice"
 SUBPROTOCOL = "caller.voice.v1"
 # Live sends speech faster than real time; only playback that stalls this long is an overflow.
-PLAYBACK_WAIT_SECONDS = 2.0
+# A browser's playback can pause for seconds (a Bluetooth headset switching profile when the
+# microphone opens); the playback queue keeps Live's output meanwhile.
+PLAYBACK_WAIT_SECONDS = 8.0
 # Live generated a 100-s answer within seconds; reading must not wait for it to play out.
 PLAYBACK_QUEUE_BYTES = 120 * 48000
 
@@ -414,10 +416,30 @@ class VoiceWire:
         self._inflight_audio = 0
         self._inflight_generation = 1
         self._room = asyncio.Event()
+        # Monotonic times of the last playback acknowledgement that freed room and of the last
+        # frame read from the client, for the stall diagnostic.
+        self.played_at: float | None = None
+        self.client_at: float | None = None
 
     def played(self, sequence: int, *, generation: int) -> None:
+        pending = self.audio.pending_bytes
         self.audio.played(sequence, generation=generation)
+        if self.audio.pending_bytes < pending:
+            self.played_at = time.monotonic()
         self._room.set()
+
+    def stall_numbers(self) -> dict[str, int | None]:
+        """How long acknowledgements and client frames had stopped, and the unacknowledged bytes."""
+        now = time.monotonic()
+        return {
+            "since_played_ms": None
+            if self.played_at is None
+            else round((now - self.played_at) * 1000),
+            "since_client_ms": None
+            if self.client_at is None
+            else round((now - self.client_at) * 1000),
+            "pending_bytes": self.audio.pending_bytes,
+        }
 
     def _advance(self, generation: int) -> None:
         if generation <= self._generation:
@@ -982,6 +1004,7 @@ def create_router(
 
                 while True:
                     frame = await socket.receive()
+                    wire.client_at = time.monotonic()
                     if frame["type"] == "websocket.disconnect":
                         raise WebSocketDisconnect(frame.get("code", 1000))
                     if frame.get("bytes") is not None:
@@ -1068,6 +1091,10 @@ def create_router(
                     mode="speech",
                     error=type(error).__name__,
                     code=error.args[0] if error.args else None,
+                    numbers=wire.stall_numbers()
+                    if isinstance(error, WirePressure)
+                    and error.args[:1] == ("playback_credit_exhausted",)
+                    else None,
                 )
             await refuse(error)
         finally:
