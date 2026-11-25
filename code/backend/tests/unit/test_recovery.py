@@ -78,6 +78,56 @@ def test_recovery_releases_only_expired_fenced_slots_held_by_an_unsettled_model_
     asyncio.run(scenario())
 
 
+def test_the_failed_start_filter_releases_only_slots_left_by_a_failed_voice_start(
+    admission_case,
+):
+    from caller_runtime.domain.conversation import WorkBudget
+    from caller_runtime.recovery import release_stuck_slots
+
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def held(number, kind, *, bound=True):
+        mode = "speech" if kind == "live" else "text"
+        slot = await service.reserve(permit(number, actor=f"manager-{number}", mode=mode))
+        now = clock.utc_now()
+        work = WorkBudget(now, now + timedelta(seconds=10))
+        intent = await service.begin_attempt(
+            slot.session_id,
+            slot.owner_epoch,
+            kind=kind,
+            binding_hash="a" * 64,
+            generation=slot.generation,
+            work=work,
+        )
+        if kind == "live" and bound:
+
+            async def opened():
+                return None
+
+            await service.perform(intent, opened, work=work)
+            await service.bind_live_session(intent, provider_session_id=f"provider-{number}")
+        await service.mark_terminal(slot.session_id, slot.owner_epoch)
+        return slot.session_id
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        model = await held(1, "model")
+        speech = await held(2, "live")
+        failed = await held(3, "live", bound=False)
+        clock.advance(600 + 300)
+        assert await release_stuck_slots(
+            repository, now=clock.utc_now(), apply=True, failed_starts_only=True
+        ) == [failed]
+        remaining = (
+            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        ).authority
+        assert {slot.session_id for slot in remaining.slots} == {model, speech}
+
+    asyncio.run(scenario())
+
+
 def test_the_store_drops_a_slot_without_evidence_only_for_recovery_of_an_unbound_live_attempt(
     admission_case,
 ):

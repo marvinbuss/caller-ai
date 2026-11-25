@@ -14,7 +14,8 @@ the runtime is gone. A provider-bound attempt is settled with a closure receipt 
 unbound Live attempt never got a provider session (its start failed and closed the socket), so
 no receipt can exist: such a slot is removed without one, which the store allows only here. It
 never creates or deletes the authority item and never touches a slot that is still live.
-Preview mode, the default, lists the candidates and writes nothing.
+Preview mode, the default, lists the candidates and writes nothing. The runtime applies the same
+rule on its own, once a minute, to slots left only by a failed voice start.
 
 Run inside the runtime container, where the managed identity can reach the private store:
 `python -m caller_runtime.recovery` (preview) or `python -m caller_runtime.recovery --apply`.
@@ -31,6 +32,7 @@ from caller_runtime.adapters.admission_repository import (
     AuthorityConflict,
     AuthoritySnapshot,
     TestAdmissionRepository,
+    unbound_live_only,
 )
 from caller_runtime.domain.configuration import encoded
 from caller_runtime.domain.conversation import (
@@ -62,7 +64,14 @@ def _live_releasable(slot: TestSlot) -> bool:
     return attempt is not None and attempt.provider_session_id is not None
 
 
-def candidates(authority: TestAuthority, now: datetime) -> list[TestSlot]:
+def failed_start(slot: TestSlot) -> bool:
+    """A slot left only by a voice start that failed before GPT-Live confirmed a session."""
+    return unbound_live_only(slot) and not _unsettled(slot, "model")
+
+
+def candidates(
+    authority: TestAuthority, now: datetime, *, failed_starts_only: bool = False
+) -> list[TestSlot]:
     now = utc(now)
     found = []
     for slot in authority.slots:
@@ -71,6 +80,7 @@ def candidates(authority: TestAuthority, now: datetime) -> list[TestSlot]:
             and now >= min(slot.expires_at, slot.auth_expires_at, slot.idle_expires_at) + GRACE
             and not any(_unsettled(slot, kind) for kind in SETTLED_KINDS)
             and (_unsettled(slot, "model") or _unsettled(slot, "live") or _recovered(slot))
+            and (not failed_starts_only or failed_start(slot))
         ):
             found.append(slot)
     return found
@@ -128,13 +138,21 @@ def _settled(slot: TestSlot, now: datetime) -> dict[str, Any]:
 
 
 async def release_stuck_slots(
-    repository: TestAdmissionRepository, *, now: datetime, apply: bool
+    repository: TestAdmissionRepository,
+    *,
+    now: datetime,
+    apply: bool,
+    failed_starts_only: bool = False,
 ) -> list[str]:
-    """Return the session ids that match; with `apply`, release them (idempotent)."""
+    """Return the session ids that match; with `apply`, release them (idempotent).
+
+    `failed_starts_only` limits it to slots left by failed voice starts, which the runtime
+    releases on its own.
+    """
     now = utc(now)
     for _attempt in range(4):
         current = await repository.read(deadline=asyncio.get_running_loop().time() + 10)
-        found = candidates(current.authority, now)
+        found = candidates(current.authority, now, failed_starts_only=failed_starts_only)
         released = [slot.session_id for slot in found]
         if not apply or not found:
             return released
