@@ -51,6 +51,7 @@ from caller_runtime.domain.conversation import (
 )
 from caller_runtime.domain.ports import ContainerPort, CredentialPort
 from caller_runtime.observability import Telemetry
+from caller_runtime.recovery import release_stuck_slots
 from caller_runtime.services import modality_defaults
 from caller_runtime.services.admission import AdmissionError, TestAdmissionService
 from caller_runtime.services.cleanup import CleanupObservations, ResourceCleanupVerifier
@@ -68,6 +69,8 @@ from caller_runtime.settings import (
 AUTHORITY_CONTAINER: Final = "call-sessions"
 HISTORY_PROBE_SECONDS: Final = 10
 HISTORY_STALE_SECONDS: Final = 30
+# How often the runtime releases slots left by failed voice starts (after recovery's grace).
+RELEASE_SWEEP_SECONDS: Final = 60
 LIVE_DELEGATION_SUFFIX: Final = (
     "\nDelegate reasoning, business actions and agent changes "
     "to the application-owned client. "
@@ -241,6 +244,7 @@ class ConversationRuntime:
         self.history: TextHistoryRepository | None = None
         self._history_ok_at: float | None = None
         self._history_probe: asyncio.Task[None] | None = None
+        self._release_sweep: asyncio.Task[None] | None = None
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
         self._starting: set[asyncio.Task[object]] = set()
         self._stop = asyncio.Event()
@@ -332,6 +336,37 @@ class ConversationRuntime:
                 async with asyncio.timeout(HISTORY_PROBE_SECONDS):
                     await stop.wait()
             except TimeoutError:
+                continue
+
+    async def release_failed_starts(self) -> list[str]:
+        """Release slots left by voice starts that failed before GPT-Live confirmed a session.
+
+        The same rule as `python -m caller_runtime.recovery`, limited to those slots: expired at
+        least five minutes ago, fenced, and held only by an unbound Live attempt.
+        """
+        repository = self.repository
+        if repository is None:
+            return []
+        released = await release_stuck_slots(
+            repository, now=self._utc_now(), apply=True, failed_starts_only=True
+        )
+        if self._telemetry is not None:
+            for _session in released:
+                self._telemetry.event("test.cleanup", "success", mode="speech", reason="recovered")
+        return released
+
+    async def _sweep_failed_starts(self, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            try:
+                async with asyncio.timeout(RELEASE_SWEEP_SECONDS):
+                    await stop.wait()
+                return
+            except TimeoutError:
+                pass
+            try:
+                await self.release_failed_starts()
+            except Exception:
+                # The next sweep tries again; the recovery command stays the manual path.
                 continue
 
     def _schedule_cleanup(self, controller: ConversationExecutor) -> None:
@@ -610,6 +645,7 @@ class ConversationRuntime:
                     utc_now=self._utc_now,
                 )
                 self._history_probe = asyncio.create_task(self._probe_history(stop))
+                self._release_sweep = asyncio.create_task(self._sweep_failed_starts(stop))
                 self._running = True
                 refresh = asyncio.create_task(self._configuration.run(stop))
         except Exception:
@@ -634,6 +670,9 @@ class ConversationRuntime:
             if self._history_probe is not None:
                 self._history_probe.cancel()
                 await asyncio.gather(self._history_probe, return_exceptions=True)
+            if self._release_sweep is not None:
+                self._release_sweep.cancel()
+                await asyncio.gather(self._release_sweep, return_exceptions=True)
             for controller in self._sessions.values():
                 controller.fence()
             pending = tuple(task for task in self._starting if task is not asyncio.current_task())

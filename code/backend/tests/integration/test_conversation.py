@@ -594,6 +594,102 @@ def test_composition_owns_authenticated_refresh_without_model_or_default_identit
         telemetry.close()
 
 
+def test_the_running_runtime_releases_slots_left_by_failed_voice_starts(
+    reviewed_runtime_options, signed_test_permit, admission_case, runtime_revision_v2
+):
+    import asyncio
+    import time
+    from datetime import timedelta
+
+    import httpx
+
+    from caller_runtime.composition import ConversationRuntime, RuntimeOptions
+    from caller_runtime.domain.conversation import WorkBudget
+    from caller_runtime.observability import Telemetry
+
+    public, sign, clock, assertion = signed_test_permit
+    service, repository, container, service_clock, permit, cache = admission_case
+
+    class Credentials:
+        async def get_token(self, scope):
+            return SimpleNamespace(token="synthetic-sweep-token", expires_on=time.time() + 900)
+
+        async def close(self):
+            pass
+
+    async def configuration(request):
+        return httpx.Response(
+            200, json=runtime_revision_v2(), headers={"etag": '"current-fixture"'}
+        )
+
+    async def containers(name):
+        return {"call-sessions": container, "text-conversations": ContainerDouble()}[name]
+
+    runtime = ConversationRuntime(
+        options=RuntimeOptions(**reviewed_runtime_options),
+        owner_id="runtime-fixture-owner",
+        container_factory=containers,
+        credential_factory=AsyncMock(return_value=Credentials()),
+        workload_identity=SimpleNamespace(require_runtime=AsyncMock()),
+        verification_keys={"manager-fixture-key": public},
+        utc_now=clock.utc_now,
+        monotonic=clock.monotonic,
+        configuration_transport=httpx.MockTransport(configuration),
+    )
+    telemetry = Telemetry("caller-runtime", "local")
+
+    async def started(number, *, bound):
+        slot = await service.reserve(permit(number, actor=f"manager-{number}", mode="speech"))
+        now = service_clock.utc_now()
+        work = WorkBudget(now, now + timedelta(seconds=10))
+        intent = await service.begin_attempt(
+            slot.session_id,
+            slot.owner_epoch,
+            kind="live",
+            binding_hash="a" * 64,
+            generation=slot.generation,
+            work=work,
+        )
+        if bound:
+
+            async def opened():
+                return None
+
+            await service.perform(intent, opened, work=work)
+            await service.bind_live_session(intent, provider_session_id=f"provider-{number}")
+        await service.mark_terminal(slot.session_id, slot.owner_epoch)
+        return slot.session_id
+
+    async def scenario():
+        await repository.initialize(
+            now=service_clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        failed = await started(1, bound=False)
+        bound = await started(2, bound=True)
+        async with runtime.running(telemetry):
+            # Within the grace nothing is released.
+            assert await runtime.release_failed_starts() == []
+            clock.advance(3600)
+            assert await runtime.release_failed_starts() == [failed]
+            assert await runtime.release_failed_starts() == []
+        remaining = (
+            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        ).authority
+        # A provider-bound Live attempt stays for the operator's recovery.
+        assert [slot.session_id for slot in remaining.slots] == [bound]
+        released = [
+            (e["outcome"], e["reason_code"], e["kind"])
+            for e in telemetry.events
+            if e["event"] == "test.cleanup" and e.get("reason_code") == "recovered"
+        ]
+        assert released == [("success", "recovered", "voice")]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        telemetry.close()
+
+
 def test_composition_caches_the_history_probe_and_reports_failed_or_stale_results(
     reviewed_runtime_options, signed_test_permit, admission_case, runtime_revision_v2
 ):

@@ -122,6 +122,7 @@ TEST_REASONS = frozenset(
         "refused_step_limit",
         "condensed",
         "limit",
+        "recovered",
     }
 )
 ROLES = frozenset({"welcome", "routing", "goodbye", "ordinary"})
