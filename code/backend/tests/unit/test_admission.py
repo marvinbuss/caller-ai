@@ -2471,6 +2471,75 @@ def test_an_unconfirmed_live_close_names_its_stage_and_fixed_code(live_case, mon
         telemetry.close()
 
 
+@pytest.mark.parametrize("reply", ["unsupported", "dropped", "closed"])
+def test_a_live_reader_failure_names_its_fixed_code(live_case, monkeypatch, reply):
+    from types import SimpleNamespace
+
+    from caller_runtime.observability import Telemetry
+    from caller_runtime.services.conversation_policy import SpeechSegments
+    from tests.doubles import live_closed
+
+    service, repository, clock, socket, opened = live_case
+    telemetry = Telemetry("caller-runtime", "local")
+
+    class Dropped(Exception):
+        rcvd = SimpleNamespace(code=1011)
+
+    async def scenario():
+        original, segment = await opened()
+        monkeypatch.setattr(segment.adapter, "_telemetry", telemetry)
+        segments = SpeechSegments(current=segment)
+        if reply == "unsupported":
+            await socket.events.put(
+                json.dumps({"type": "session.synthetic_private_event", "text": "private"})
+            )
+        elif reply == "dropped":
+
+            async def dropped():
+                raise Dropped("synthetic private close detail")
+
+            monkeypatch.setattr(socket, "recv", dropped)
+        else:
+            await socket.events.put(live_closed(socket.start, "sess-case-fixture", 3))
+        # Two voice tests on int ended this way with no named cause (17:44 and 17:45 UTC).
+        with pytest.raises(PermissionError, match="live_unavailable"):
+            await segments.next_event()
+        failures = [e for e in telemetry.events if e["event"] == "test.live.failure"]
+        assert [(e["error_class"], e["error_code"]) for e in failures] == [
+            {
+                "unsupported": ("ValueError", "unsupported_live_event"),
+                "dropped": ("Dropped", "read_ws_1011"),
+                "closed": ("LiveClosed", "closed_close_requested"),
+            }[reply]
+        ]
+        assert "private" not in json.dumps(telemetry.events)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        telemetry.close()
+
+
+def test_a_stopped_live_reader_logs_no_failure(live_case, monkeypatch):
+    from caller_runtime.observability import Telemetry
+
+    service, repository, clock, socket, opened = live_case
+    telemetry = Telemetry("caller-runtime", "local")
+
+    async def scenario():
+        original, segment = await opened()
+        monkeypatch.setattr(segment.adapter, "_telemetry", telemetry)
+        await service.mark_terminal(original.session_id, original.owner_epoch)
+        with pytest.raises(PermissionError, match="live_unavailable"):
+            await segment.next_event()
+        assert not [e for e in telemetry.events if e["event"] == "test.live.failure"]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        telemetry.close()
+
+
 def test_cleanup_observation_source_uses_actual_bound_live_close_and_owned_disposal(
     live_case, monkeypatch
 ):

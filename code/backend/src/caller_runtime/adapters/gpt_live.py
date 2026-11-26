@@ -781,8 +781,28 @@ class GptLiveSession:
                 if self._retired:
                     raise PermissionError("stale_generation")
                 return event
-        except Exception:
+        except Exception as error:
+            if not isinstance(error, (PermissionError, AdmissionError)):
+                self._read_failed(error)
             raise PermissionError("live_unavailable") from None
+
+    def _read_failed(self, error: Exception) -> None:
+        """Name why reading GPT-Live failed: class and one fixed code, no provider text."""
+        if self.adapter._telemetry is None:
+            return
+        received = getattr(getattr(error, "rcvd", None), "code", None)
+        if type(error) is ValueError and self.protocol.rejection is not None:
+            code = self.protocol.rejection
+        elif type(received) is int:
+            code = f"read_ws_{received}"
+        else:
+            code = "read"
+        try:
+            self.adapter._telemetry.diagnostic(
+                "test.live.failure", mode="speech", error=type(error).__name__, code=code
+            )
+        except Exception:
+            pass
 
     def retire_output(self) -> None:
         self._retired = True
