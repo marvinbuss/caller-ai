@@ -162,7 +162,8 @@ def run(*arguments: str) -> None:
     if arguments[:2] in (("uv", "export"), ("uv", "lock")):
         values["UV_DEFAULT_INDEX"] = "https://pypi.org/simple"
     try:
-        subprocess.run(arguments, cwd=ROOT, env=values, check=True, timeout=900)
+        # The management suite alone takes about 15 minutes on the Windows runner.
+        subprocess.run(arguments, cwd=ROOT, env=values, check=True, timeout=1800)
     finally:
         if "reflex" in arguments:
             restore_frontend_lock()
