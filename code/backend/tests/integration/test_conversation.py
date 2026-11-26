@@ -594,7 +594,7 @@ def test_composition_owns_authenticated_refresh_without_model_or_default_identit
         telemetry.close()
 
 
-def test_the_running_runtime_releases_slots_left_by_failed_voice_starts(
+def test_the_running_runtime_releases_slots_held_only_by_a_live_attempt(
     reviewed_runtime_options, signed_test_permit, admission_case, runtime_revision_v2
 ):
     import asyncio
@@ -638,14 +638,15 @@ def test_the_running_runtime_releases_slots_left_by_failed_voice_starts(
     )
     telemetry = Telemetry("caller-runtime", "local")
 
-    async def started(number, *, bound):
-        slot = await service.reserve(permit(number, actor=f"manager-{number}", mode="speech"))
+    async def started(number, *, bound, kind="live"):
+        mode = "speech" if kind == "live" else "text"
+        slot = await service.reserve(permit(number, actor=f"manager-{number}", mode=mode))
         now = service_clock.utc_now()
         work = WorkBudget(now, now + timedelta(seconds=10))
         intent = await service.begin_attempt(
             slot.session_id,
             slot.owner_epoch,
-            kind="live",
+            kind=kind,
             binding_hash="a" * 64,
             generation=slot.generation,
             work=work,
@@ -665,24 +666,25 @@ def test_the_running_runtime_releases_slots_left_by_failed_voice_starts(
             now=service_clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
         )
         failed = await started(1, bound=False)
-        bound = await started(2, bound=True)
+        unconfirmed = await started(2, bound=True)
+        model = await started(3, bound=False, kind="model")
         async with runtime.running(telemetry):
             # Within the grace nothing is released.
-            assert await runtime.release_failed_starts() == []
+            assert await runtime.release_live_slots() == []
             clock.advance(3600)
-            assert await runtime.release_failed_starts() == [failed]
-            assert await runtime.release_failed_starts() == []
+            assert await runtime.release_live_slots() == [failed, unconfirmed]
+            assert await runtime.release_live_slots() == []
         remaining = (
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority
-        # A provider-bound Live attempt stays for the operator's recovery.
-        assert [slot.session_id for slot in remaining.slots] == [bound]
+        # An unsettled model attempt stays for the operator's recovery.
+        assert [slot.session_id for slot in remaining.slots] == [model]
         released = [
             (e["outcome"], e["reason_code"], e["kind"])
             for e in telemetry.events
             if e["event"] == "test.cleanup" and e.get("reason_code") == "recovered"
         ]
-        assert released == [("success", "recovered", "voice")]
+        assert released == [("success", "recovered", "voice")] * 2
 
     try:
         asyncio.run(scenario())
