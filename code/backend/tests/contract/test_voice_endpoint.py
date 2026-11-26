@@ -490,9 +490,10 @@ def test_playback_that_stops_being_acknowledged_names_how_long_it_stalled(endpoi
         if event["event"] == "test.session.failure"
     ]
     assert [e["error_code"] for e in failures] == ["playback_credit_exhausted"]
-    # Acknowledgements stopped for the whole wait while the client had last spoken just as long.
-    assert int(failures[0]["since_played_ms"]) >= 300
-    assert int(failures[0]["since_client_ms"]) >= 300
+    # Acknowledgements stopped for about the whole wait (the last one may land just after it
+    # began, and Windows' clock ticks in ~16 ms steps).
+    assert int(failures[0]["since_played_ms"]) >= 200
+    assert int(failures[0]["since_client_ms"]) >= 200
     assert failures[0]["pending_bytes"] == "24000"
 
 
