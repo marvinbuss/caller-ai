@@ -151,7 +151,7 @@ ContainerAppConsoleLogs_CL
 | where Log_s has "test.handover"
 | extend entry = parse_json(Log_s)
 | where tostring(entry["event"]) == "test.handover"
-| summarize handovers = count() by bin(TimeGenerated, 5m), kind = tostring(entry["kind"]),
+| summarize handovers = count() by bin(TimeGenerated, 5m), mode = tostring(entry["kind"]),
     outcome = tostring(entry["outcome"]), reason = tostring(entry["reason_code"]),
     path = tostring(entry["path"])
 ```
@@ -166,7 +166,7 @@ ContainerAppConsoleLogs_CL
 | where tostring(entry["measurement"]) == "handover_seconds"
 | summarize p50 = percentile(todouble(entry["value"]), 50),
     p90 = percentile(todouble(entry["value"]), 90), n = count()
-    by path = tostring(entry["path"]), kind = tostring(entry["kind"])
+    by path = tostring(entry["path"]), mode = tostring(entry["kind"])
 ```
 
 The target is met when no acceptance run ends with `work_deadline_exceeded` (shown on the Test page)
@@ -191,7 +191,7 @@ ContainerAppConsoleLogs_CL
 | where tostring(entry["event"]) in ("test.handover", "test.delegation")
 | extend delay_s = datetime_diff("second", ingestion_time(), todatetime(entry["timestamp"]))
 | summarize events = count(), max_delay_s = max(delay_s)
-    by event = tostring(entry["event"]), kind = tostring(entry["kind"])
+    by event = tostring(entry["event"]), mode = tostring(entry["kind"])
 ```
 
 **P4 (transcription wait).** After the first deployment and at least 20 voice delegations:
@@ -200,13 +200,12 @@ ContainerAppConsoleLogs_CL
 ContainerAppConsoleLogs_CL
 | where Log_s has "test.delegation" or Log_s has "transcription_wait_seconds"
 | extend entry = parse_json(Log_s)
+| extend wait = iff(tostring(entry["measurement"]) == "transcription_wait_seconds",
+    todouble(entry["value"]), real(null))
 | summarize delegations = countif(tostring(entry["event"]) == "test.delegation"),
     untranscribed = countif(tostring(entry["event"]) == "test.delegation"
         and tostring(entry["untranscribed"]) == "true"),
-    wait_p50 = percentileif(todouble(entry["value"]), 50,
-        tostring(entry["measurement"]) == "transcription_wait_seconds"),
-    wait_p90 = percentileif(todouble(entry["value"]), 90,
-        tostring(entry["measurement"]) == "transcription_wait_seconds")
+    wait_p50 = percentile(wait, 50), wait_p90 = percentile(wait, 90)
 | extend untranscribed_share = todouble(untranscribed) / delegations
 ```
 

@@ -40,24 +40,30 @@ may wait up to `CALLER_TRANSCRIPTION_WAIT_SECONDS` (0.5 s by default) for its tr
 
 | Measurement | Declared | Local load test | int measurement |
 |-------------|----------|-----------------|-----------------|
-| Answer after a handover (SC-005 target) | Starts within the work budget: no `work_deadline_exceeded`, no `refused_budget` | 5 concurrent voice sessions at the 5-slot limit, each with three handovers, one refused handover, one condensing and one slow transcript: every answer within the budget, no `refused_budget` | Pending (T087, T088) |
-| Handover delay per path and modality (SC-005) | Recorded, no threshold: p50 and p90 of `handover_seconds` by `path` and `kind` | Measured with the doubles only (no model latency) | Pending (T088) |
-| Input size per turn | Recorded: `test.history` `history_kib` range at each handover | Below 16 KiB in the load test | Pending (T088) |
-| Cost per conversation | Recorded: `input_tokens` and `output_tokens` of `test.usage` per conversation, handovers and condensing included | Not measured (doubles) | Pending (T088) |
-| Slots and Live attempts | Unchanged: one slot and one Live attempt per voice session, released after verified cleanup | No extra admission refusal; every slot released; one `session.start` per session | Pending |
+| Answer after a handover (SC-005 target) | Starts within the work budget: no `work_deadline_exceeded`, no `refused_budget` | 5 concurrent voice sessions at the 5-slot limit, each with three handovers, one refused handover, one condensing and one slow transcript: every answer within the budget, no `refused_budget` | Met: 67 handovers in the acceptance runs, all applied; no `work_deadline_exceeded`, no `refused_budget` |
+| Handover delay per path and modality (SC-005) | Recorded, no threshold: p50 and p90 of `handover_seconds` by `path` and `kind` | Measured with the doubles only (no model latency) | Voice: routing 2.89 / 4.11 s (n = 14, max 6.89), direct 2.25 / 2.34 s (n = 2), peer 1.74 / 2.35 s (n = 3), lifecycle 1.14 / 1.88 s (n = 2). Text: routing 2.83 / 3.37 s (n = 13), direct 2.50 / 3.22 s (n = 4), peer 2.66 / 2.84 s (n = 2) |
+| Input size per turn | Recorded: `test.history` `history_kib` range at each handover | Below 16 KiB in the load test | Below 16 KiB at all 67 handovers; model input per call p50 974 / p90 1,440 tokens (voice), 920 / 1,116 tokens (text), at most 1,662 |
+| Cost per conversation | Recorded: `input_tokens` and `output_tokens` of `test.usage` per conversation, handovers and condensing included | Not measured (doubles) | About 7,800 input and 250 output tokens per voice conversation (15 conversations, 125 calls), plus 63 s of GPT-Live audio on average (12 confirmed closes); about 6,600 input and 280 output tokens per text conversation (12 conversations, 87 calls). No condensing ran. Token counts only, no prices |
+| Slots and Live attempts | Unchanged: one slot and one Live attempt per voice session, released after verified cleanup | No extra admission refusal; every slot released; one `session.start` per session | One Live attempt per session. Two of 15 voice sessions held their slot after Stop because GPT-Live did not confirm the close; released by recovery, automatic with #65 |
 
 The local results come from `code/backend/tests/load/test_handover_capacity.py`. The queries are
-in [monitoring](runbooks/monitoring.md#handover-delegation-and-history-events).
+in [monitoring](runbooks/monitoring.md#handover-delegation-and-history-events). The int
+measurements come from the acceptance runs on 2026-11-26, 09:04–12:00 UTC, images
+`sha-54b2201` (p50 / p90).
 
-**Follow-up criteria for a dispatch step (option A of R1).** After the acceptance runs (T087),
-record here:
+**Follow-up criteria for a dispatch step (option A of R1).** Measured in the acceptance runs
+(T087, [review](../specs/007-shared-conversation-history/checklists/review.md)):
 
-- the added handover delay per path and modality (SC-005);
-- wrong destinations and repeated questions in the 18 acceptance runs (SC-001, SC-002);
-- how often voice requests are still rejected as unclear (`test.delegation` with reason
-  `invalid_input`).
+- the added handover delay per path and modality: 1.1–2.9 s at p50 and up to 4.1 s at p90 per
+  path (table above); the slowest single handover took 6.9 s (voice, routing);
+- wrong destinations and repeated questions: none in the 16 runs possible on int (A6 needs a
+  reviewed tool); one text repeat of A1 stayed with Billing Desk instead of handing over;
+- voice requests rejected as unclear: 10 of 32 delegations (`invalid_input`), 7 of them with the
+  caller's transcript still incomplete after the 0.5 s wait (the 2 s wait of #62 was not yet
+  applied).
 
-All three are **pending** until T087.
+None of these calls for the dispatch step now; the unclear voice requests are re-measured with the
+2 s wait.
 
 ## Current State
 

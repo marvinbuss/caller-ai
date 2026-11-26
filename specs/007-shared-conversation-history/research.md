@@ -260,3 +260,12 @@ The int model account accepts only private network traffic, so P1–P3 ran insid
 | P3 | 3 | 3 of 3 accepted. | Native `function_call` rendering of other agents' tool and handoff items (R3); no text fallback. |
 
 P1 needs silent caller audio to run: without input audio frames, GPT-Live did not start speaking the commentary within 10 s. The probe now feeds silence like an open microphone.
+
+### P4 results (int, T086)
+
+| Window | Wait | Delegations | Untranscribed | Wait p50 / p90 | Decision |
+|--------|------|-------------|---------------|----------------|----------|
+| 2026-11-25 14:48–14:57 UTC (after #59) | 0.5 s (default) | 11 | 7 (64 %); all 5 clarification requests among them | — | Above 10 %: `CALLER_TRANSCRIPTION_WAIT_SECONDS` raised to 2 s for int (#62) |
+| 2026-11-26 09:04–12:00 UTC (acceptance runs) | 0.5 s (#62 not yet applied) | 32 | 18 (56 %); 7 of the 10 clarification requests among them | 0.50 / 0.50 s | The 2 s wait stays; measure again after the next `terraform-app-environment` apply |
+
+The caller's transcript usually reaches the runtime after GPT-Live's delegation; until #59 the caller's words were taken at the delegation itself, which is why the first runs were sent back for clarification so often.

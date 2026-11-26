@@ -436,10 +436,16 @@ description: "Task list for feature 007: Shared Conversation History Across Agen
     - The tenant policy `StorageAccount_PublicNetwork_Modify` had disabled public access on the state account; the owner tagged it `SecurityControl=Ignore` and re-enabled access.
     - The check's speech step now acts as an open microphone and speaker for 6 s before it stops (#54–#56).
     - One slot held by an earlier check was released with `caller_runtime.recovery`.
-- [ ] T086 After at least 20 voice delegations on int, run the [P4 query](contracts/observability.md#p4-transcription-wait). Record the untranscribed share and the actual wait under R15 in `specs/007-shared-conversation-history/research.md`, and raise `CALLER_TRANSCRIPTION_WAIT_SECONDS` (0–2) if more than 10 % end untranscribed.
-- [ ] T087 With the owner, run the acceptance set A1–A9 by voice and by text (18 runs) per [quickstart.md](quickstart.md#3-acceptance-set-on-int-a1a9-sc-001sc-003). Record destination, context use, pair consistency and quietness in `specs/007-shared-conversation-history/checklists/review.md`. Pass: SC-001, SC-002, SC-003, and SC-011 in at least 16 of 18 runs.
-- [ ] T088 From the T087 runs, check the SC-005 target per [observability.md](contracts/observability.md#sc-005-target-check) (no run ended with `work_deadline_exceeded`, and no handover was refused with `refused_budget`), and record the SC-005 and SC-009 measurements and the option A criteria in `docs/capacity.md`.
-- [ ] T089 With owner approval, verify alert delivery per [quickstart.md](quickstart.md#5-alert-delivery-fr-019) and restore the alert condition afterwards.
+- [X] T086 After at least 20 voice delegations on int, run the [P4 query](contracts/observability.md#p4-transcription-wait). Record the untranscribed share and the actual wait under R15 in `specs/007-shared-conversation-history/research.md`, and raise `CALLER_TRANSCRIPTION_WAIT_SECONDS` (0–2) if more than 10 % end untranscribed.
+
+  Done 2026-11-26: 56 % untranscribed with the 0.5 s wait (32 delegations); raised to 2 s for int in #62, which takes effect with the next `terraform-app-environment` apply. The documented queries now run in Log Analytics (`kind` is reserved, `percentileif` does not exist).
+- [X] T087 With the owner, run the acceptance set A1–A9 by voice and by text (18 runs) per [quickstart.md](quickstart.md#3-acceptance-set-on-int-a1a9-sc-001sc-003). Record destination, context use, pair consistency and quietness in `specs/007-shared-conversation-history/checklists/review.md`. Pass: SC-001, SC-002, SC-003, and SC-011 in at least 16 of 18 runs.
+
+  Done 2026-11-26: 16 of 16 runs possible on int passed; A6 needs a reviewed tool on int and stays covered by the automated tests. Defects found on the way were fixed in #58–#65.
+- [X] T088 From the T087 runs, check the SC-005 target per [observability.md](contracts/observability.md#sc-005-target-check) (no run ended with `work_deadline_exceeded`, and no handover was refused with `refused_budget`), and record the SC-005 and SC-009 measurements and the option A criteria in `docs/capacity.md`.
+- [X] T089 With owner approval, verify alert delivery per [quickstart.md](quickstart.md#5-alert-delivery-fr-019) and restore the alert condition afterwards.
+
+  Done 2026-11-26: the temporary condition fired after the owner's A1 text run and ran the action group; the email was not checked because the operations mailbox is not set up yet (accepted by the owner). The condition was restored and verified.
 
 ---
 
