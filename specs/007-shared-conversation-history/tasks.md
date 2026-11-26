@@ -522,3 +522,12 @@ Then: runtime track T054 → T055 → T056  ||  management track T057 → T058 �
 2. Add US4 (boundaries and privacy) before any int deployment.
 3. Add US5 (condensing) and US6 (telemetry and alert).
 4. Run the polish tasks, the load tests (T078) and the full checks (T084), then deploy (T085), measure (T086, T088) and run the acceptance set (T087) and the alert check (T089).
+
+## Phase 10: Convergence
+
+- [X] T099 Publish a reviewed synthetic tool for a Billing agent of the int acceptance configuration, run acceptance scenario A6 by voice and by text, and record both runs and the updated SC-001, SC-002 and SC-003 results in `specs/007-shared-conversation-history/checklists/review.md` per SC-001/SC-002/SC-003 (US1/AC2) (partial)
+
+  Done 2026-11-26: waived by the owner. Running A6 on int needs a synthetic reviewed tool endpoint, which this feature does not add; A6 stays covered by `test_a1_a6_a_colleague_sees_earlier_facts_and_tool_results_without_a_new_call`. Recorded in `checklists/review.md`; SC-001 to SC-003 stay at 16 of 16 runs and 8 of 8 pairs on int.
+- [X] T100 Review the runtime changes made for acceptance defects that no task requested (the automatic release of Live-held slots in `ConversationRuntime.release_live_slots` from #63 and #65, the `test.live.failure` and `test.model.failure` diagnostics from #58, #61, #65 and #70, and the ETag check in `TestAdmissionService._change` from #70), and record each as an accepted safeguard change in `specs/007-shared-conversation-history/research.md` or remove it per FR-010 (unrequested)
+
+  Done 2026-11-26: all four changes reviewed and accepted (the owner merged them); recorded as R16 in `research.md` with what each changes and why it stays within FR-010 and Constitution VI and VII.

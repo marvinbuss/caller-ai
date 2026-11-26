@@ -14,7 +14,7 @@ Published by the owner on 2026-11-25 as revision 7, per the spec's [Acceptance S
 | Technical Support | Yes | Tech Desk | Device Repair (link from Tech Desk) | None |
 | Archive | No | Archive Desk | | None |
 
-Tool for A6: none. int has no reviewed tool, so A6 (tool result reused after a handover) cannot run there. It is covered only by the automated tests of feature 007 (tool calls and results kept in the shared history and rendered to the next agent).
+Tool for A6: none. int has no reviewed tool, so A6 (tool result reused after a handover) cannot run there. It is covered only by the automated tests of feature 007 (tool calls and results kept in the shared history and rendered to the next agent), for example `test_a1_a6_a_colleague_sees_earlier_facts_and_tool_results_without_a_new_call` in `code/backend/tests/unit/test_conversation.py`. On 2026-11-26 the owner waived A6 on int (T099): running it would need a synthetic reviewed tool endpoint on int, which this feature does not add.
 
 ## Acceptance runs (T087, SC-001, SC-002, SC-003, SC-011)
 
@@ -49,7 +49,7 @@ Run by the owner, per [quickstart.md](../quickstart.md#3-acceptance-set-on-int-a
 | SC-011 quiet runs (best effort) | at least 16 of 18 | 16 of 16 runs |
 | A7 no handover and an explanation | both modes | Both modes |
 
-**Result**: Pass for the 16 runs possible on int. A6 needs a reviewed tool on int and stays covered by the automated tests only. Two voice sessions (A3, A8) left their slot held after Stop because GPT-Live did not confirm the close; #65 releases such slots automatically and logs why.
+**Result**: Pass for the 16 runs possible on int. A6 needs a reviewed tool on int and stays covered by the automated tests only; the owner waived it on int (T099, 2026-11-26). Two voice sessions (A3, A8) left their slot held after Stop because GPT-Live did not confirm the close; #65 releases such slots automatically and logs why.
 
 ## Measurements (T086, T088, SC-005, SC-009)
 
