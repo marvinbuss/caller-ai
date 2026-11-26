@@ -1,5 +1,6 @@
 """Regression tests for portable, offline repository checks."""
 
+import json
 import secrets
 import shlex
 import string
@@ -604,7 +605,7 @@ def test_python_alpine_stages_upgrade_patched_krb5_libs(dockerfile: str, stage: 
 @pytest.mark.parametrize(
     "package,vulnerable,fixed",
     [
-        ("virtualenv", "21.14.7", "21.14.9"),
+        ("virtualenv", "21.14.11", "21.14.13"),
         ("filelock", "4.2.0", "4.2.1"),
     ],
 )
@@ -623,6 +624,16 @@ def test_tools_security_floors_and_locked_versions_do_not_regress(package, vulne
     selected = [entry for entry in locked["package"] if entry["name"] == package]
     assert len(selected) == 1 and Version(selected[0]["version"]) in constraints[package]
     assert selected[0]["source"]["registry"] == "https://pypi.org/simple"
+
+
+def test_frontend_pins_patched_vite_directly_and_overrides_no_direct_dependency() -> None:
+    # npm rejects an override of a direct dependency (EOVERRIDE) on the Windows check.
+    persisted = json.loads(
+        (SCRIPTS.parents[1] / "management/reflex.lock/package.json").read_text(encoding="utf-8")
+    )
+    direct = persisted["dependencies"] | persisted["devDependencies"]
+    assert Version(direct["vite"]) >= Version("8.3.3")
+    assert not set(persisted.get("overrides", {})) & set(direct)
 
 
 def test_secret_rejected_without_value_disclosure(tmp_path: Path) -> None:

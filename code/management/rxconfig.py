@@ -2,7 +2,11 @@ import os
 from typing import TypedDict, Unpack
 
 import reflex as rx
+from reflex_base import constants
 from reflex_base.plugins.base import Plugin, PreCompileContext
+
+# Reflex 0.10.0 pins the vulnerable vite 8.3.2; npm rejects an override of a direct dependency.
+constants.PackageJson.DEV_DEPENDENCIES["vite"] = "8.3.3"
 
 PREVIEW_WARMUP = """
 function callerPreviewWarmup() {
