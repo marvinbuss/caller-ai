@@ -96,11 +96,11 @@ class TestAdmissionService:
 
     async def _replace(
         self, current: AuthoritySnapshot, candidate: TestAuthority, *, deadline: float
-    ) -> None:
+    ) -> AuthoritySnapshot:
         self._writes += 1
         self._media = None
         try:
-            await self.repository.replace(current, candidate, deadline=deadline)
+            return await self.repository.replace(current, candidate, deadline=deadline)
         finally:
             self._writes += 1
 
@@ -353,7 +353,7 @@ class TestAdmissionService:
                 ]
                 candidate = TestAuthority.model_validate_json(encoded(document))
                 try:
-                    await self._replace(current, candidate, deadline=deadline)
+                    written = await self._replace(current, candidate, deadline=deadline)
                 except AuthorityConflict:
                     continue
                 except AuthorityUnavailable:
@@ -364,7 +364,8 @@ class TestAdmissionService:
                     raise
                 observed = await self.repository.read(deadline=deadline)
                 confirmed = self._owned(observed, session_id, self.owner_id, epoch)
-                if confirmed != candidate_slot:
+                # A newer ETag means a later write (unlocked caller activity) built on this one.
+                if confirmed != candidate_slot and observed.etag == written.etag:
                     raise AdmissionError("authority_unavailable")
                 return confirmed
             raise AdmissionError("authority_conflict")

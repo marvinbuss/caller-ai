@@ -612,6 +612,59 @@ def test_stop_during_intent_confirmation_prevents_dispatch_without_clearing_slot
     asyncio.run(scenario())
 
 
+def test_caller_activity_written_during_intent_confirmation_keeps_the_attempt(
+    admission_case, monkeypatch
+):
+    from caller_runtime.domain.conversation import SessionLimits, WorkBudget
+
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1, mode="speech"))
+        ready = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        limits = SessionLimits(
+            started_at=slot.started_at,
+            admission_deadline_utc=slot.admission_deadline_utc,
+            auth_expires_at=slot.auth_expires_at,
+        )
+        limits.mark_ready(clock.utc_now())
+        original = container.read_item
+        raced = [False]
+
+        async def speak_before_confirmation(**keywords):
+            observed = await original(**keywords)
+            if observed["slots"][0]["attemptedThrough"] == 1 and not raced[0]:
+                # Caller transcript activity is written without the session lock (int, 17:18 UTC).
+                raced[0] = True
+                clock.advance(1)
+                await service.user_activity(
+                    slot.session_id, slot.owner_epoch, generation=ready.generation, mode="speech"
+                )
+                return await original(**keywords)
+            return observed
+
+        monkeypatch.setattr(container, "read_item", speak_before_confirmation)
+        intent = await service.begin_attempt(
+            slot.session_id,
+            slot.owner_epoch,
+            kind="model",
+            binding_hash="d" * 64,
+            generation=ready.generation,
+            work=WorkBudget.accept(limits, clock.utc_now()),
+        )
+        observed = (
+            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        ).authority.slots[0]
+        assert raced == [True]
+        assert observed.resources["model"].attempt == intent
+        assert observed.last_user_at == clock.utc_now()
+
+    asyncio.run(scenario())
+
+
 def test_lost_reservation_reply_confirms_only_the_same_local_operation(admission_case, monkeypatch):
     from caller_runtime.services.admission import AdmissionError
 
@@ -2411,6 +2464,75 @@ def test_an_unconfirmed_live_close_names_its_stage_and_fixed_code(live_case, mon
         ).authority.slots[0]
         # Unconfirmed: the slot stays held until the recovery rule releases it.
         assert slot.resources["live"].attempted > slot.resources["live"].settled
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        telemetry.close()
+
+
+@pytest.mark.parametrize("reply", ["unsupported", "dropped", "closed"])
+def test_a_live_reader_failure_names_its_fixed_code(live_case, monkeypatch, reply):
+    from types import SimpleNamespace
+
+    from caller_runtime.observability import Telemetry
+    from caller_runtime.services.conversation_policy import SpeechSegments
+    from tests.doubles import live_closed
+
+    service, repository, clock, socket, opened = live_case
+    telemetry = Telemetry("caller-runtime", "local")
+
+    class Dropped(Exception):
+        rcvd = SimpleNamespace(code=1011)
+
+    async def scenario():
+        original, segment = await opened()
+        monkeypatch.setattr(segment.adapter, "_telemetry", telemetry)
+        segments = SpeechSegments(current=segment)
+        if reply == "unsupported":
+            await socket.events.put(
+                json.dumps({"type": "session.synthetic_private_event", "text": "private"})
+            )
+        elif reply == "dropped":
+
+            async def dropped():
+                raise Dropped("synthetic private close detail")
+
+            monkeypatch.setattr(socket, "recv", dropped)
+        else:
+            await socket.events.put(live_closed(socket.start, "sess-case-fixture", 3))
+        # Two voice tests on int ended this way with no named cause (17:44 and 17:45 UTC).
+        with pytest.raises(PermissionError, match="live_unavailable"):
+            await segments.next_event()
+        failures = [e for e in telemetry.events if e["event"] == "test.live.failure"]
+        assert [(e["error_class"], e["error_code"]) for e in failures] == [
+            {
+                "unsupported": ("ValueError", "unsupported_live_event"),
+                "dropped": ("Dropped", "read_ws_1011"),
+                "closed": ("LiveClosed", "closed_close_requested"),
+            }[reply]
+        ]
+        assert "private" not in json.dumps(telemetry.events)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        telemetry.close()
+
+
+def test_a_stopped_live_reader_logs_no_failure(live_case, monkeypatch):
+    from caller_runtime.observability import Telemetry
+
+    service, repository, clock, socket, opened = live_case
+    telemetry = Telemetry("caller-runtime", "local")
+
+    async def scenario():
+        original, segment = await opened()
+        monkeypatch.setattr(segment.adapter, "_telemetry", telemetry)
+        await service.mark_terminal(original.session_id, original.owner_epoch)
+        with pytest.raises(PermissionError, match="live_unavailable"):
+            await segment.next_event()
+        assert not [e for e in telemetry.events if e["event"] == "test.live.failure"]
 
     try:
         asyncio.run(scenario())

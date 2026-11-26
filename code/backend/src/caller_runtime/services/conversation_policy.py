@@ -271,6 +271,15 @@ class SpeechSegments:
             await self._fail()
             raise PermissionError("live_unavailable") from None
         if event["type"] == "session.closed":
+            telemetry = self._adapter._telemetry
+            if telemetry is not None:
+                # The reason is one of the provider's fixed close reasons, checked on receipt.
+                telemetry.diagnostic(
+                    "test.live.failure",
+                    mode="speech",
+                    error="LiveClosed",
+                    code="closed_" + event["reason"],
+                )
             await self._fail()
             raise PermissionError("live_unavailable")
         return self._current.intent.generation, event
