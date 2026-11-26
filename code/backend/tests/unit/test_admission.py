@@ -612,6 +612,59 @@ def test_stop_during_intent_confirmation_prevents_dispatch_without_clearing_slot
     asyncio.run(scenario())
 
 
+def test_caller_activity_written_during_intent_confirmation_keeps_the_attempt(
+    admission_case, monkeypatch
+):
+    from caller_runtime.domain.conversation import SessionLimits, WorkBudget
+
+    service, repository, container, clock, permit, cache = admission_case
+
+    async def scenario():
+        await repository.initialize(
+            now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
+        )
+        slot = await service.reserve(permit(1, mode="speech"))
+        ready = await service.mark_ready(slot.session_id, slot.owner_epoch)
+        limits = SessionLimits(
+            started_at=slot.started_at,
+            admission_deadline_utc=slot.admission_deadline_utc,
+            auth_expires_at=slot.auth_expires_at,
+        )
+        limits.mark_ready(clock.utc_now())
+        original = container.read_item
+        raced = [False]
+
+        async def speak_before_confirmation(**keywords):
+            observed = await original(**keywords)
+            if observed["slots"][0]["attemptedThrough"] == 1 and not raced[0]:
+                # Caller transcript activity is written without the session lock (int, 17:18 UTC).
+                raced[0] = True
+                clock.advance(1)
+                await service.user_activity(
+                    slot.session_id, slot.owner_epoch, generation=ready.generation, mode="speech"
+                )
+                return await original(**keywords)
+            return observed
+
+        monkeypatch.setattr(container, "read_item", speak_before_confirmation)
+        intent = await service.begin_attempt(
+            slot.session_id,
+            slot.owner_epoch,
+            kind="model",
+            binding_hash="d" * 64,
+            generation=ready.generation,
+            work=WorkBudget.accept(limits, clock.utc_now()),
+        )
+        observed = (
+            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        ).authority.slots[0]
+        assert raced == [True]
+        assert observed.resources["model"].attempt == intent
+        assert observed.last_user_at == clock.utc_now()
+
+    asyncio.run(scenario())
+
+
 def test_lost_reservation_reply_confirms_only_the_same_local_operation(admission_case, monkeypatch):
     from caller_runtime.services.admission import AdmissionError
 
