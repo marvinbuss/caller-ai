@@ -338,24 +338,24 @@ class ConversationRuntime:
             except TimeoutError:
                 continue
 
-    async def release_failed_starts(self) -> list[str]:
-        """Release slots left by voice starts that failed before GPT-Live confirmed a session.
+    async def release_live_slots(self) -> list[str]:
+        """Release slots held only by a Live attempt: a failed start or an unconfirmed close.
 
         The same rule as `python -m caller_runtime.recovery`, limited to those slots: expired at
-        least five minutes ago, fenced, and held only by an unbound Live attempt.
+        least five minutes ago, fenced, model and capability settled.
         """
         repository = self.repository
         if repository is None:
             return []
         released = await release_stuck_slots(
-            repository, now=self._utc_now(), apply=True, failed_starts_only=True
+            repository, now=self._utc_now(), apply=True, live_only=True
         )
         if self._telemetry is not None:
             for _session in released:
                 self._telemetry.event("test.cleanup", "success", mode="speech", reason="recovered")
         return released
 
-    async def _sweep_failed_starts(self, stop: asyncio.Event) -> None:
+    async def _sweep_live_slots(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
             try:
                 async with asyncio.timeout(RELEASE_SWEEP_SECONDS):
@@ -364,7 +364,7 @@ class ConversationRuntime:
             except TimeoutError:
                 pass
             try:
-                await self.release_failed_starts()
+                await self.release_live_slots()
             except Exception:
                 # The next sweep tries again; the recovery command stays the manual path.
                 continue
@@ -645,7 +645,7 @@ class ConversationRuntime:
                     utc_now=self._utc_now,
                 )
                 self._history_probe = asyncio.create_task(self._probe_history(stop))
-                self._release_sweep = asyncio.create_task(self._sweep_failed_starts(stop))
+                self._release_sweep = asyncio.create_task(self._sweep_live_slots(stop))
                 self._running = True
                 refresh = asyncio.create_task(self._configuration.run(stop))
         except Exception:

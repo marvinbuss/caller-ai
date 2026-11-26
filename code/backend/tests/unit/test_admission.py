@@ -2371,6 +2371,53 @@ def test_live_close_retries_a_failed_closure_settlement_until_cleanup_verifies(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("reply", ["unsupported", "dropped"])
+def test_an_unconfirmed_live_close_names_its_stage_and_fixed_code(live_case, monkeypatch, reply):
+    from types import SimpleNamespace
+
+    from caller_runtime.observability import Telemetry
+
+    service, repository, clock, socket, opened = live_case
+    telemetry = Telemetry("caller-runtime", "local")
+
+    class Dropped(Exception):
+        rcvd = SimpleNamespace(code=1006)
+
+    async def scenario():
+        original, segment = await opened()
+        monkeypatch.setattr(segment.adapter, "_telemetry", telemetry)
+        socket.close_reply = False
+        if reply == "unsupported":
+            await socket.events.put(
+                json.dumps({"type": "session.synthetic_private_event", "text": "private"})
+            )
+        else:
+
+            async def dropped():
+                raise Dropped("synthetic private close detail")
+
+            monkeypatch.setattr(socket, "recv", dropped)
+        with pytest.raises(PermissionError, match="live_closure_unverified"):
+            await segment.close()
+        failures = [e for e in telemetry.events if e["event"] == "test.live.failure"]
+        assert [(e["error_class"], e["error_code"]) for e in failures] == [
+            ("ValueError", "unsupported_live_event")
+            if reply == "unsupported"
+            else ("Dropped", "close_await_closed_ws_1006")
+        ]
+        assert "private" not in json.dumps(telemetry.events)
+        slot = (
+            await repository.read(deadline=asyncio.get_running_loop().time() + 1)
+        ).authority.slots[0]
+        # Unconfirmed: the slot stays held until the recovery rule releases it.
+        assert slot.resources["live"].attempted > slot.resources["live"].settled
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        telemetry.close()
+
+
 def test_cleanup_observation_source_uses_actual_bound_live_close_and_owned_disposal(
     live_case, monkeypatch
 ):

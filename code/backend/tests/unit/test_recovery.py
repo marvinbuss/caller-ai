@@ -78,7 +78,7 @@ def test_recovery_releases_only_expired_fenced_slots_held_by_an_unsettled_model_
     asyncio.run(scenario())
 
 
-def test_the_failed_start_filter_releases_only_slots_left_by_a_failed_voice_start(
+def test_the_live_only_filter_releases_only_slots_held_by_a_live_attempt(
     admission_case,
 ):
     from caller_runtime.domain.conversation import WorkBudget
@@ -114,16 +114,17 @@ def test_the_failed_start_filter_releases_only_slots_left_by_a_failed_voice_star
             now=clock.utc_now(), deadline=asyncio.get_running_loop().time() + 1
         )
         model = await held(1, "model")
-        speech = await held(2, "live")
+        unconfirmed = await held(2, "live")
         failed = await held(3, "live", bound=False)
         clock.advance(600 + 300)
+        # A failed start and a close GPT-Live never confirmed; the model attempt stays.
         assert await release_stuck_slots(
-            repository, now=clock.utc_now(), apply=True, failed_starts_only=True
-        ) == [failed]
+            repository, now=clock.utc_now(), apply=True, live_only=True
+        ) == [unconfirmed, failed]
         remaining = (
             await repository.read(deadline=asyncio.get_running_loop().time() + 1)
         ).authority
-        assert {slot.session_id for slot in remaining.slots} == {model, speech}
+        assert {slot.session_id for slot in remaining.slots} == {model}
 
     asyncio.run(scenario())
 

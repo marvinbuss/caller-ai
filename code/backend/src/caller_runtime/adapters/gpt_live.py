@@ -791,17 +791,40 @@ class GptLiveSession:
     def disposed(self) -> bool:
         return self._transport_disposed
 
+    def _close_failed(self, error: Exception, stage: str) -> None:
+        """Name why GPT-Live's close was not confirmed: class and one fixed code, no text."""
+        if self.adapter._telemetry is None:
+            return
+        rejection = self.protocol.rejection
+        received = getattr(getattr(error, "rcvd", None), "code", None)
+        if stage == "await_closed" and rejection is not None:
+            code = rejection
+        elif type(received) is int:
+            code = f"close_{stage}_ws_{received}"
+        else:
+            code = f"close_{stage}"
+        try:
+            self.adapter._telemetry.diagnostic(
+                "test.live.failure", mode="speech", error=type(error).__name__, code=code
+            )
+        except Exception:
+            pass
+
     async def close(self, *, deadline: float | None = None) -> ClosureReceipt:
         self.retire_output()
         deadline = min(deadline or float("inf"), asyncio.get_running_loop().time() + 10)
         async with self._close_lock:
+            stage = "send"
+            self.protocol.rejection = None
             try:
                 async with asyncio.timeout_at(deadline):
                     if not self.protocol.closed:
                         await self._send({"type": "session.close"})
+                    stage = "await_closed"
                     # Only the provider's close event proves usage ended; a dropped socket does not.
                     while self._receipt is None:
                         await self._receive()
+                    stage = "confirm"
                     for attempt in range(3):
                         try:
                             await self._confirm_closure()
@@ -810,7 +833,8 @@ class GptLiveSession:
                             if attempt == 2:
                                 raise
                             await asyncio.sleep(0.05 * (attempt + 1))
-            except Exception:
+            except Exception as error:
+                self._close_failed(error, stage)
                 raise PermissionError("live_closure_unverified") from None
             finally:
                 if not self._disposed:
