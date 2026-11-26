@@ -267,5 +267,8 @@ P1 needs silent caller audio to run: without input audio frames, GPT-Live did no
 |--------|------|-------------|---------------|----------------|----------|
 | 2026-11-25 14:48–14:57 UTC (after #59) | 0.5 s (default) | 11 | 7 (64 %); all 5 clarification requests among them | — | Above 10 %: `CALLER_TRANSCRIPTION_WAIT_SECONDS` raised to 2 s for int (#62) |
 | 2026-11-26 09:04–12:00 UTC (acceptance runs) | 0.5 s (#62 not yet applied) | 32 | 18 (56 %); 7 of the 10 clarification requests among them | 0.50 / 0.50 s | The 2 s wait stays; measure again after the next `terraform-app-environment` apply |
+| 2026-11-26 16:55–17:50 UTC (after the apply of #68) | 2 s | 42 | 17 (40 %); 6 of the 15 clarification requests among them | 0.00 / 2.00 s | The wait never caught up (see below): int set to 0 s |
+
+Every wait recorded on int, 94 from 2026-11-25 09:54 to 2026-11-26 17:50 UTC, ended either at once because the transcript had already caught up (50) or at the full wait (27 at 0.5 s, 17 at 2 s). None ended while waiting: when the transcript has not reached the delegation, it arrives later than 2 s. The wait therefore only delays the work, by up to 2 s on about 40 % of voice delegations, and the 10 % target cannot be reached within the 0–2 s range. Int runs with 0 s (owner decision, 2026-11-26); the default stays 0.5 s. Untranscribed delegations are still sent back for clarification more often (43 % against 28 % since 2026-11-25 14:00); fixing that would mean using a transcript that arrives after the work started, which is outside this feature.
 
 The caller's transcript usually reaches the runtime after GPT-Live's delegation; until #59 the caller's words were taken at the delegation itself, which is why the first runs were sent back for clarification so often.
