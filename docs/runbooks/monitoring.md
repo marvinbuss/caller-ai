@@ -209,7 +209,7 @@ ContainerAppConsoleLogs_CL
 | extend untranscribed_share = todouble(untranscribed) / delegations
 ```
 
-If `untranscribed_share` is above 0.1, raise `CALLER_TRANSCRIPTION_WAIT_SECONDS` within 0–2 s.
+If `untranscribed_share` is above 0.1, raise `CALLER_TRANSCRIPTION_WAIT_SECONDS` within 0–2 s, but only if some waits end between 0 and the configured value (the transcript caught up while waiting). On int none did, so a longer wait only delayed the work and int uses 0 s ([R15](../../specs/007-shared-conversation-history/research.md#p4-results-int-t086)).
 
 ### Handover failures
 

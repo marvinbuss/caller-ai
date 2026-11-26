@@ -438,7 +438,7 @@ description: "Task list for feature 007: Shared Conversation History Across Agen
     - One slot held by an earlier check was released with `caller_runtime.recovery`.
 - [X] T086 After at least 20 voice delegations on int, run the [P4 query](contracts/observability.md#p4-transcription-wait). Record the untranscribed share and the actual wait under R15 in `specs/007-shared-conversation-history/research.md`, and raise `CALLER_TRANSCRIPTION_WAIT_SECONDS` (0–2) if more than 10 % end untranscribed.
 
-  Done 2026-11-26: 56 % untranscribed with the 0.5 s wait (32 delegations); raised to 2 s for int in #62, which takes effect with the next `terraform-app-environment` apply. The documented queries now run in Log Analytics (`kind` is reserved, `percentileif` does not exist).
+  Done 2026-11-26: 56 % untranscribed with the 0.5 s wait (32 delegations); raised to 2 s for int in #62, which takes effect with the next `terraform-app-environment` apply. The documented queries now run in Log Analytics (`kind` is reserved, `percentileif` does not exist). Measured again with 2 s after the apply of #68: 40 % untranscribed (42 delegations), and no wait on int ever ended by catching up, so int now uses 0 s (owner decision; see R15).
 - [X] T087 With the owner, run the acceptance set A1–A9 by voice and by text (18 runs) per [quickstart.md](quickstart.md#3-acceptance-set-on-int-a1a9-sc-001sc-003). Record destination, context use, pair consistency and quietness in `specs/007-shared-conversation-history/checklists/review.md`. Pass: SC-001, SC-002, SC-003, and SC-011 in at least 16 of 18 runs.
 
   Done 2026-11-26: 16 of 16 runs possible on int passed; A6 needs a reviewed tool on int and stays covered by the automated tests. Defects found on the way were fixed in #58–#65.
